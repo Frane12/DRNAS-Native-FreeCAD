@@ -39,7 +39,9 @@ while IFS= read -r -d '' so; do
     names+=("$member")
 done < <(find "$STAGE" -maxdepth 1 -type f -name 'lib*.so' -print0 | sort -z)
 test "${#names[@]}" -gt 0
-( cd "$work/bundle" && zip -q -0 "$work/unsigned.apk" "${names[@]}" )
+# Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
+# Keep the same packaging policy. Uncompressed debug DSOs ballooned to >550 MB.
+( cd "$work/bundle" && zip -q -9 "$work/unsigned.apk" "${names[@]}" )
 # Support Android's newer 16 KB memory pages for uncompressed native ELF.
 "$SDK_BUILDTOOLS/zipalign" -P 16 -f 4 "$work/unsigned.apk" "$work/aligned.apk"
 # Official Qt CMake/androiddeployqt may sign using a temporary local
