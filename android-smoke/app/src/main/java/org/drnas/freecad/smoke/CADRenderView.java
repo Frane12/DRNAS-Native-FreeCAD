@@ -25,7 +25,10 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
         "precision mediump float;\n" +
         "varying vec3 vNormal;\n" +
         "uniform float uEdges;\n" +
+        "uniform float uFlat;\n" +
+        "uniform vec3 uFlatColor;\n" +
         "void main() {\n" +
+        " if (uFlat > 0.5) { gl_FragColor = vec4(uFlatColor,1.0); return; }\n" +
         " if (uEdges > 0.5) { gl_FragColor = vec4(0.78,0.91,1.0,1.0); return; }\n" +
         " vec3 n = normalize(vNormal);\n" +
         " vec3 l = normalize(vec3(0.6,0.8,1.0));\n" +
@@ -40,8 +43,10 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
     private final float[] model = new float[16];
     private final float[] vp = new float[16];
     private final float[] mvp = new float[16];
-    private FloatBuffer solid, edges;
-    private int vertexCount, edgeCount, program;
+    private FloatBuffer solid, edges, grid;
+    private int vertexCount, edgeCount, gridCount, program;
+    private boolean showGrid=true, orthographic=false;
+    private long lastTapTime=0L;
     private float cx, cy, cz, scale = 1.0f;
     private float rotX=-22f, rotY=-30f, distance=4.4f, panX=0, panY=0;
     private float prevX, prevY, prevSpan;
@@ -91,7 +96,71 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
         }
         edges=direct(wire);
         edgeCount=wire.length/6;
+        createConstructionGrid(x0,y0,z0,x1,y1,z1);
         requestRender();
+    }
+
+
+    // This first viewport uses the proven Android OCCT tessellation; a future
+    // FreeCAD document-to-viewport adapter can supply the same XYZ+normal mesh.
+    private void createConstructionGrid(float x0,float y0,float z0,
+                                        float x1,float y1,float z1) {
+        float span=Math.max(1f,Math.max(x1-x0,Math.max(y1-y0,z1-z0)));
+        float step=span/8f;
+        float mx=(x0+x1)*.5f, my=(y0+y1)*.5f;
+        float z=z0-step*.4f;
+        float extent=step*12f;
+        float[] values=new float[50*2*6];
+        int at=0;
+        for(int i=-12;i<=12;i++) {
+            float n=i*step;
+            float[][] points={{mx+n,my-extent,z},{mx+n,my+extent,z},
+                              {mx-extent,my+n,z},{mx+extent,my+n,z}};
+            for(float[] p:points) {
+                values[at++]=p[0]; values[at++]=p[1]; values[at++]=p[2];
+                values[at++]=0; values[at++]=0; values[at++]=1;
+            }
+        }
+        grid=direct(values);
+        gridCount=values.length/6;
+    }
+
+    public void setShowGrid(boolean enabled) {
+        queueEvent(() -> { showGrid=enabled; requestRender(); });
+    }
+    public void setOrthographic(boolean enabled) {
+        queueEvent(() -> {
+            orthographic=enabled;
+            updateProjection();
+            requestRender();
+        });
+    }
+    public void setCameraPreset(int preset) {
+        queueEvent(() -> {
+            if(preset==1) { rotX=0f; rotY=0f; } // top, looking along FreeCAD Z
+            else if(preset==2) { rotX=-90f; rotY=0f; } // front
+            else if(preset==3) { rotX=0f; rotY=-90f; } // right
+            else { rotX=-22f; rotY=-30f; } // isometric
+            panX=0f;panY=0f;
+            requestRender();
+        });
+    }
+    public void fitModel() {
+        queueEvent(() -> {
+            distance=4.4f; panX=0f; panY=0f;
+            updateProjection();
+            requestRender();
+        });
+    }
+    private void updateProjection() {
+        float aspect=(float)viewportWidth/Math.max(1,viewportHeight);
+        if(orthographic) {
+            float half=2.65f*distance/4.4f;
+            Matrix.orthoM(projection,0,-half*aspect,half*aspect,
+                    -half,half,.1f,100f);
+        } else {
+            Matrix.perspectiveM(projection,0,45f,aspect,.1f,100f);
+        }
     }
 
     public void setShowEdges(boolean enabled) {
@@ -101,6 +170,7 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
     public void resetCamera() {
         queueEvent(() -> {
             rotX=-22f; rotY=-30f; distance=4.4f; panX=0; panY=0;
+            updateProjection();
             requestRender();
         });
     }
@@ -140,7 +210,7 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
     @Override public void onSurfaceChanged(javax.microedition.khronos.opengles.GL10 gl,int w,int h) {
         viewportWidth=Math.max(1,w); viewportHeight=Math.max(1,h);
         GLES20.glViewport(0,0,viewportWidth,viewportHeight);
-        Matrix.perspectiveM(projection,0,45f,(float)viewportWidth/viewportHeight,0.1f,100f);
+        updateProjection();
     }
 
     private void draw(FloatBuffer buffer,int count,int mode,float edgeValue,int pos,int normal,int wireLocation) {
@@ -175,6 +245,16 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
         int p=GLES20.glGetAttribLocation(program,"aPos");
         int n=GLES20.glGetAttribLocation(program,"aNormal");
         int wire=GLES20.glGetUniformLocation(program,"uEdges");
+        int flat=GLES20.glGetUniformLocation(program,"uFlat");
+        int color=GLES20.glGetUniformLocation(program,"uFlatColor");
+        if(showGrid && grid!=null) {
+            GLES20.glUniform1f(flat,1f);
+            GLES20.glUniform3f(color,.19f,.32f,.45f);
+            GLES20.glDepthMask(false);
+            draw(grid,gridCount,GLES20.GL_LINES,0f,p,n,wire);
+            GLES20.glDepthMask(true);
+        }
+        GLES20.glUniform1f(flat,0f);
         if(showEdges) {
             GLES20.glEnable(GLES20.GL_POLYGON_OFFSET_FILL);
             GLES20.glPolygonOffset(1.0f,1.0f);
@@ -196,6 +276,9 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
     @Override public boolean onTouchEvent(MotionEvent event) {
         int action=event.getActionMasked();
         if(action==MotionEvent.ACTION_DOWN) {
+            long now=android.os.SystemClock.uptimeMillis();
+            if(now-lastTapTime<300L) fitModel();
+            lastTapTime=now;
             prevX=event.getX(); prevY=event.getY(); twoFinger=false; return true;
         }
         if(action==MotionEvent.ACTION_POINTER_DOWN && event.getPointerCount()>=2) {
@@ -217,6 +300,7 @@ public final class CADRenderView extends GLSurfaceView implements GLSurfaceView.
                     panY-=dy*3f/viewportHeight;
                     distance=Math.max(2.3f,Math.min(15f,
                             distance/Math.max(0.5f,Math.min(2f,ratio))));
+                    updateProjection();
                 } else if(!wasTwo) {
                     rotX+=dy*0.6f;
                     rotY+=dx*0.6f;
