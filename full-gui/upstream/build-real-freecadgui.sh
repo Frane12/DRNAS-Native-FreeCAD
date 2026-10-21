@@ -51,6 +51,7 @@ glflags = '''  -DOPENGL_INCLUDE_DIR="$ROOT/out/upstream-freecad-gui/opengl-compa
   -DOPENGL_gl_LIBRARY="$ROOT/out/upstream-freecad-gui/opengl-compat/lib/libGL.so" \\
   -DOPENGL_glu_LIBRARY="$ROOT/out/upstream-freecad-gui/opengl-compat/lib/libGLU.so" \\
   -DOPENGL_opengl_LIBRARY="$ROOT/out/upstream-freecad-gui/opengl-compat/lib/libGL.so" \\
+  -DOPENGL_GLU_FOUND=TRUE \\
 '''
 s = s.replace(qt_flag, glflags + qt_flag)
 Path(sys.argv[2]).write_text(s)
