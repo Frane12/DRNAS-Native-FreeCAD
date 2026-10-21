@@ -64,6 +64,10 @@ echo "Relocated $relocations ICU 75 ELF DT_NEEDED entries for native APK packagi
 # from libicui18n. Verify the actual staged dynamic symbol BEFORE uploading
 # an APK; ELF NEEDED checks alone cannot catch a missing symbol.
 {
+  echo "FreeCADBase direct ELF dependencies (check ICU i18n is in load group):"
+  readelf -d "$ABI_DIR/libFreeCADBase.so" | grep -E 'NEEDED|SONAME'
+  echo "FreeCADApp direct ELF dependencies:"
+  readelf -d "$ABI_DIR/libFreeCADApp.so" | grep -E 'NEEDED|SONAME'
   echo "FreeCADBase ICU 75 RTTI imports:"
   readelf --dyn-syms --wide "$ABI_DIR/libFreeCADBase.so" | grep -F '_ZTIN6icu_7512NumberFormatE' || true
   echo "ICU i18n dynamic RTTI exports:"
