@@ -41,6 +41,16 @@ fi
   -L"$DIR" "$OBJ/jni.o" -ldrnas_occt_geometry -ldrnas_freecadbase_probe \
   -o "$DIR/libdrnas_freecad_smoke.so"
 
+# OCCT tessellation bridge: separate native module, cached C++ object.
+"${CACHE[@]}" "$CXX" -std=c++17 -O2 -fPIC \
+  -I"$SDK_INC" -c "$ROOT/android-smoke/jni/drnas_occt_mesh.cpp" \
+  -o "$OBJ/mesh.o"
+"$CXX" -shared -Wl,--no-undefined -Wl,-soname,libdrnas_occt_mesh.so \
+  "$OBJ/mesh.o" -L"$SDK_LIB" \
+  -lTKBO -lTKBool -lTKPrim -lTKMesh -lTKTopAlgo -lTKGeomAlgo \
+  -lTKBRep -lTKGeomBase -lTKG3d -lTKG2d -lTKMath -lTKernel \
+  -o "$DIR/libdrnas_occt_mesh.so"
+
 # Android app loader finds all transitive DSOs in its lib/arm64-v8a namespace.
 cp "$SDK_LIB"/libTK*.so "$DIR/"
 STDCPP="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"

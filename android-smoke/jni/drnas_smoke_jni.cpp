@@ -29,9 +29,9 @@ Java_org_drnas_freecad_smoke_NativeCAD_runFreeCADBase(JNIEnv* env, jclass) {
     char output[400];
     if (rc == 0) {
         std::snprintf(output, sizeof(output),
-            "PASS: Original FreeCAD Base source running on Android ARM64!\\n"
-            "Base64 text + binary roundtrips: PASS\\n"
-            "Vector3D length, dot, cross, normalization: PASS\\n"
+            "PASS: Original FreeCAD Base source running on Android ARM64!\n"
+            "Base64 text + binary roundtrips: PASS\n"
+            "Vector3D length, dot, cross, normalization: PASS\n"
             "This is a small FreeCADBase C++ source subset, not FreeCADApp or full FreeCADBase.");
     } else {
         std::snprintf(output, sizeof(output),

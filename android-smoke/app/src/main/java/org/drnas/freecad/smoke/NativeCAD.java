@@ -6,7 +6,9 @@ public final class NativeCAD {
         System.loadLibrary("drnas_occt_geometry");
         System.loadLibrary("drnas_freecadbase_probe");
         System.loadLibrary("drnas_freecad_smoke");
+        System.loadLibrary("drnas_occt_mesh");
     }
     public static native String runGeometry();
+    public static native float[] createOcctMesh();
     public static native String runFreeCADBase();
 }
