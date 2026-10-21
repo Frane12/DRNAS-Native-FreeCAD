@@ -47,12 +47,12 @@ pyhome="$ROOT/out/full-deps/python/lib/python3.14"
 test -s "$pyhome/encodings/__init__.py"
 test -d "$pyhome/lib-dynload"
 mkdir -p "$work/bundle/assets/drnas/python-ext"
-python3 - "$pyhome" "$work/bundle/assets/drnas" <<'PY_ANDROID_STDLIB'
+python3 - "$pyhome" "$work/bundle/assets/drnas" "$freecad_src/src/Ext/freecad" <<'PY_ANDROID_STDLIB'
 from pathlib import Path
 import sys
 import zipfile
 
-stdlib, dest = map(Path, sys.argv[1:])
+stdlib, dest, freecad_ext = map(Path, sys.argv[1:])
 archive = dest / "python314.zip"
 count = 0
 with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED,
@@ -68,6 +68,23 @@ with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED,
             continue
         z.write(source, rel.as_posix())
         count += 1
+    # Authentic FreeCAD namespace modules from the exact upstream commit,
+    # including __init__.py.template (normally configure_file'd by CMake).
+    # The Android entrypoint exports PATH_TO_FREECAD_LIBDIR at runtime, which
+    # the original upstream package checks before its build-time fallback.
+    init = (freecad_ext / "__init__.py.template").read_text()
+    if "import FreeCAD as app" not in init or "from pkgutil import extend_path" not in init:
+        raise SystemExit("Upstream freecad namespace initializer changed")
+    init = init.replace("\${FREECAD_LIBRARY_INSTALL_DIR}", ".")
+    z.writestr("freecad/__init__.py", init)
+    modules = sorted(freecad_ext.glob("*.py"))
+    if not modules or not any(p.name == "utils.py" for p in modules):
+        raise SystemExit("Upstream freecad Python package incomplete")
+    for module in modules:
+        z.write(module, "freecad/" + module.name)
+    if "freecad/__init__.py" not in z.namelist():
+        raise SystemExit("Embedded FreeCAD namespace package is missing")
+    print(f"PACKAGED pinned upstream 'freecad' namespace and {len(modules)} Python modules")
     if "encodings/__init__.py" not in z.namelist():
         raise SystemExit("CRITICAL: bundled Python archive lacks encodings")
 print(f"PACKAGED {count} real Android Python 3.14 stdlib sources/data into {archive}")
@@ -90,6 +107,22 @@ while IFS= read -r extension; do
     readelf -h "$module" | grep -q 'Machine:.*AArch64'
     ! readelf -d "$module" | grep -Eq 'libc\.so\.6|ld-linux'
 done < "$work/bundle/assets/drnas/python-ext-manifest.txt"
+# FreeCAD 1.x executes 'import freecad' (lower-case namespace package)
+# during FreeCADInit / FreeCADGuiInit. libFreeCADApp.so alone does not provide
+# this pure-Python package. Fetch the *pinned original upstream sources* and
+# stage them inside the existing embedded Python 3.14 zip.
+FREECAD_REF="d4ffc7f725973e073907746e88d320d3e438fd34"
+freecad_src="$work/freecad-upstream-python"
+git -C "$work" init -q freecad-upstream-python
+git -C "$freecad_src" remote add origin https://github.com/FreeCAD/FreeCAD.git
+git -C "$freecad_src" sparse-checkout init --cone
+git -C "$freecad_src" sparse-checkout set src/Ext/freecad
+git -C "$freecad_src" fetch -q --depth 1 --filter=blob:none origin "$FREECAD_REF"
+git -C "$freecad_src" checkout -q --detach FETCH_HEAD
+test "$(git -C "$freecad_src" rev-parse HEAD)" = "$FREECAD_REF"
+test -s "$freecad_src/src/Ext/freecad/__init__.py.template"
+test -s "$freecad_src/src/Ext/freecad/utils.py"
+
 test "${#names[@]}" -gt 0
 # Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
 # Keep the same packaging policy. Uncompressed debug DSOs ballooned to >550 MB.
