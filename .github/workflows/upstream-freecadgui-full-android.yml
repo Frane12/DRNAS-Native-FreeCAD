@@ -1,0 +1,178 @@
+name: DRNAS REAL upstream FreeCADGui Full ARM64 Build
+on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - 'full-gui/upstream/**'
+      - '.github/workflows/upstream-freecadgui-full-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FREECAD_REF: 'd4ffc7f725973e073907746e88d320d3e438fd34'
+  QT_VERSION: '6.8.3'
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/full-freecad
+  CCACHE_MAXSIZE: '2G'
+  CCACHE_COMPRESS: 'true'
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_NOHASHDIR: 'true'
+
+concurrency:
+  group: drnas-genuine-freecadgui-full-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  upstream-freecadgui:
+    name: Compile REAL upstream FreeCADGui, FreeCADApp, FreeCADBase Android arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python host tools matching FreeCAD embedded ABI
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.8'
+      - name: Install build tools, not host ELF target dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build git python3 ccache binutils file curl libeigen3-dev \
+            libexpat1-dev
+          python3 -m pip install --disable-pip-version-check pybind11==3.0.1
+          mkdir -p "$CCACHE_DIR" out/upstream-freecad-gui
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+
+      - name: Restore verified OCCT Android geometry SDK
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Restore compiled Qt 6 Android GUI SDK / QtSvg / host Qt tools
+        id: qt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt-gui-6.8.3-arm64-v1-${{ hashFiles('full-gui/bootstrap-qt-gui-android.sh', 'full-port/bootstrap-qt.sh', 'full-port/verify-qt-android.sh') }}
+      - name: Restore Android yaml-cpp
+        id: yaml
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/yaml-cpp
+          key: drnas-yaml-cpp-0.8.0-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-yaml-android.sh') }}
+      - name: Restore Android ICU75
+        id: icu
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/icu
+          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
+      - name: Restore official CPython3.14 Android SDK
+        id: python
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Restore native Xerces-C
+        id: xerces
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/xerces-c
+          key: drnas-xerces325-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-xerces-android.sh') }}
+      - name: Restore Boost188 for Android ARM64
+        id: boost
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/boost
+          key: drnas-boost188-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-boost-android.sh') }}
+      - name: Restore authentic host ICU73 for Qt lrelease / moc
+        id: host_icu
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-gui/host-icu73
+          key: drnas-qt-host-icu73-v1-${{ hashFiles('full-gui/bootstrap-icu73-host.sh') }}
+      - name: Verify complete Android-target dependency caches
+        run: |
+          set -euo pipefail
+          for key in "${{ steps.occt.outputs.cache-hit }}" "${{ steps.qt.outputs.cache-hit }}" \
+                     "${{ steps.yaml.outputs.cache-hit }}" "${{ steps.icu.outputs.cache-hit }}" \
+                     "${{ steps.python.outputs.cache-hit }}" "${{ steps.xerces.outputs.cache-hit }}" \
+                     "${{ steps.boost.outputs.cache-hit }}" "${{ steps.host_icu.outputs.cache-hit }}"; do
+            [[ "$key" == true ]] || { echo "::error::Missing verified dependency cache"; exit 1; }
+          done
+          test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6OpenGLWidgets/Qt6OpenGLWidgetsConfig.cmake
+          test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6SvgWidgets/Qt6SvgWidgetsConfig.cmake
+          test -f out/full-deps/boost/include/boost/bimap.hpp
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/out/full-gui/host-icu73/lib" >> "$GITHUB_ENV"
+
+      - name: Restore real pinned Android GL4ES + GLU compatibility ABI
+        id: gl
+        uses: actions/cache/restore@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+      - name: Demand real Bionic GL4ES and GLU before FreeCADGui configure
+        run: |
+          set -euo pipefail
+          test "${{ steps.gl.outputs.cache-hit }}" = true
+          test -f out/upstream-freecad-gui/opengl-compat/lib/libGL.so
+          test -f out/upstream-freecad-gui/opengl-compat/lib/libGLU.so
+          readelf -h out/upstream-freecad-gui/opengl-compat/lib/libGLU.so | grep -q AArch64
+      - name: Restore incremental compiler cache, including from headless core runs
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/full-freecad
+          key: full-freecad-android-arm64-ndk27-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            full-freecad-android-arm64-ndk27-
+
+      - name: Attempt REAL upstream FreeCADGui CMake + compilation
+        id: build
+        run: bash full-gui/upstream/build-real-freecadgui.sh
+
+      - name: Preserve any validated native FreeCADGui/Base/App .so on FAILURE
+        if: ${{ always() && steps.build.outcome != 'skipped' }}
+        run: |
+          set -euo pipefail
+          stage="$GITHUB_WORKSPACE/out/upstream-freecad-gui/native"
+          libdir="$GITHUB_WORKSPACE/.build/freecad-upstream-real-gui-arm64/lib"
+          mkdir -p "$stage"
+          for name in FreeCADBase FreeCADApp FreeCADGui; do
+            file="$libdir/lib${name}.so"
+            if [[ ! -f "$file" ]]; then
+              echo "Not built yet: lib${name}.so"
+              continue
+            fi
+            readelf -h "$file" | grep -q 'Machine:.*AArch64'
+            if readelf -d "$file" | grep -Eq 'libc\.so\.6|ld-linux|libstdc\+\+\.so\.6'; then
+              echo "::error::Rejecting host Linux ABI library: $file"
+              exit 1
+            fi
+            cp -L "$file" "$stage/lib${name}.so"
+            ( cd "$stage" && sha256sum "lib${name}.so" >> SHA256SUMS )
+          done
+
+      - name: Compiler cache reuse diagnostic
+        if: always()
+        run: ccache --show-stats || true
+      - name: Preserve GUI incremental compilation cache even on errors
+        if: ${{ always() && steps.build.outcome != 'skipped' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/full-freecad
+          key: full-freecad-android-arm64-ndk27-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload real upstream FreeCADGui build logs and native artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DRNAS-Actual-Upstream-FreeCADGui-ARM64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/upstream-freecad-gui/
+          if-no-files-found: warn
+          retention-days: 30
