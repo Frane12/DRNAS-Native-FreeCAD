@@ -25,6 +25,17 @@ if command -v ccache >/dev/null 2>&1; then
 else
   LAUNCHER_FLAGS=()
 fi
+# The reusable geometry SDK intentionally excludes STEP, IGES and OCAF.
+# Actual FreeCAD Part/Sketcher/PartDesign, however, require OCCT DataExchange
+# and ApplicationFramework (Interface_Static.hxx, TKXSBase, TKDE*, TKLCAF).
+# Enable the complete CAD SDK only for the full GUI pipeline; do not change
+# the already-tested geometry-only SDK used by simpler Android consumers.
+OCCT_FULL_CAD="${OCCT_FULL_CAD:-0}"
+if [[ "$OCCT_FULL_CAD" == 1 ]]; then
+  OCCT_MODULE_FLAGS=(-DBUILD_MODULE_DataExchange=ON -DBUILD_MODULE_ApplicationFramework=ON)
+else
+  OCCT_MODULE_FLAGS=(-DBUILD_MODULE_DataExchange=OFF -DBUILD_MODULE_ApplicationFramework=OFF)
+fi
 cmake -S "$SOURCE" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
   -DANDROID_ABI=arm64-v8a \
@@ -35,8 +46,7 @@ cmake -S "$SOURCE" -B "$BUILD" -G Ninja \
   -DBUILD_LIBRARY_TYPE=Shared \
   -DBUILD_MODULE_Draw=OFF \
   -DBUILD_MODULE_Visualization=OFF \
-  -DBUILD_MODULE_DataExchange=OFF \
-  -DBUILD_MODULE_ApplicationFramework=OFF \
+  "${OCCT_MODULE_FLAGS[@]}" \
   -DUSE_FREETYPE=OFF \
   -DUSE_FREEIMAGE=OFF \
   -DUSE_TBB=OFF \
@@ -47,3 +57,17 @@ cmake -S "$SOURCE" -B "$BUILD" -G Ninja \
   2>&1 | tee "$ROOT/out/occt-configure.log"
 cmake --build "$BUILD" --parallel 4 2>&1 | tee "$ROOT/out/occt-compile.log"
 cmake --install "$BUILD" 2>&1 | tee "$ROOT/out/occt-install.log"
+
+if [[ "$OCCT_FULL_CAD" == 1 ]]; then
+  for header in Interface_Static.hxx STEPControl_Reader.hxx IGESControl_Reader.hxx TDF_Label.hxx; do
+    test -s "$PREFIX/include/opencascade/$header" || {
+      echo "::error::Full FreeCAD OCCT SDK is missing $header" >&2; exit 1;
+    }
+  done
+  for lib in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
+    test -s "$PREFIX/lib/lib${lib}.so" || {
+      echo "::error::Full FreeCAD OCCT SDK is missing lib${lib}.so" >&2; exit 1;
+    }
+  done
+  echo 'PASS: Extended OCCT Android DataExchange/ApplicationFramework SDK'
+fi
