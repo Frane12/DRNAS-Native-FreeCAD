@@ -7,11 +7,14 @@ mkdir -p "$qt" "$ROOT/out/full-freecad"
 python3 -m venv "$RUNNER_TEMP/aqt-python"
 "$RUNNER_TEMP/aqt-python/bin/python" -m pip -q install 'aqtinstall==3.3.0'
 aqt="$RUNNER_TEMP/aqt-python/bin/aqt"
-"$aqt" list-qt linux android --arch "$QT_VERSION" \
+"$aqt" list-qt all_os android --arch "$QT_VERSION" \
   2>&1 | tee "$ROOT/out/full-freecad/qt-architectures.txt"
-# The --autodesktop option installs the matching Linux native host tools
-# needed by Android Qt6 CMake configuration (moc, rcc).
-"$aqt" install-qt linux android "$QT_VERSION" android_arm64_v8a \
-  --autodesktop --archives qtbase -O "$qt" \
-  2>&1 | tee "$ROOT/out/full-freecad/qt-download.log"
+# Qt >= 6.7 has its Android binary archives under the all_os host.
+# Linux x86_64 host binaries (moc/rcc) come from a SEPARATE desktop package.
+"$aqt" install-qt all_os android "$QT_VERSION" android_arm64_v8a \
+  --archives qtbase -O "$qt" \
+  2>&1 | tee "$ROOT/out/full-freecad/qt-android-download.log"
+"$aqt" install-qt linux desktop "$QT_VERSION" linux_gcc_64 \
+  --archives qtbase -O "$qt" \
+  2>&1 | tee "$ROOT/out/full-freecad/qt-host-download.log"
 bash "$ROOT/full-port/verify-qt-android.sh"
