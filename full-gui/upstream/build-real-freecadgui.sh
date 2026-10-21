@@ -189,7 +189,25 @@ path.write_text(source)
 print('Quarter Android GLES2 omits unsupported GL_MULTISAMPLE toggling')
 PY_QUARTER_ANDROID
 """
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+config_marker)
+# The Android entrypoint lives inside the genuine libFreeCADGui.so, avoiding
+# any eager DT_NEEDED dependency from QtLoader's main QtActivity library.
+# This keeps the already-working OCCT viewer in safe mode until explicitly
+# opted in on the phone. Include a real C++ bridge (not UI imitation).
+android_bridge_patch = """python3 - "$SOURCE/src/Gui/CMakeLists.txt" "$ROOT/full-gui/upstream/AndroidMainWindowBridge.cpp" "$SOURCE/src/Gui/AndroidMainWindowBridge.cpp" <<'PY_ANDROID_BRIDGE'
+from pathlib import Path
+from shutil import copyfile
+import sys
+cmake_path, bridge_source, bridge_dest = map(Path, sys.argv[1:])
+text = cmake_path.read_text()
+anchor = 'add_library(FreeCADGui SHARED)'
+assert text.count(anchor) == 1, 'Pinned upstream FreeCADGui target changed'
+addition = '\\ntarget_sources(FreeCADGui PRIVATE AndroidMainWindowBridge.cpp)\\n'
+cmake_path.write_text(text.replace(anchor, anchor + addition, 1))
+copyfile(bridge_source, bridge_dest)
+print('Real upstream FreeCADGui Android MainWindow bridge compiled into FreeCADGui')
+PY_ANDROID_BRIDGE
+"""
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_bridge_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
