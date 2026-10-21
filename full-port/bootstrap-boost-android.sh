@@ -24,6 +24,16 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   2>&1 | tee "$LOG/boost-configure.log"
 cmake --build "$BUILD" --parallel 4 2>&1 | tee "$LOG/boost-build.log"
 cmake --install "$BUILD" 2>&1 | tee "$LOG/boost-install.log"
+# The FreeCADApp document engine uses header-only Boost modules (e.g. Bimap)
+# that BOOST_INCLUDE_LIBRARIES deliberately excludes from compilation/install.
+# Bundle ALL headers from the trusted, pinned Boost source archive without
+# building unrelated compiled Boost libraries. Prevent future missing-header
+# rebuild loops while retaining only the requested Android .so libraries.
+while IFS= read -r -d '' include_dir; do
+  cp -a "$include_dir/." "$PREFIX/include/"
+done < <(find "$SRC/libs" -type d -name include -print0)
+test -f "$PREFIX/include/boost/bimap.hpp"
+echo 'PASS: complete Boost 1.88 modular header tree staged for FreeCADBase + FreeCADApp'
 # Boost.Regex 1.88 is an INTERFACE/header-only target.
 test -f "$PREFIX/include/boost/regex.hpp"
 # FreeCAD Base::Reader / Persistence require these headers; excluding
