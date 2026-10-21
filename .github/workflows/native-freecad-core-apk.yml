@@ -137,6 +137,23 @@ jobs:
           for so in libFreeCADBase.so libFreeCADApp.so libdrnas_occt_mesh.so libpython3.14.so; do
             unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$so" || { echo "Missing core APK library: $so"; exit 1; }
           done
+          # Validate actual ICU RTTI exports inside the signed APK, not just
+          # the staging folder: Gradle strips/merges native DSOs during pack.
+          mkdir -p "$RUNNER_TEMP/freecad-apk-elf"
+          unzip -p "$apk" lib/arm64-v8a/libicui18n.so > "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so"
+          unzip -p "$apk" lib/arm64-v8a/libFreeCADBase.so > "$RUNNER_TEMP/freecad-apk-elf/libFreeCADBase.so"
+          echo 'APK ICU NumberFormat typeinfo symbol:'
+          readelf --dyn-syms --wide "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so" | grep -F '_ZTIN6icu_7512NumberFormatE'
+          echo 'APK FreeCADBase ICU dependencies:'
+          readelf -d "$RUNNER_TEMP/freecad-apk-elf/libFreeCADBase.so" | grep -E 'libicui18n|libicuuc'
+          echo 'Compare staged-vs-APK ICU symbol provider:'
+          sha256sum android-smoke/app/src/main/jniLibs/arm64-v8a/libicui18n.so "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so"
+          {
+            echo 'ICU typeinfo in APK:'
+            readelf --dyn-syms --wide "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so" | grep -F '_ZTIN6icu_7512NumberFormatE'
+            echo 'FreeCADBase NEEDED in APK:'
+            readelf -d "$RUNNER_TEMP/freecad-apk-elf/libFreeCADBase.so" | grep -E 'NEEDED|SONAME'
+          } > out/android-fullcore/final-apk-elf-audit.txt
           cp "$apk" out/android-fullcore/DRNAS-FreeCAD-Native-Core-ARM64-PreAlpha-debug.apk
           (cd out/android-fullcore && sha256sum DRNAS-FreeCAD-Native-Core-ARM64-PreAlpha-debug.apk > APK-SHA256SUMS.txt)
           echo 'PASS: Signed installable Android arm64 APK containing actual FreeCADBase + FreeCADApp and GPU viewer'
