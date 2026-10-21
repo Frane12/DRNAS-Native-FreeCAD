@@ -19,6 +19,13 @@ adb shell 'LD_LIBRARY_PATH=/data/local/tmp/drnas-freecad/lib /data/local/tmp/drn
 Expected success output: `DRNAS OCCT ARM64 geometry PASS, box-minus-bore volume=... mm3`.
 This is a developer smoke test, not an end-user Android installation.
 
+### Phase 3: isolated Android CAD core smoke APK
+[**Successful native Android APK build #39557289867**](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39557289867) — includes a **debug-signed APK** with a minimal Android UI, JNI bridge and all Open CASCADE Android ARM64 libraries. [Download build artifact ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39557289867/artifacts/12325649914), unzip and install the `DRNAS-FreeCAD-CAD-Smoke-arm64-debug.apk` on an ARM64 Android phone.
+
+The native test automatically models a box and subtracts a cylindrical hole; the screen reports PASS / FAIL, volume and meshing status. **On-device execution is not yet verified** — CI verifies compilation, packaging, ELF architecture and APK signature only. This is **not yet the FreeCAD application**.
+
+The APK workflow restores the previously verified OCCT SDK cache (no kernel recompilation). Its smaller JNI compiler cache and Gradle dependency cache are also enabled.
+
 ### Roadmap
 1. ✅ Android AArch64 OCCT kernel compile and ELF audit.
 2. 🔄 Link and run a real Android geometry/Boolean operation, then build a JNI-driven Android test UI.
