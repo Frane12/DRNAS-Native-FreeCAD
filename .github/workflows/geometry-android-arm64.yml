@@ -1,0 +1,78 @@
+name: DRNAS FreeCAD - Android geometry smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'native-tests/**'
+      - '.github/workflows/geometry-android-arm64.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: occt-android-arm64-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/geometry
+  CCACHE_MAXSIZE: '128M'
+  CCACHE_COMPRESS: 'true'
+jobs:
+  geometry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools and confirm NDK
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils file ccache
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+          mkdir -p "$CCACHE_DIR" out
+      - name: Restore existing OCCT Android SDK (must hit cache)
+        id: occt_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Refuse costly OCCT recompile on cache miss
+        run: |
+          test "${{ steps.occt_cache.outputs.cache-hit }}" = true ||
+            { echo "::error::Verified OCCT install cache missing — run the phase-1 workflow first"; exit 1; }
+          test -f out/occt-android/lib/libTKBO.so
+          test -f out/occt-android/include/opencascade/BRepPrimAPI_MakeBox.hxx
+      - name: Restore small geometry compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/geometry
+          key: geometry-ccache-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            geometry-ccache-android-arm64-
+      - name: Cross-link CAD boolean geometry harness for Android ARM64
+        id: compile
+        run: bash native-tests/build-android.sh
+      - name: Audit ELF interpreter, ABI and library dependencies
+        run: bash native-tests/verify-android.sh
+      - name: Show compiler cache usage
+        if: always()
+        run: ccache --show-stats || true
+      - name: Save geometry compiler cache even on failure
+        if: always() && steps.compile.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/geometry
+          key: geometry-ccache-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload Android executable, bridge library and audit (not an APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-freecad-geometry-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            out/geometry-arm64/
+            out/geometry-elf-audit.txt
+            out/geometry-sha256.txt
+          if-no-files-found: warn
+          retention-days: 30
