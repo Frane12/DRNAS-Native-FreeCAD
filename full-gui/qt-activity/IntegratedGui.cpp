@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QEventLoop>
 #include <QSettings>
 #include <dlfcn.h>
 #include <QComboBox>
@@ -20,6 +21,27 @@
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+
+
+// A restart-safe breadcrumb for *each stage* of real upstream MainWindow
+// startup. Native aborts (OpenGL/GL4ES/Python) cannot be caught in C++.
+namespace {
+QLabel* currentFreeCADStartupStatus = nullptr;
+void recordOriginalGuiStage(const char* stageName)
+{
+    const QString stage = QString::fromUtf8(stageName ? stageName : "unknown");
+    const QString message = QStringLiteral("ORIGINAL FreeCAD GUI: %1").arg(stage);
+    QSettings settings;
+    settings.setValue(QStringLiteral("nativeProbe/current"), message);
+    settings.setValue(QStringLiteral("nativeProbe/pending"), true);
+    settings.setValue(QStringLiteral("nativeProbe/result"), message);
+    settings.sync();
+    if (currentFreeCADStartupStatus) {
+        currentFreeCADStartupStatus->setText(message);
+    }
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+}
+}
 
 // REAL QtActivity + Qt6/C++ OpenCASCADE viewport, still NOT upstream
 // FreeCADGui or App::Document/ViewProvider/Coin3D.
@@ -89,10 +111,58 @@ public:
         diagnosisRow->addWidget(runProbe, 3);
         diagnosisRow->addWidget(copyDiagnostic, 2);
         outer->addLayout(diagnosisRow);
+        // The only full upstream GUI entrypoint is exported from the *real*
+        // compiled FreeCADGui.so. Leave this disabled until all native
+        // libraries have loaded successfully by explicit user request.
+        auto* launchOriginal=new QPushButton(
+            QStringLiteral("OPEN ORIGINAL FREECAD GUI (EXPERIMENTAL)"), central);
+        launchOriginal->setMinimumHeight(42);
+        launchOriginal->setEnabled(false);
+        outer->addWidget(launchOriginal);
+        connect(launchOriginal, &QPushButton::clicked, this,
+                [this, launchOriginal, nativeStatus] {
+            launchOriginal->setEnabled(false);
+            using StartOriginal = int (*)(void (*)(const char*));
+            using ReadError = const char* (*)();
+            dlerror();
+            auto* start = reinterpret_cast<StartOriginal>(
+                dlsym(RTLD_DEFAULT, "drnas_freecad_android_start"));
+            auto* lastError = reinterpret_cast<ReadError>(
+                dlsym(RTLD_DEFAULT, "drnas_freecad_android_last_error"));
+            if (!start || !lastError) {
+                nativeStatus->setText(QStringLiteral(
+                    "This APK has no Android original-GUI bridge symbol. "
+                    "Rebuild libFreeCADGui.so with AndroidMainWindowBridge."));
+                launchOriginal->setEnabled(true);
+                return;
+            }
+            currentFreeCADStartupStatus = nativeStatus;
+            recordOriginalGuiStage("Calling real Gui::MainWindow startup");
+            const int result = start(&recordOriginalGuiStage);
+            QSettings settings;
+            settings.setValue(QStringLiteral("nativeProbe/pending"), false);
+            if (result != 0) {
+                const char* error = lastError();
+                const QString reason=QString::fromUtf8(error ? error : "unknown");
+                const QString failure=QStringLiteral(
+                    "ORIGINAL GUI initialization failed (code %1): %2. "
+                    "Restart app before retrying.").arg(result).arg(reason);
+                nativeStatus->setText(failure);
+                settings.setValue(QStringLiteral("nativeProbe/result"), failure);
+            } else {
+                const QString success=QStringLiteral(
+                    "Real upstream FreeCAD Gui::MainWindow started. "
+                    "Part/Sketcher/PartDesign runtime not yet verified.");
+                settings.setValue(QStringLiteral("nativeProbe/result"), success);
+                nativeStatus->setText(success);
+                this->hide(); // The upstream FreeCAD QMainWindow is now shown.
+            }
+            settings.sync();
+        });
         connect(copyDiagnostic, &QPushButton::clicked, this, [nativeStatus] {
             QGuiApplication::clipboard()->setText(nativeStatus->text());
         });
-        connect(runProbe, &QPushButton::clicked, this, [nativeStatus, runProbe] {
+        connect(runProbe, &QPushButton::clicked, this, [nativeStatus, runProbe, launchOriginal] {
             // Save a durable breadcrumb for the next launch *before* each
             // potentially crashing dlopen. No auto-retry on next launch.
             constexpr const char* libraries[] = {
@@ -100,6 +170,7 @@ public:
                 "libFreeCADBase.so", "libFreeCADApp.so", "libFreeCADGui.so"
             };
             runProbe->setEnabled(false);
+            launchOriginal->setEnabled(false);
             QSettings diag;
             for (const char* library : libraries) {
                 const QString libName=QString::fromLatin1(library);
@@ -132,6 +203,7 @@ public:
             diag.sync();
             nativeStatus->setText(success);
             runProbe->setEnabled(true);
+            launchOriginal->setEnabled(true);
         });
         auto* integrationState = new QLabel(
             QStringLiteral("QtActivity stable-mode OCCT viewer / native FreeCAD "
