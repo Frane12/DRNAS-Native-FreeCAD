@@ -10,7 +10,6 @@ QT_VERSION="${QT_VERSION:-6.8.3}"
 QT_LIB="$ROOT/out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib"
 mkdir -p "$STAGE" "$REPORT"
 find "$STAGE" -maxdepth 1 -type f -name 'lib*.so' -delete
-command -v patchelf >/dev/null
 command -v readelf >/dev/null
 test -f "$NATIVE/SHA256SUMS"
 (cd "$NATIVE" && sha256sum -c SHA256SUMS)
@@ -53,52 +52,11 @@ copy_sos "$ROOT/out/full-deps/python/lib"
 copy_sos "$ROOT/out/full-deps/xerces-c/lib"
 copy_sos "$ROOT/out/full-deps/yaml-cpp/lib"
 
-# GL4ES was built with Linux-compatible libGL.so.1 SONAME although the
-# Android APK can only package its native library as libGL.so. Normalize
-# the *staged* copy and all AArch64 consumers, preserving upstream artifacts.
-test -s "$STAGE/libGL.so"
-patchelf --set-soname libGL.so "$STAGE/libGL.so"
-for so in "$STAGE"/lib*.so; do
-    if readelf -d "$so" | grep -Fq 'Shared library: [libGL.so.1]'; then
-        patchelf --replace-needed libGL.so.1 libGL.so "$so"
-    fi
-done
-# Do not allow a versioned name to slip past the dependency audit.
-if readelf -d "$STAGE/libFreeCADGui.so" | grep -Fq 'libGL.so.1'; then
-    echo "::error::FreeCADGui still depends on unpackagable libGL.so.1"
-    exit 1
-fi
+# Safely rewrite GL4ES and private ICU dependencies in-place. patchelf
+# previously caused invalid PT_LOAD alignment (see device's libCoin TIPx
+# crash). This intentionally does not relocate any ELF dynamic string table.
+python3 "$ROOT/full-gui/integrated-apk/relocate-android-sonames.py" "$STAGE"
 
-# Android's system ICU uses incompatible symbols: namespace staged ICU 75.
-for so in "$STAGE"/lib*.so; do
-    while IFS= read -r needed; do
-        [[ "$needed" == libicu*.so.75 ]] || continue
-        canonical="${needed%.75}"
-        test -f "$STAGE/$canonical" || { echo "::error::ICU library $canonical missing"; exit 1; }
-        patchelf --replace-needed "$needed" "$canonical" "$so"
-    done < <(readelf -d "$so" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
-    case "$(basename "$so")" in
-        libicu*.so) patchelf --set-soname "$(basename "$so")" "$so";;
-    esac
-done
-icu_renames=()
-for so in "$STAGE"/libicu*.so; do
-    [[ -f "$so" ]] || continue
-    old="$(basename "$so")"
-    new="libdrnas_icu75_${old#libicu}"
-    mv "$so" "$STAGE/$new"
-    patchelf --set-soname "$new" "$STAGE/$new"
-    icu_renames+=("$old:$new")
-done
-for so in "$STAGE"/lib*.so; do
-    for pair in "${icu_renames[@]}"; do
-        old="${pair%%:*}"
-        new="${pair#*:}"
-        if readelf -d "$so" | grep -Fq "Shared library: [$old]"; then
-            patchelf --replace-needed "$old" "$new" "$so"
-        fi
-    done
-done
 : > "$REPORT/native-needed.txt"
 missing=0
 for so in "$STAGE"/lib*.so; do
