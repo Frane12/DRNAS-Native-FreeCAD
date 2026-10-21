@@ -3,7 +3,8 @@ on:
   push:
     branches: [feature/full-freecad-android]
     paths:
-      - 'full-gui/**'
+      - 'full-gui/bootstrap-qt-gui-android.sh'
+      - 'full-gui/qt-widgets-shell/**'
       - '.github/workflows/full-freecad-gui-android.yml'
   workflow_dispatch:
 
