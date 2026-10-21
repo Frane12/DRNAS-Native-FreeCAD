@@ -1,11 +1,8 @@
 name: DRNAS FreeCADGui QtActivity APK Integration
+# Don't package against an older artifact on every GUI glue push.
+# The main-branch workflow_run controller automatically dispatches this
+# workflow with the exact successful upstream run ID AFTER assets are staged.
 on:
-  push:
-    branches: [feature/full-freecad-android]
-    paths:
-      - 'full-gui/integrated-apk/**'
-      - 'full-gui/qt-activity/**'
-      - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
   workflow_dispatch:
     inputs:
       upstream_run_id:
@@ -79,6 +76,28 @@ jobs:
           github-token: ${{ github.token }}
           name: DRNAS-Actual-Upstream-FreeCADGui-ARM64-${{ steps.upstream.outputs.run_id }}-${{ steps.upstream.outputs.attempt }}
           path: out/upstream-freecad-gui
+
+      - name: Require complete original FreeCAD GUI/workbench/overlay resources
+        run: |
+          set -euo pipefail
+          root=out/upstream-freecad-gui/resources
+          if [[ ! -d "$root" ]]; then
+            echo "::error::Upstream native GUI artifact lacks resources/. Select a successful full GUI run that includes 'Stage real native FreeCAD Part, Sketcher, PartDesign workbench UI and icons'."
+            exit 1
+          fi
+          for module in Part Sketcher PartDesign; do
+            test -s "$root/Mod/$module/InitGui.py" || {
+              echo "::error::Original $module/InitGui.py missing in upstream artifact"
+              exit 1
+            }
+          done
+          for icon in taskshow taskshow_lightgray editshow editshow_lightgray edithide edithide_lightgray float overlay close mode transparent autohide autohide_lightgray; do
+            test -s "$root/data/Gui/Stylesheets/overlay/icons/$icon.svg" || {
+              echo "::error::Missing upstream original overlay icon: $icon.svg"
+              exit 1
+            }
+          done
+          echo 'PASS: Genuine FreeCAD GUI workbenches and all on-device qss:overlay SVG icons are present.'
 
       - uses: actions/setup-java@v4
         with:
