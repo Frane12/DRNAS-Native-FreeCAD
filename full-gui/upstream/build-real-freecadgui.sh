@@ -316,15 +316,15 @@ needle = '''    mConfig["AppHomePath"] = Base::FileInfo::pathToString(
     );'''
 if s.count(needle) != 1:
     raise SystemExit("Pinned FreeCAD home location changed")
-replacement = needle + """
+replacement = needle + '''
 #ifdef __ANDROID__
     // Android's QtActivity has no conventional desktop bin/ location.
     if (const char* home = std::getenv("DRNAS_FREECAD_HOME"); home && *home) {
         mConfig["AppHomePath"] = home;
     }
 #endif
-"""
-p.write_text('#include <cstdlib>\n' + s.replace(needle, replacement))
+'''
+p.write_text('#include <cstdlib>\\n' + s.replace(needle, replacement))
 print('Original FreeCAD AppHomePath now resolves bundled Android workbenches')
 PY_DRNAS_HOME
 """
