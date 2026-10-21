@@ -18,7 +18,7 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_CXX_STANDARD=20 \
-  -DBOOST_INCLUDE_LIBRARIES="program_options;regex;thread;date_time" \
+  -DBOOST_INCLUDE_LIBRARIES="program_options;regex;thread;date_time;iostreams" \
   -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF \
   -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   2>&1 | tee "$LOG/boost-configure.log"
@@ -26,6 +26,10 @@ cmake --build "$BUILD" --parallel 4 2>&1 | tee "$LOG/boost-build.log"
 cmake --install "$BUILD" 2>&1 | tee "$LOG/boost-install.log"
 # Boost.Regex 1.88 is an INTERFACE/header-only target.
 test -f "$PREFIX/include/boost/regex.hpp"
+# FreeCAD Base::Reader / Persistence require these headers; excluding
+# iostreams previously stopped the real core build at 63/354.
+test -f "$PREFIX/include/boost/iostreams/categories.hpp"
+test -f "$PREFIX/include/boost/iostreams/stream.hpp"
 test -f "$PREFIX/lib/cmake/boost_regex-1.88.0/boost_regex-config.cmake"
 for name in program_options thread date_time; do
   lib="$(find "$PREFIX/lib" -maxdepth 1 -type f -name "libboost_${name}.so*" -print -quit)"
