@@ -128,7 +128,31 @@ endif()
 path.write_text(cmake.replace(anchor, anchor + addition))
 PY_COIN_EGL
 """
-s=s.replace(config_marker,validate_glu+coin_egl_patch+config_marker)
+# libc++ eagerly checks diagnostic format arguments in these templates.
+# Pass the same text used by Value's formatter explicitly.
+style_format_patch = """python3 - "$SOURCE/src/Gui/StyleParameters" <<'PY_STYLE_FORMAT'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+replacements = {
+    'Value.h': (
+        'name, valueTypeName<T>(), *found);',
+        'name, valueTypeName<T>(), found->toString());',
+    ),
+    'Gradient.h': (
+        'tupleKindName(Kind), Value {source});',
+        'tupleKindName(Kind), Value {source}.toString());',
+    ),
+}
+for filename, (old, new) in replacements.items():
+    path = root / filename
+    source = path.read_text()
+    assert source.count(old) == 1, f'Unexpected upstream diagnostic in {filename}'
+    path.write_text(source.replace(old, new))
+print('Style diagnostics use explicit Value string representation for libc++')
+PY_STYLE_FORMAT
+"""
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
