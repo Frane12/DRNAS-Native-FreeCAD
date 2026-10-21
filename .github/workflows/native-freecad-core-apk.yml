@@ -134,20 +134,20 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep "package: name='org.drnas.freecad.nativecore'"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep "native-code: 'arm64-v8a'"
-          for so in libFreeCADBase.so libFreeCADApp.so libdrnas_occt_mesh.so libpython3.14.so; do
+          for so in libFreeCADBase.so libFreeCADApp.so libdrnas_occt_mesh.so libpython3.14.so libdrnas_icu75_uc.so libdrnas_icu75_i18n.so libdrnas_icu75_data.so; do
             unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$so" || { echo "Missing core APK library: $so"; exit 1; }
           done
           # Validate actual ICU RTTI exports inside the signed APK, not just
           # the staging folder: Gradle strips/merges native DSOs during pack.
           mkdir -p "$RUNNER_TEMP/freecad-apk-elf"
-          unzip -p "$apk" lib/arm64-v8a/libicui18n.so > "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so"
+          unzip -p "$apk" lib/arm64-v8a/libdrnas_icu75_i18n.so > "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so"
           unzip -p "$apk" lib/arm64-v8a/libFreeCADBase.so > "$RUNNER_TEMP/freecad-apk-elf/libFreeCADBase.so"
           echo 'APK ICU NumberFormat typeinfo symbol:'
           readelf --dyn-syms --wide "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so" | grep -F '_ZTIN6icu_7512NumberFormatE'
           echo 'APK FreeCADBase ICU dependencies:'
-          readelf -d "$RUNNER_TEMP/freecad-apk-elf/libFreeCADBase.so" | grep -E 'libicui18n|libicuuc'
+          readelf -d "$RUNNER_TEMP/freecad-apk-elf/libFreeCADBase.so" | grep -E 'libdrnas_icu75_(i18n|uc)'
           echo 'Compare staged-vs-APK ICU symbol provider:'
-          sha256sum android-smoke/app/src/main/jniLibs/arm64-v8a/libicui18n.so "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so"
+          sha256sum android-smoke/app/src/main/jniLibs/arm64-v8a/libdrnas_icu75_i18n.so "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so"
           {
             echo 'ICU typeinfo in APK:'
             readelf --dyn-syms --wide "$RUNNER_TEMP/freecad-apk-elf/libicui18n.so" | grep -F '_ZTIN6icu_7512NumberFormatE'
