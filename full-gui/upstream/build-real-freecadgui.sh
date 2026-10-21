@@ -367,7 +367,7 @@ import sys
 path = Path(sys.argv[1])
 source = path.read_text()
 linux_guard = '#if defined(FC_OS_LINUX) || defined(FC_OS_BSD)'
-assert source.count(linux_guard) == 2, 'Pinned Sketcher FontProvider platform guards changed'
+assert source.count(linux_guard) == 3, 'Pinned Sketcher FontProvider platform guards changed'
 source = source.replace(linux_guard,
     '#if (defined(FC_OS_LINUX) || defined(FC_OS_BSD)) && !defined(__ANDROID__)')
 windows_guard = '#elif defined(FC_OS_WIN32)'
