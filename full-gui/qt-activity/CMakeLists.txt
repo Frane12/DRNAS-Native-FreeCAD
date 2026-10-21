@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(DRNAS_FreeCAD_Android_QtActivity LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 find_package(Qt6 6.8.3 REQUIRED COMPONENTS
-    Core Gui Widgets OpenGL OpenGLWidgets Svg SvgWidgets UiTools)
+    Core Gui Widgets OpenGL OpenGLWidgets Svg SvgWidgets UiTools Network PrintSupport Xml)
 # Use Qt's official Android entrypoint and deployment settings instead of
 # calling QApplication from the unrelated OCCT Java Activity.
 qt_add_executable(drnas_freecad_qtgui
@@ -12,7 +12,11 @@ qt_add_executable(drnas_freecad_qtgui
 )
 target_link_libraries(drnas_freecad_qtgui PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets
-    Qt6::Svg Qt6::SvgWidgets Qt6::UiTools)
+    Qt6::Svg Qt6::SvgWidgets Qt6::UiTools
+    # Real FreeCADGui and FreeCADApp directly DT_NEEDED these modules.
+    # Merely putting FreeCADGui.so in QT_ANDROID_EXTRA_LIBS does NOT cause
+    # androiddeployqt to include their transitive Qt6 libraries.
+    Qt6::Network Qt6::PrintSupport Qt6::Xml)
 
 # Real upstream OCCT 7.9.3 native libraries, reused from the stable
 # Android ARM64 FreeCAD viewport pipeline (no OCCT recompilation).
