@@ -186,10 +186,21 @@ jobs:
             --target drnas_freecad_qtgui_make_apk --parallel 4 \
             2>&1 | tee out/integrated-freecad-qtapk/compile.log
 
+      - name: Install ZIP packer for deferred native runtime
+        run: |
+          set -euo pipefail
+          if ! command -v zip >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends zip
+          fi
+
+      - name: Repack FreeCADGui as deferred native libraries and re-sign Safe Mode APK
+        run: bash full-gui/integrated-apk/package-safe-mode.sh
+
       - name: Verify actual APK ABI, signatures and native GUI library presence
         run: |
           set -euo pipefail
-          apk="$(find .build/freecad-native-integration -type f -name '*.apk' -print -quit)"
+          apk="out/integrated-freecad-qtapk/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
           test -n "$apk" && test -s "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" \
@@ -205,9 +216,8 @@ jobs:
           # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.
           python3 full-gui/integrated-apk/verify-apk-native-dependencies.py "$apk" \
             2>&1 | tee out/integrated-freecad-qtapk/native-dt-needed-audit.txt
-          cp "$apk" out/integrated-freecad-qtapk/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-Alpha.apk
           (cd out/integrated-freecad-qtapk && sha256sum *.apk > APK-SHA256SUMS.txt)
-          echo 'PASS: Signed ARM64 APK bundles actual upstream FreeCADGui/FreeCADApp/FreeCADBase and Coin3D.'
+          echo 'PASS: Signed SAFE MODE ARM64 APK bundles FreeCADGui and Coin3D without eager QtLoader loading.'
           echo 'NOTICE: Runtime and FreeCAD desktop MainWindow have not yet been tested on a physical phone.'
 
       - name: Upload APK and diagnostics even if integration fails
