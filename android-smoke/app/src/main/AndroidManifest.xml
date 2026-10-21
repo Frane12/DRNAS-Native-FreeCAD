@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <application android:label="DRNAS CAD Core Test" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+  <application android:label="DRNAS FreeCAD Base LAB" android:theme="@android:style/Theme.Material.Light.NoActionBar"
     android:allowBackup="false" android:usesCleartextTraffic="false" android:hasCode="true">
     <activity android:name=".MainActivity" android:exported="true">
       <intent-filter>

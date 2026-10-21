@@ -1,0 +1,110 @@
+name: DRNAS FreeCAD - Real Base C++ Android LAB APK
+on:
+  push:
+    branches: [feature/freecad-base-android]
+    paths:
+      - 'android-smoke/**'
+      - '.github/workflows/freecadbase-lab-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freecadbase-lab-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+  FREECAD_REF: 'd4ffc7f725973e073907746e88d320d3e438fd34'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/freecadbase
+  CCACHE_MAXSIZE: '128M'
+  CCACHE_COMPRESS: 'true'
+
+jobs:
+  apk:
+    name: Package native FreeCAD Base + OCCT Android ARM64 LAB APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Restore Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+          cache-read-only: false
+      - name: Install toolchain and build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache binutils file curl python3 libboost-dev
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
+          mkdir -p "$CCACHE_DIR" out
+      - name: Restore already verified Open CASCADE ARM64 SDK; no recompile
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Require verified Open CASCADE cache
+        run: |
+          test "${{ steps.occt.outputs.cache-hit }}" = true ||
+            { echo "::error::Verified OCCT cache missing; avoid needless kernel recompilation"; exit 1; }
+          test -f out/occt-android/lib/libTKBO.so
+      - name: Restore incremental FreeCAD C++ compilation cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/freecadbase
+          key: freecadbase-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            freecadbase-android-arm64-
+      - name: Build actual FreeCAD C++ Base module subset
+        id: freecad
+        run: bash core-probe/build.sh
+      - name: Cross-link FreeCAD C++ and Open CASCADE JNI bridge
+        id: jni
+        run: bash android-smoke/stage-native.sh
+      - name: Gradle compile isolated Android ARM64 LAB APK
+        id: gradle
+        run: |
+          cd android-smoke
+          gradle --no-daemon :app:assembleDebug
+      - name: Verify APK signing, package ID, ARM64 and native FreeCAD source
+        run: |
+          set -euo pipefail
+          mkdir -p out/base-lab-apk
+          cp android-smoke/app/build/outputs/apk/debug/app-debug.apk out/base-lab-apk/DRNAS-FreeCAD-Base-LAB-ARM64-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose out/base-lab-apk/*.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging out/base-lab-apk/*.apk | grep "package: name='org.drnas.freecad.coreprobe'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging out/base-lab-apk/*.apk | grep "native-code: 'arm64-v8a'"
+          unzip -l out/base-lab-apk/*.apk | grep 'lib/arm64-v8a/libdrnas_freecadbase_probe.so'
+          unzip -l out/base-lab-apk/*.apk | grep 'lib/arm64-v8a/libdrnas_occt_geometry.so'
+          sha256sum out/base-lab-apk/*.apk > out/base-lab-apk/SHA256SUMS.txt
+      - name: Show CCache
+        if: always()
+        run: ccache --show-stats || true
+      - name: Save FreeCAD C++ cache even after a failed APK build
+        if: always() && steps.freecad.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/freecadbase
+          key: freecadbase-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload signed LAB APK, checksum and upstream source audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DRNAS-FreeCADBase-Android-LAB-APK-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            out/base-lab-apk/
+            out/freecad-base-probe/android-elf-audit.txt
+            out/freecad-base-probe/android-vector3d-port.patch
+            out/freecad-base-probe/UPSTREAM_FREECAD_COMMIT.txt
+          if-no-files-found: warn
+          retention-days: 30

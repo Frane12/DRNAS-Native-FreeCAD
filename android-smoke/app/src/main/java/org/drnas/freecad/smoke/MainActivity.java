@@ -22,6 +22,22 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private String performFreeCADBaseTest() {
+        try {
+            return NativeCAD.runFreeCADBase();
+        } catch (Throwable t) {
+            return "FreeCAD C++ LOAD / EXECUTION FAILED: " + android.util.Log.getStackTraceString(t);
+        }
+    }
+
+    private void runFreeCADTest() {
+        output.setText("Running genuine FreeCADBase C++ on Android ARM64…");
+        new Thread(() -> {
+            final String status = performFreeCADBaseTest();
+            runOnUiThread(() -> output.setText(status));
+        }, "drnas-freecadbase-test").start();
+    }
+
     private void runTest() {
         output.setText("Running Open CASCADE solid modelling on Android ARM64…");
         new Thread(() -> {
@@ -42,7 +58,7 @@ public final class MainActivity extends Activity {
         scroll.addView(root, new ScrollView.LayoutParams(-1, -1));
 
         TextView title = new TextView(this);
-        title.setText("DRNAS Native CAD • ARM64");
+        title.setText("DRNAS Native FreeCAD Core LAB");
         title.setTypeface(null, Typeface.BOLD);
         title.setTextSize(24);
         root.addView(title);
@@ -50,7 +66,7 @@ public final class MainActivity extends Activity {
         TextView note = new TextView(this);
         note.setText("\nNative Open CASCADE geometry smoke test.\n"
             + "Box 10×20×30 mm minus a 6 mm cylindrical hole.\n\n"
-            + "This verifies our Android geometry bridge. "
+            + "Includes real upstream FreeCAD Base C++ plus native Open CASCADE. "
             + "It is NOT yet the FreeCAD application or its GUI.\n");
         note.setTextSize(16);
         root.addView(note);
@@ -59,6 +75,11 @@ public final class MainActivity extends Activity {
         run.setText("RUN CAD GEOMETRY TEST");
         root.addView(run);
         run.setOnClickListener(v -> runTest());
+
+        Button runFreecad = new Button(this);
+        runFreecad.setText("RUN REAL FREECAD C++ TEST");
+        root.addView(runFreecad);
+        runFreecad.setOnClickListener(v -> runFreeCADTest());
 
         output = new TextView(this);
         output.setTextSize(17);

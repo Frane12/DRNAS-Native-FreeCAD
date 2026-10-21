@@ -12,6 +12,9 @@ SDK_LIB="$PREFIX/lib"
 DIR="$ROOT/android-smoke/app/src/main/jniLibs/arm64-v8a"
 OBJ="$ROOT/out/apk-obj"
 mkdir -p "$DIR" "$OBJ"
+FREECAD_BASE_LIB="$ROOT/out/freecad-base-probe/android/lib/libdrnas_freecadbase_probe.so"
+[[ -f "$FREECAD_BASE_LIB" ]] || { echo "FreeCADBase source probe library missing" >&2; exit 1; }
+cp "$FREECAD_BASE_LIB" "$DIR/"
 [[ -f "$SDK_LIB/libTKBO.so" && -f "$SDK_INC/BRepAlgoAPI_Cut.hxx" ]] ||
   { echo "OCCT cache missing; refusing to recompile OCCT" >&2; exit 1; }
 [[ -x "$CXX" ]] || { echo "NDK compiler missing" >&2; exit 1; }
@@ -35,7 +38,7 @@ fi
   -I"$ROOT/native-tests" -c \
   "$ROOT/android-smoke/jni/drnas_smoke_jni.cpp" -o "$OBJ/jni.o"
 "$CXX" -shared -Wl,--no-undefined -Wl,-soname,libdrnas_freecad_smoke.so \
-  -L"$DIR" "$OBJ/jni.o" -ldrnas_occt_geometry \
+  -L"$DIR" "$OBJ/jni.o" -ldrnas_occt_geometry -ldrnas_freecadbase_probe \
   -o "$DIR/libdrnas_freecad_smoke.so"
 
 # Android app loader finds all transitive DSOs in its lib/arm64-v8a namespace.
