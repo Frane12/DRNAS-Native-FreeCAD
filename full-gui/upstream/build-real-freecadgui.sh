@@ -189,6 +189,39 @@ path.write_text(source)
 print('Quarter Android GLES2 omits unsupported GL_MULTISAMPLE toggling')
 PY_QUARTER_ANDROID
 """
+# The genuine FreeCADInit.py pipeline catches its own module-scan exceptions,
+# logging them but leaving FreeCAD.__ModCache__ undefined. FreeCADGuiInit then
+# raises a misleading AttributeError, hiding the actual module-scan error.
+# On this Android proof-of-concept, start with a correctly typed *empty*
+# workbench cache because no workbenches have been packaged yet, preserve the
+# real traceback for on-device diagnostics, and let the genuine GUI try booting.
+android_app_init_patch = """python3 - "$SOURCE/src/App/FreeCADInit.py" <<'PY_ANDROID_APP_INIT'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = '''def init_applications() -> None:
+    try:
+        InitPipeline().run()'''
+replacement = '''def init_applications() -> None:
+    # DRNAS Android: keep a valid module-cache object even when the native
+    # proof-of-concept has no filesystem workbench installations.
+    App.__ModCache__ = []
+    try:
+        InitPipeline().run()'''
+assert source.count(needle) == 1, 'Pinned FreeCADInit pipeline changed'
+source = source.replace(needle, replacement)
+needle = """    except Exception as ex:
+        Err(f'Error in init_applications {ex!s}')"""
+replacement = """    except Exception as ex:
+        # Preserve the *real* underlying exception before FreeCADGuiInit runs.
+        App.__DRNAS_AndroidInitError__ = traceback.format_exc()
+        Err(f'Error in init_applications {ex!s}')"""
+assert source.count(needle) == 1, 'Pinned FreeCADInit exception handling changed'
+path.write_text(source.replace(needle, replacement))
+print('FreeCAD Android app module cache initialized and real startup traceback retained')
+PY_ANDROID_APP_INIT
+"""
 # FreeCAD's upstream Python 3.11+ embedding uses an isolated PyConfig and
 # therefore ignores PYTHONHOME/PYTHONPATH.  The original GUI reached
 # Py_InitializeFromConfig on device, but failed there because the APK carried
@@ -272,7 +305,7 @@ copyfile(bridge_source, bridge_dest)
 print('Real upstream FreeCADGui Android MainWindow bridge compiled into FreeCADGui')
 PY_ANDROID_BRIDGE
 """
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_python_patch+android_bridge_patch+config_marker)
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
