@@ -3,6 +3,10 @@
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
+#include <QClipboard>
+#include <QCoreApplication>
+#include <QSettings>
+#include <dlfcn.h>
 #include <QComboBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -51,16 +55,88 @@ public:
         selector_->setMinimumWidth(136);
         selectorRow->addWidget(selector_);
         outer->addLayout(selectorRow);
-        // Device-level runtime evidence, never confuse dlopen with running
-        // FreeCAD's actual upstream MainWindow / Python workbenches.
-        auto* nativeStatus = new QLabel(
-            qEnvironmentVariable("DRNAS_FREECAD_NATIVE_STATUS",
-                                 "Native FreeCAD runtime not probed"), central);
+        // Crash-resistant SAFE MODE: never attempt native FreeCAD dlopen
+        // until the user explicitly presses the test button. Android native
+        // linker crashes cannot be caught with a C++ try/catch.
+        auto* nativeStatus = new QLabel(central);
         nativeStatus->setWordWrap(true);
-        nativeStatus->setStyleSheet(QStringLiteral("QLabel{background:#20344a;color:#b9e7ce;padding:5px;}"));
+        nativeStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        nativeStatus->setStyleSheet(QStringLiteral(
+            "QLabel{background:#20344a;color:#b9e7ce;padding:7px;}"));
         outer->addWidget(nativeStatus);
+        QSettings diagnostics;
+        QString lastStatus = diagnostics.value(
+            QStringLiteral("nativeProbe/result"),
+            QStringLiteral("SAFE MODE: Qt6 started. Native FreeCAD libraries are "
+                           "included in the APK but have NOT been loaded.")).toString();
+        if (diagnostics.value(QStringLiteral("nativeProbe/pending")).toBool()) {
+            lastStatus = QStringLiteral(
+                "LAST NATIVE CRASH: Android killed the app while loading %1. "
+                "This information was saved before dlopen; no system crash "
+                "report is needed. Restart is safe until TEST is pressed.")
+                .arg(diagnostics.value(QStringLiteral("nativeProbe/current"),
+                                        QStringLiteral("unknown")).toString());
+            diagnostics.setValue(QStringLiteral("nativeProbe/result"), lastStatus);
+            diagnostics.setValue(QStringLiteral("nativeProbe/pending"), false);
+            diagnostics.sync();
+        }
+        nativeStatus->setText(lastStatus);
+        auto* diagnosisRow=new QHBoxLayout;
+        auto* runProbe=new QPushButton(QStringLiteral("TEST FREECAD LIBRARIES"));
+        auto* copyDiagnostic=new QPushButton(QStringLiteral("COPY ERROR"));
+        runProbe->setMinimumHeight(36);
+        copyDiagnostic->setMinimumHeight(36);
+        diagnosisRow->addWidget(runProbe, 3);
+        diagnosisRow->addWidget(copyDiagnostic, 2);
+        outer->addLayout(diagnosisRow);
+        connect(copyDiagnostic, &QPushButton::clicked, this, [nativeStatus] {
+            QGuiApplication::clipboard()->setText(nativeStatus->text());
+        });
+        connect(runProbe, &QPushButton::clicked, this, [nativeStatus, runProbe] {
+            // Save a durable breadcrumb for the next launch *before* each
+            // potentially crashing dlopen. No auto-retry on next launch.
+            constexpr const char* libraries[] = {
+                "libGL.so", "libGLU.so", "libCoin.so",
+                "libFreeCADBase.so", "libFreeCADApp.so", "libFreeCADGui.so"
+            };
+            runProbe->setEnabled(false);
+            QSettings diag;
+            for (const char* library : libraries) {
+                const QString libName=QString::fromLatin1(library);
+                const QString progress=QStringLiteral("Loading %1 ...").arg(libName);
+                nativeStatus->setText(progress);
+                diag.setValue(QStringLiteral("nativeProbe/current"), libName);
+                diag.setValue(QStringLiteral("nativeProbe/pending"), true);
+                diag.setValue(QStringLiteral("nativeProbe/result"), progress);
+                diag.sync();
+                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+                dlerror();  // clear pre-existing error
+                if (!dlopen(library, RTLD_NOW | RTLD_GLOBAL)) {
+                    const char* error=dlerror();
+                    const QString detail=QStringLiteral("dlopen FAILED for %1: %2")
+                        .arg(libName)
+                        .arg(QString::fromLocal8Bit(error ? error : "unknown error"));
+                    diag.setValue(QStringLiteral("nativeProbe/result"), detail);
+                    diag.setValue(QStringLiteral("nativeProbe/pending"), false);
+                    diag.sync();
+                    nativeStatus->setText(detail);
+                    runProbe->setEnabled(true);
+                    return;
+                }
+            }
+            const QString success=QStringLiteral(
+                "PASS: genuine FreeCADBase, FreeCADApp, FreeCADGui, Coin3D, "
+                "GL4ES/GLU loaded. Original FreeCAD desktop GUI NOT yet running.");
+            diag.setValue(QStringLiteral("nativeProbe/result"), success);
+            diag.setValue(QStringLiteral("nativeProbe/pending"), false);
+            diag.sync();
+            nativeStatus->setText(success);
+            runProbe->setEnabled(true);
+        });
         auto* integrationState = new QLabel(
-            QStringLiteral("FreeCADGui ARM64 library integration • Full FreeCAD desktop workspace startup: pending"), central);
+            QStringLiteral("QtActivity stable-mode OCCT viewer / native FreeCAD "
+                           "load test is manual; original workbenches pending."),
+            central);
         integrationState->setWordWrap(true);
         outer->addWidget(integrationState);
 
