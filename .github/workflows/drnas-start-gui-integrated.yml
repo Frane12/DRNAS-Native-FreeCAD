@@ -1,0 +1,33 @@
+name: DRNAS - start integrated FreeCADGui native build
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/drnas-start-gui-integrated.yml'
+  workflow_dispatch:
+
+# One-time integration bootstrap, automatically starts the real FreeCADGui
+# ARM64 source build after the Coin3D APK staging integration lands.
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-first-integration-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start full ARM64 GUI build only if another is not active
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/upstream-freecadgui-full-android.yml/runs?branch=feature/full-freecad-android&per_page=8")"
+          active="$(jq '[.workflow_runs[] | select(.status == "queued" or .status == "in_progress" or .status == "pending" or .status == "waiting")] | length' <<<"$runs")"
+          if (( active > 0 )); then
+            echo "One FreeCADGui native build is already queued/running ($active); avoiding duplicate."
+            exit 0
+          fi
+          echo "Dispatching one new full FreeCADGui Bionic ARM64 build."
+          gh workflow run upstream-freecadgui-full-android.yml \
+            --repo "$GITHUB_REPOSITORY" --ref feature/full-freecad-android
+          echo "On success, the separate QtActivity APK packaging workflow will be dispatched automatically."
