@@ -43,6 +43,16 @@ echo 'UPSTREAM FreeCADGui Android ARM64 compiled: BUILD PASS' | tee "$OUT/full-g
 s=s.replace('OUT="$ROOT/out/full-freecad"', 'OUT="$ROOT/out/upstream-freecad-gui"')
 s=s.replace('BUILDDIR="$ROOT/.build/freecad-upstream-android-arm64"',
             'BUILDDIR="$ROOT/.build/freecad-upstream-real-gui-arm64"')
+# Use actual Android AArch64 GL4ES + GLU, not host Linux libGL and not
+# fake GLU stubs; the real GL4ES NDK build is pinned and validated separately.
+qt_flag = '  -DQT_HOST_PATH="$QT_HOST" ' + chr(92)
+assert s.count(qt_flag) == 1
+glflags = '''  -DOPENGL_INCLUDE_DIR="$ROOT/out/upstream-freecad-gui/opengl-compat/include" \\
+  -DOPENGL_gl_LIBRARY="$ROOT/out/upstream-freecad-gui/opengl-compat/lib/libGL.so" \\
+  -DOPENGL_glu_LIBRARY="$ROOT/out/upstream-freecad-gui/opengl-compat/lib/libGLU.so" \\
+  -DOPENGL_opengl_LIBRARY="$ROOT/out/upstream-freecad-gui/opengl-compat/lib/libGL.so" \\
+'''
+s = s.replace(qt_flag, glflags + qt_flag)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
