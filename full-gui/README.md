@@ -20,6 +20,36 @@
   still displays the existing real OCCT interactive CAD viewport, not
   FreeCAD's original workspace. Passing a `dlopen` check is not full GUI.
 
+## Original FreeCAD GUI launch experiment (2026-10-21)
+
+The APK screenshot showing an OCCT block and a `Preview model / B-Rep`
+tree is **not** FreeCAD's original GUI. The Android integration now has
+**two distinct modes**:
+
+- **SAFE viewer**: the existing independently working Qt6/OCCT CAD preview.
+- **OPEN ORIGINAL FREECAD GUI (EXPERIMENTAL)**: an explicit second step
+  after **TEST FREECAD LIBRARIES** succeeds. This calls
+  `drnas_freecad_android_start` exported *from original* Android-compiled
+  `libFreeCADGui.so` (not an emulated window). It initializes FreeCADApp,
+  the Gui::Application lifecycle, Gui::StartupProcess, the **real**
+  `Gui::MainWindow`, and upstream StartupPostProcess within the existing
+  QtActivity QApplication. It does NOT call the desktop `runApplication()`
+  method, which would try to create a second QApplication.
+
+If a native abort occurs, the last individual original-GUI startup stage is
+persisted before the call and displayed at the next application launch.
+Safe viewer mode does not automatically re-launch the crashing code.
+If `dlopen` fails, read the in-app error rather than assuming the APK starts
+FreeCAD desktop. App::init, the embedded CPython stdlib, working Part / Sketcher /
+PartDesign modules, Python workbench scripts, real document creation/save,
+Coin3D viewport and OpenGL ES interactions **still require on-device
+validation and subsequent runtime packaging**.
+
+**CI success proves build and packaging only**, not that the Android original
+MainWindow is usable. Rebuild upstream GUI (with the bridge exported) *before*
+testing an APK that shows the new launch button. An older native artifact can
+package successfully but will not contain `drnas_freecad_android_start`.
+
 ## Automatic full GUI -> APK pipeline
 
 1. Trigger **DRNAS REAL upstream FreeCADGui Full ARM64 Build** on
