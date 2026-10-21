@@ -24,7 +24,10 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   2>&1 | tee "$LOG/boost-configure.log"
 cmake --build "$BUILD" --parallel 4 2>&1 | tee "$LOG/boost-build.log"
 cmake --install "$BUILD" 2>&1 | tee "$LOG/boost-install.log"
-for name in program_options regex thread date_time; do
+# Boost.Regex 1.88 is an INTERFACE/header-only target.
+test -f "$PREFIX/include/boost/regex.hpp"
+test -f "$PREFIX/lib/cmake/boost_regex-1.88.0/boost_regex-config.cmake"
+for name in program_options thread date_time; do
   lib="$(find "$PREFIX/lib" -maxdepth 1 -type f -name "libboost_${name}.so*" -print -quit)"
   test -n "$lib"
   readelf -h "$lib" | grep -q 'Machine:.*AArch64'
