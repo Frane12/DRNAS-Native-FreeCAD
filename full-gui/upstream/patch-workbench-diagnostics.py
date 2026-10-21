@@ -11,6 +11,45 @@ def replace_once(source, old, new):
 
 
 def patch(root):
+    # PyCXX exceptions do not derive from std::exception. Inspect the active
+    # exception before replacing it, including its Python error indicator.
+    header = root / "src/Gui/AndroidWorkbenchDiagnostics.h"
+    header.write_text(r'''#pragma once
+#include <Base/Exception.h>
+#include <Base/Interpreter.h>
+#include <CXX/Objects.hxx>
+#include <cxxabi.h>
+#include <cstdlib>
+#include <exception>
+#include <string>
+#include <typeinfo>
+
+namespace {
+std::string drnasCurrentException()
+{
+    try { throw; }
+    catch (Py::Exception&) {
+        Base::PyException error;
+        return std::string("Python: ") + error.what() + "\n" + error.getStackTrace();
+    }
+    catch (const Base::Exception& error) { return error.what(); }
+    catch (const std::exception& error) {
+        return std::string(typeid(error).name()) + ": " + error.what();
+    }
+    catch (const char* error) { return error ? error : "null C-string exception"; }
+    catch (const std::string& error) { return error; }
+    catch (...) {
+        const std::type_info* type = abi::__cxa_current_exception_type();
+        if (!type) { return "unknown C++ exception type"; }
+        int status = 0;
+        char* decoded = abi::__cxa_demangle(type->name(), nullptr, nullptr, &status);
+        std::string name = status == 0 && decoded ? decoded : type->name();
+        std::free(decoded);
+        return "C++ exception type: " + name;
+    }
+}
+}
+''')
     path = root / "src/Gui/ApplicationPy.cpp"
     source = path.read_text()
     old = '''    catch (...) {
@@ -68,12 +107,47 @@ def patch(root):
     }
     catch (...) {
         throw Base::RuntimeError(std::string("Workbench activation / ") + phase
-            + ": non-standard C++ exception");
+            + ": " + drnasCurrentException());
     }
 }
 '''
     source = replace_once(source, old, new)
-    path.write_text('#include <Base/Exception.h>\n#include <exception>\n#include <string>\n#include <typeinfo>\n' + source)
+    path.write_text('#include "AndroidWorkbenchDiagnostics.h"\n' + source)
+
+    # Annotate both overloads, including recursive submenu construction.
+    # Keep all real commands; a failed menu must still fail initialization.
+    path = root / "src/Gui/MenuManager.cpp"
+    source = path.read_text()
+    for signature, following in [
+        ("void MenuManager::setup(MenuItem* menuItems) const", "void MenuManager::setup(MenuItem* item, QMenu* menu) const"),
+        ("void MenuManager::setup(MenuItem* item, QMenu* menu) const", "void MenuManager::retranslate() const"),
+    ]:
+        start = source.index(signature + "\n{")
+        end = source.index(following, start + len(signature))
+        old = source[start:end]
+        body = old.removeprefix(signature + "\n{").rstrip()
+        assert body.endswith("}")
+        body = body[:-1]
+        for loop in ["for (auto& item : menuItems->getItems()) {", "for (auto& item : item->getItems()) {"]:
+            if loop in body:
+                body = replace_once(body, loop, loop + '\n        currentItem = item->command();')
+        if "mgr.addTo(item->command().c_str(), menu)" in body:
+            body = replace_once(body, "if (mgr.addTo(item->command().c_str(), menu)) {",
+                'phase = "CommandManager::addTo";\n                    if (mgr.addTo(item->command().c_str(), menu)) {')
+        new = signature + '''
+{
+    std::string currentItem = "<menu bar>";
+    const char* phase = "create menu";
+    try {''' + body + '''    }
+    catch (...) {
+        throw Base::RuntimeError(std::string("Menu item ") + currentItem
+            + " / " + phase + ": " + drnasCurrentException());
+    }
+}
+
+'''
+        source = replace_once(source, old, new)
+    path.write_text('#include "AndroidWorkbenchDiagnostics.h"\n' + source)
 
 
 if __name__ == "__main__":
