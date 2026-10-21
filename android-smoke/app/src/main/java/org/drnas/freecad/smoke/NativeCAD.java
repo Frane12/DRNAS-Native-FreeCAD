@@ -14,13 +14,13 @@ public final class NativeCAD {
      */
     public static String checkFullFreeCADCore(String nativeLibraryDir) {
         String[] names={"FreeCADBase","FreeCADApp"};
-        StringBuilder result=new StringBuilder("REAL FREECAD ANDROID ARM64 CORE\\n");
+        StringBuilder result=new StringBuilder("REAL FREECAD ANDROID ARM64 CORE\n");
         for(String name:names) {
             try {
                 System.load(nativeLibraryDir+"/lib"+name+".so");
-                result.append("PASS: lib").append(name).append(".so loaded\\n");
+                result.append("PASS: lib").append(name).append(".so loaded\n");
             } catch(Throwable e) {
-                return result.append("FAIL: lib").append(name).append(".so\\n")
+                return result.append("FAIL: lib").append(name).append(".so\n")
                     .append(e.getClass().getSimpleName()).append(": ")
                     .append(e.getMessage()).toString();
             }
