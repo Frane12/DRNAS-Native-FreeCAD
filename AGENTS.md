@@ -11,9 +11,14 @@ on a real Android device. Never label one milestone as the other.
 - `scripts/freecad-ai-autofix.py` calls OpenAI with the `OPENAI_API_KEY` Actions secret.
 - Repairs are limited to a few build-helper scripts, at most two in a row.
   Never edit or echo the secret; never disable ELF/ABI checks or fake build success.
-- `.github/workflows/freecadgui-qtactivity-native-apk.yml` watches a successful
-  upstream FreeCADGui build and automatically attempts a **separate, installable
-  QtActivity ARM64 APK**. This packaging job is not yet auto-repaired by AI.
+- `.github/workflows/freecadgui-apk-on-upstream-success.yml` dispatches the
+  Android packaging job after a successful genuine upstream GUI build.
+- `.github/workflows/freecadgui-qtactivity-native-apk.yml` runs that packaging
+  in the feature branch (required to reuse branch-scoped Qt/OCCT/ICU caches).
+- `.github/workflows/freecad-apk-instant-autofix.yml` and
+  `scripts/freecad-apk-ai-autofix.py` provide a second guarded AI repair agent
+  for failed QtActivity APK integrations. It skips missing upstream binaries
+  and limits changes to a few existing packaging sources.
 
 ## Native GUI integration
 
