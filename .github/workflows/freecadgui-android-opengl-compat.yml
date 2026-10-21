@@ -1,0 +1,62 @@
+name: DRNAS FreeCADGui Native OpenGL Compatibility ARM64
+on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - 'full-gui/upstream/build-android-gl4es-glu.sh'
+      - '.github/workflows/freecadgui-android-opengl-compat.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: drnas-freecadgui-native-glu
+  cancel-in-progress: false
+jobs:
+  gl4es-glu:
+    name: Cross-compile real desktop OpenGL/GLU compatibility on Android arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Android arm64 NDK and CMake prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build git binutils
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018"
+          mkdir -p out/upstream-freecad-gui/opengl-compat
+      - name: Restore real Android GL4ES and GLU previously built
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+      - name: Build actual Android GL4ES libGL and GLU
+        id: compile
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: bash full-gui/upstream/build-android-gl4es-glu.sh
+      - name: Audit both native Android shared libraries
+        if: steps.compile.outcome == 'success' || steps.cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          for name in libGL.so libGLU.so; do
+            so="out/upstream-freecad-gui/opengl-compat/lib/$name"
+            test -s "$so"
+            readelf -h "$so" | grep -q 'Machine:.*AArch64'
+            readelf -h "$so" | grep -q 'Type:.*DYN'
+            ! readelf -d "$so" | grep -Eq 'libc\.so\.6|ld-linux'
+          done
+      - name: Cache verified real Android GL4ES and GLU
+        if: steps.cache.outputs.cache-hit != 'true' && steps.compile.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+      - name: Upload actual OpenGL/GLU native libraries and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DRNAS-FreeCADGui-GL4ES-GLU-ARM64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/upstream-freecad-gui/opengl-compat/
+          if-no-files-found: warn
+          retention-days: 30
