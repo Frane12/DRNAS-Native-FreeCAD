@@ -59,6 +59,43 @@ for so in "$ABI_DIR"/lib*.so; do
 done
 echo "Relocated $relocations ICU 75 ELF DT_NEEDED entries for native APK packaging"
 
+# Android includes its own ICU libraries in the com.android.i18n APEX with
+# the SAME unversioned names libicui18n.so/libicuuc.so, but a DIFFERENT ICU
+# ABI (e.g. ICU 77 on a newer Android). Bionic can reuse the system ICU by
+# SONAME, causing dlopen FreeCADBase to fail on icu_75::NumberFormat RTTI.
+# Namespace all of our ICU 75 ELF SONAMEs and every direct dependency to
+# collision-free names. This only changes STAGED copies, not verified caches.
+icu_rewrites=()
+for oldpath in "$ABI_DIR"/libicu*.so; do
+  test -f "$oldpath" || continue
+  old="$(basename "$oldpath")"
+  new="libdrnas_icu75_${old#libicu}"
+  mv "$oldpath" "$ABI_DIR/$new"
+  patchelf --set-soname "$new" "$ABI_DIR/$new"
+  icu_rewrites+=("$old:$new")
+  echo "Private ICU SONAME: $old => $new"
+done
+test -f "$ABI_DIR/libdrnas_icu75_uc.so"
+test -f "$ABI_DIR/libdrnas_icu75_i18n.so"
+test -f "$ABI_DIR/libdrnas_icu75_data.so"
+renamed_needed=0
+for so in "$ABI_DIR"/lib*.so; do
+  for pair in "${icu_rewrites[@]}"; do
+    old="${pair%%:*}"
+    new="${pair#*:}"
+    if readelf -d "$so" | grep -Fq "Shared library: [$old]"; then
+      patchelf --replace-needed "$old" "$new" "$so"
+      renamed_needed=$((renamed_needed + 1))
+    fi
+  done
+  if readelf -d "$so" | grep -Eq 'Shared library: \\[libicu[^]]*\\.so\\]'; then
+    echo "::error::Unrelocated system-colliding ICU SONAME in $so"
+    exit 1
+  fi
+done
+echo "PASS: $renamed_needed ICU references privately namespaced (no Android APEX collision)"
+
+
 # Android's bionic linker validates non-weak C++ RTTI symbols eagerly.
 # FreeCAD Base relies on the PUBLIC ICU 75 NumberFormat typeinfo exported
 # from libicui18n. Verify the actual staged dynamic symbol BEFORE uploading
@@ -71,11 +108,11 @@ echo "Relocated $relocations ICU 75 ELF DT_NEEDED entries for native APK packagi
   echo "FreeCADBase ICU 75 RTTI imports:"
   readelf --dyn-syms --wide "$ABI_DIR/libFreeCADBase.so" | grep -F '_ZTIN6icu_7512NumberFormatE' || true
   echo "ICU i18n dynamic RTTI exports:"
-  readelf --dyn-syms --wide "$ABI_DIR/libicui18n.so" | grep -F '_ZTIN6icu_7512NumberFormatE' || true
+  readelf --dyn-syms --wide "$ABI_DIR/libdrnas_icu75_i18n.so" | grep -F '_ZTIN6icu_7512NumberFormatE' || true
   echo "Staged ICU i18n SONAME and dependencies:"
-  readelf -d "$ABI_DIR/libicui18n.so" | grep -E 'NEEDED|SONAME'
+  readelf -d "$ABI_DIR/libdrnas_icu75_i18n.so" | grep -E 'NEEDED|SONAME'
 } | tee "$ROOT/out/android-fullcore/icu-rtti-audit.txt"
-if ! readelf --dyn-syms --wide "$ABI_DIR/libicui18n.so" | grep -Eq '(_ZTIN6icu_7512NumberFormatE)([[:space:]]|$)'; then
+if ! readelf --dyn-syms --wide "$ABI_DIR/libdrnas_icu75_i18n.so" | grep -Eq '(_ZTIN6icu_7512NumberFormatE)([[:space:]]|$)'; then
   echo "::error::ICU 75 NumberFormat RTTI not exported; on-device FreeCADBase dlopen would fail"
   exit 1
 fi
