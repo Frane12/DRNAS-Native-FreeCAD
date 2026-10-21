@@ -39,6 +39,18 @@ std::string drnasCurrentException()
     catch (const char* error) { return error ? error : "null C-string exception"; }
     catch (const std::string& error) { return error; }
     catch (...) {
+        // Android shared-library RTTI can leave a PyCXX exception unmatched.
+        // Read CPython's error indicator without another PyCXX conversion.
+        if (PyErr_Occurred()) {
+            PyObject* error = PyErr_GetRaisedException();
+            PyObject* message = error ? PyObject_Str(error) : nullptr;
+            const char* utf8 = message ? PyUnicode_AsUTF8(message) : nullptr;
+            std::string detail = utf8 ? utf8 : "unprintable Python exception";
+            Py_XDECREF(message);
+            Py_XDECREF(error);
+            PyErr_Clear();
+            return "Python: " + detail;
+        }
         const std::type_info* type = abi::__cxa_current_exception_type();
         if (!type) { return "unknown C++ exception type"; }
         int status = 0;
@@ -113,6 +125,24 @@ std::string drnasCurrentException()
 '''
     source = replace_once(source, old, new)
     path.write_text('#include "AndroidWorkbenchDiagnostics.h"\n' + source)
+
+    # Workbench.Icon is optional and the upstream base class sets it to None.
+    # Do not construct Py::String(None), then rely on a cross-DSO exception
+    # catch for ordinary absence of an icon. Retain the normal window-icon
+    # fallback below this block and preserve all existing string/icon paths.
+    path = root / "src/Gui/Application.cpp"
+    source = path.read_text()
+    start = source.index("QPixmap Application::workbenchIcon(")
+    end = source.index("QString Application::workbenchToolTip(", start)
+    old = source[start:end]
+    new = replace_once(old,
+        '                Py::String data(member);',
+        '                if (member.isString()) {\n                Py::String data(member);')
+    new = replace_once(new,
+        '                return icon;\n            }',
+        '                return icon;\n                }\n            }')
+    source = replace_once(source, old, new)
+    path.write_text(source)
 
     # Annotate both overloads, including recursive submenu construction.
     # Keep all real commands; a failed menu must still fail initialization.
