@@ -1,0 +1,37 @@
+name: DRNAS - launch FreeCADGui APK after full native build
+on:
+  workflow_run:
+    workflows:
+      - DRNAS REAL upstream FreeCADGui Full ARM64 Build
+    types: [completed]
+
+# Controller runs from main and dispatches the actual packaging on the
+# feature branch, where verified cached Qt/OCCT/ICU SDKs are accessible.
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: drnas-real-freecadgui-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch-native-apk:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'feature/full-freecad-android' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Launch exactly one integrated APK build in cache-owning branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          gh workflow run freecadgui-qtactivity-native-apk.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref feature/full-freecad-android \
+            -f "upstream_run_id=$BUILD_RUN_ID"
+          echo "Dispatched Android native FreeCADGui packaging for successful compiler run $BUILD_RUN_ID"
