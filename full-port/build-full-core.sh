@@ -83,6 +83,7 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DICU_I18N_LIBRARY="$ICU/lib/libicui18n.so" \
   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
   -DFREECAD_USE_CCACHE=ON \
+  -DBUILD_DYNAMIC_LINK_PYTHON=ON \
   -DEIGEN3_INCLUDE_DIR=/usr/include/eigen3 \
   -DBoost_DIR="$BOOST/lib/cmake/Boost-1.88.0" \
   -DFREECAD_USE_FREETYPE=OFF \
@@ -96,6 +97,28 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DFREECAD_USE_EXTERNAL_SMESH=OFF \
   2>&1 | tee "$OUT/full-cmake-configure.log"
 
+# Android ELF linking must resolve CPython APIs against the native Android
+# libpython, not leave undefined Py* symbols or accidentally link host glibc.
+# Check the actual FreeCADBase link rules before spending time compiling.
+python3 - "$BUILDDIR/build.ninja" "$PYSDK/lib/libpython3.14.so" <<'PY'
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+expected = sys.argv[2]
+for i, line in enumerate(lines):
+    if line.startswith("build lib/libFreeCADBase.so:"):
+        following = []
+        for candidate in lines[i+1:]:
+            if candidate.startswith("build "):
+                break
+            following.append(candidate)
+        if any(expected in candidate for candidate in following):
+            print("PASS: FreeCADBase links native Android CPython:", expected)
+            break
+        raise SystemExit("Missing native Android CPython in FreeCADBase link rule")
+else:
+    raise SystemExit("FreeCADBase link rule not found in Ninja file")
+PY
 echo 'CMake configure passed: now compile genuine upstream FreeCADBase and FreeCADApp'
 cmake --build "$BUILDDIR" --parallel 4 --target FreeCADBase FreeCADApp \
   2>&1 | tee "$OUT/full-core-compile.log"
