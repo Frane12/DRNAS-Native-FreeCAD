@@ -6,14 +6,11 @@ on:
       - 'core-probe/**'
       - '.github/workflows/freecadbase-source-arm64.yml'
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
   group: freecadbase-source-arm64-${{ github.ref }}
   cancel-in-progress: false
-
 env:
   NDK_VERSION: '27.2.12479018'
   ANDROID_API: '26'
@@ -21,19 +18,18 @@ env:
   CCACHE_DIR: ${{ github.workspace }}/.cache/freecadbase
   CCACHE_MAXSIZE: '128M'
   CCACHE_COMPRESS: 'true'
-
 jobs:
   freecadbase-source:
-    name: Compile actual FreeCAD Base source slice for Android ARM64
+    name: Compile actual FreeCAD Base C++ math + encoding for Android ARM64
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: Install required host tools
+      - name: Install required host tools and Boost header dependency
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang cmake ninja-build binutils file ccache curl
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build binutils file ccache curl python3 libboost-dev
           mkdir -p "$CCACHE_DIR" out
       - name: Android NDK presence
         run: |
@@ -49,19 +45,19 @@ jobs:
           key: freecadbase-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             freecadbase-android-arm64-
-      - name: Run host check and cross-compile pinned FreeCAD source
+      - name: Host execution and Android NDK cross-compile of actual FreeCAD C++
         id: compile
         run: bash core-probe/build.sh
       - name: Show compiler cache efficiency
         if: always()
         run: ccache --show-stats || true
-      - name: Save ccache even after a failed build
+      - name: Save ccache even after failed build
         if: always() && steps.compile.outcome != 'skipped'
         uses: actions/cache/save@v4
         with:
           path: .cache/freecadbase
           key: freecadbase-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Upload upstream FreeCAD C++ Android ARM64 ELF and diagnostics
+      - name: Upload FreeCAD C++ ARM64 ELF and Android portability patch
         if: always()
         uses: actions/upload-artifact@v4
         with:

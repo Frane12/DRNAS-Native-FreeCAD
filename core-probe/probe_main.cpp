@@ -3,9 +3,9 @@
 int main() {
     const int code = drnas_freecadbase_probe();
     if (code == 0) {
-        std::puts("PASS: ORIGINAL FreeCADBase source executed Base64 text + binary roundtrips");
+        std::puts("PASS: Real FreeCADBase Base64 + Vector3D source executed (text, binary, CAD vectors)");
     } else {
-        std::printf("FAIL: FreeCADBase source smoke failed at check %d\n", code);
+        std::printf("FAIL: FreeCADBase source test failed at check %d\n", code);
     }
     return code;
 }
