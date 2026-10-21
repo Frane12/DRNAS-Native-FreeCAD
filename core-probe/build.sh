@@ -41,7 +41,7 @@ requirements = ['#include <boost/math/special_functions/fpclassify.hpp>', '#incl
 for required in requirements:
     if required not in source:
         raise SystemExit(f"Unexpected upstream source change: {required!r}")
-adapted = source.replace('#include <boost/math/special_functions/fpclassify.hpp>', '#include <algorithm>\\n#include <FCGlobal.h>')
+adapted = source.replace('#include <boost/math/special_functions/fpclassify.hpp>', '#include <algorithm>\n#include <FCGlobal.h>')
 adapted = adapted.replace('#include "Tools.h"', '// Android portability: Tools.h is not referenced in Vector3D.cpp')
 adapted = adapted.replace('boost::math::isnan', 'std::isnan')
 pathlib.Path(sys.argv[2]).write_text(adapted)
