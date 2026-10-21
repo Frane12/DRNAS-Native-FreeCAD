@@ -16,11 +16,15 @@ extern "C" int drnas_occt_geometry_selftest(double* volume_mm3) {
   *volume_mm3 = 0.0;
   try {
     BRepPrimAPI_MakeBox box(10.0, 20.0, 30.0);
-    if (!box.IsDone()) return 1;
+    // OCCT constructors set parameters; IsDone() is false until Build()/Shape().
+    // Check status only after forcing construction of the primitive.
+    box.Build();
+    if (!box.IsDone() || box.Shape().IsNull()) return 1;
     BRepPrimAPI_MakeCylinder bore(
         gp_Ax2(gp_Pnt(5.0, 10.0, 0.0), gp_Dir(0.0, 0.0, 1.0)),
         3.0, 30.0);
-    if (!bore.IsDone()) return 2;
+    bore.Build();
+    if (!bore.IsDone() || bore.Shape().IsNull()) return 2;
     BRepAlgoAPI_Cut cut(box.Shape(), bore.Shape());
     cut.Build();
     if (!cut.IsDone() || cut.Shape().IsNull()) return 3;
