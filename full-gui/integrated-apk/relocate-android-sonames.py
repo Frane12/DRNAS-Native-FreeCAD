@@ -122,7 +122,7 @@ def main():
     stage = Path(sys.argv[1])
     if not stage.is_dir():
         raise ValueError(f"Native staging folder missing: {stage}")
-    so_files = sorted(stage.glob("lib*.so"))
+    so_files = sorted(stage.glob("*.so"))
     if not so_files:
         raise ValueError("No staged Android ELF libraries")
     needed_map = {}
@@ -138,7 +138,7 @@ def main():
                 raise ValueError(f"Private ICU name collision: {new}")
             original.rename(stage / new)
             print(f"Privately namespaced Android ICU: {old} => {new}")
-    available = {p.name for p in stage.glob("lib*.so")}
+    available = {p.name for p in stage.glob("*.so")}
     for source, needed in needed_map.items():
         for name in needed:
             if name in RENAME or name.startswith("libicu"):

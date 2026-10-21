@@ -38,7 +38,7 @@ while IFS= read -r -d '' so; do
     readelf -h "$so" | grep -q 'Type:.*DYN'
     cp -L "$so" "$work/bundle/lib/arm64-v8a/$base"
     names+=("$member")
-done < <(find "$STAGE" -maxdepth 1 -type f -name 'lib*.so' -print0 | sort -z)
+done < <(find "$STAGE" -maxdepth 1 -type f -name '*.so' -print0 | sort -z)
 # Python 3.14 cannot initialize from libpython alone: encodings, importlib,
 # codecs and the rest of the standard library must be in the APK. Ship the
 # verified official Android CPython prefix rather than host-system Python.
@@ -160,7 +160,7 @@ apk="$OUT/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
 "$SDK_BUILDTOOLS/apksigner" verify --verbose "$apk"
 "$SDK_BUILDTOOLS/zipalign" -c -P 16 4 "$apk"
 unzip -Z1 "$apk" > "$OUT/apk-files.txt"
-for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so libPart.so libPartGui.so libSketcher.so libSketcherGui.so libPartDesign.so libPartDesignGui.so; do
+for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so Part.so PartGui.so Sketcher.so SketcherGui.so PartDesign.so PartDesignGui.so; do
     grep -Fx "lib/arm64-v8a/$needed" "$OUT/apk-files.txt"
 done
 echo "PASS: injected ${#names[@]} deferred ARM64 libraries; retained $skipped Qt/OCCT entries."

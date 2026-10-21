@@ -9,7 +9,7 @@ REPORT="$ROOT/out/integrated-freecad-qtapk"
 QT_VERSION="${QT_VERSION:-6.8.3}"
 QT_LIB="$ROOT/out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib"
 mkdir -p "$STAGE" "$REPORT"
-find "$STAGE" -maxdepth 1 -type f -name 'lib*.so' -delete
+find "$STAGE" -maxdepth 1 -type f -name '*.so' -delete
 command -v readelf >/dev/null
 test -f "$NATIVE/SHA256SUMS"
 (cd "$NATIVE" && sha256sum -c SHA256SUMS)
@@ -40,7 +40,7 @@ copy_sos() {
         else
             cp -L "$so" "$STAGE/$base"
         fi
-    done < <(find "$prefix" -maxdepth 1 \( -type f -o -type l \) -name 'lib*.so' -print0)
+    done < <(find "$prefix" -maxdepth 1 \( -type f -o -type l \) -name '*.so' -print0)
 }
 # Qt libraries are provided by androiddeployqt, not duplicated as extras.
 copy_sos "$NATIVE"
@@ -59,7 +59,7 @@ python3 "$ROOT/full-gui/integrated-apk/relocate-android-sonames.py" "$STAGE"
 
 : > "$REPORT/native-needed.txt"
 missing=0
-for so in "$STAGE"/lib*.so; do
+for so in "$STAGE"/*.so; do
     readelf -h "$so" | grep -q 'Machine:.*AArch64'
     readelf -h "$so" | grep -q 'Type:.*DYN'
     if readelf -d "$so" | grep -Eq 'libc\.so\.6|ld-linux|libstdc\+\+\.so\.6'; then
@@ -86,4 +86,4 @@ done
 (cd "$STAGE" && sha256sum libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so libGL.so libGLU.so) > "$REPORT/native-libs-sha256.txt"
 printf 'FreeCAD ARM64 GUI binary staging PASS; source build: %s\n' "${UPSTREAM_GUI_RUN_ID:-unknown}" > "$REPORT/BUILD-INFO.txt"
 echo 'QtActivity runtime probe only: FreeCAD upstream MainWindow is not yet started; editing unverified.' >> "$REPORT/BUILD-INFO.txt"
-echo "PASS: $(find "$STAGE" -maxdepth 1 -name 'lib*.so' -type f | wc -l) Android AArch64 native libraries staged."
+echo "PASS: $(find "$STAGE" -maxdepth 1 -name '*.so' -type f | wc -l) Android AArch64 native libraries staged."

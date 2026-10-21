@@ -36,6 +36,8 @@ def inspect(apk):
             raise RuntimeError("APK has no arm64-v8a native shared objects")
         required = {
             "libCoin.so", "libFreeCADGui.so", "libFreeCADApp.so",
+            "Part.so", "PartGui.so", "Sketcher.so", "SketcherGui.so",
+            "PartDesign.so", "PartDesignGui.so",
             "libFreeCADBase.so", "libQt6Network_arm64-v8a.so",
             "libQt6PrintSupport_arm64-v8a.so", "libQt6Xml_arm64-v8a.so",
         }

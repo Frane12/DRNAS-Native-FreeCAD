@@ -167,10 +167,10 @@ jobs:
             fi
             cp -L "$file" "$stage/$base"
             ( cd "$stage" && sha256sum "$base" >> SHA256SUMS )
-          done < <(find "$libdir" -maxdepth 1 -type f -name 'lib*.so' -print0 | sort -z)
+          done < <(find "$libdir" -maxdepth 1 -type f -name '*.so' -print0 | sort -z)
           if [[ "${{ steps.build.outcome }}" == success ]]; then
-            for required in FreeCADBase FreeCADApp FreeCADGui Coin Part PartGui Sketcher SketcherGui PartDesign PartDesignGui; do
-              test -s "$stage/lib${required}.so" || {
+            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Part.so PartGui.so Sketcher.so SketcherGui.so PartDesign.so PartDesignGui.so; do
+              test -s "$stage/$required" || {
                 echo "::error::Missing real upstream lib${required}.so after successful build"
                 exit 1
               }
