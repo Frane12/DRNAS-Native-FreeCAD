@@ -1,8 +1,5 @@
 name: DRNAS FreeCADGui QtActivity APK Integration
 on:
-  workflow_run:
-    workflows: [DRNAS REAL upstream FreeCADGui Full ARM64 Build]
-    types: [completed]
   workflow_dispatch:
     inputs:
       upstream_run_id:
@@ -25,11 +22,9 @@ env:
 
 jobs:
   package-real-gui:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'feature/full-freecad-android' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+    # Always dispatched on feature/full-freecad-android: feature caches for
+    # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
+    if: github.ref == 'refs/heads/feature/full-freecad-android'
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -38,14 +33,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
           INPUT_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == workflow_run ]]; then
-            run_id="$EVENT_RUN_ID"
-          elif [[ -n "$INPUT_RUN_ID" ]]; then
+          if [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
             run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/upstream-freecadgui-full-android.yml/runs?branch=feature/full-freecad-android&status=success&per_page=1" --jq '.workflow_runs[0].id')"
