@@ -142,7 +142,8 @@ jobs:
       - name: Verify complete Android-target dependency caches
         run: |
           set -euo pipefail
-          for key in "${{ steps.occt.outputs.cache-hit }}" "${{ steps.qt.outputs.cache-hit }}" \
+          # OCCT may be built and verified above instead of restored from cache.
+          for key in "${{ steps.qt.outputs.cache-hit }}" \
                      "${{ steps.yaml.outputs.cache-hit }}" "${{ steps.icu.outputs.cache-hit }}" \
                      "${{ steps.python.outputs.cache-hit }}" "${{ steps.xerces.outputs.cache-hit }}" \
                      "${{ steps.boost.outputs.cache-hit }}" "${{ steps.host_icu.outputs.cache-hit }}"; do
