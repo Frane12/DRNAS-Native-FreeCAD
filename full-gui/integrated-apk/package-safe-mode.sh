@@ -42,10 +42,19 @@ test "${#names[@]}" -gt 0
 ( cd "$work/bundle" && zip -q -0 "$work/unsigned.apk" "${names[@]}" )
 # Support Android's newer 16 KB memory pages for uncompressed native ELF.
 "$SDK_BUILDTOOLS/zipalign" -P 16 -f 4 "$work/unsigned.apk" "$work/aligned.apk"
-test -f "$HOME/.android/debug.keystore" || {
-    echo "::error::Missing Android Gradle debug signing keystore"
-    exit 1
-}
+# Official Qt CMake/androiddeployqt may sign using a temporary local
+# debug key without creating ~/.android/debug.keystore on GitHub runners.
+# Generate an ephemeral, clearly-debug key if none exists. It is NEVER
+# committed, uploaded or reused as a release signing identity.
+if [[ ! -f "$HOME/.android/debug.keystore" ]]; then
+    mkdir -p "$HOME/.android"
+    keytool -genkeypair -noprompt \
+        -keystore "$HOME/.android/debug.keystore" \
+        -alias androiddebugkey -storepass android -keypass android \
+        -keyalg RSA -keysize 2048 -validity 10000 \
+        -dname "CN=DRNAS Android Debug,O=DRNAS,C=HR" >/dev/null
+    echo "Generated temporary Android DEBUG signing key for this CI build."
+fi
 apk="$OUT/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
 "$SDK_BUILDTOOLS/apksigner" sign \
     --ks "$HOME/.android/debug.keystore" \
