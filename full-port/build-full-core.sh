@@ -14,6 +14,7 @@ YAML="$ROOT/out/full-deps/yaml-cpp"
 ICU="$ROOT/out/full-deps/icu"
 PYSDK="$ROOT/out/full-deps/python"
 XERCES="$ROOT/out/full-deps/xerces-c"
+BOOST="$ROOT/out/full-deps/boost"
 SOURCE="$ROOT/.deps/freecad-upstream-full"
 BUILDDIR="$ROOT/.build/freecad-upstream-android-arm64"
 OUT="$ROOT/out/full-freecad"
@@ -35,6 +36,9 @@ git -C "$SOURCE" checkout --detach --force FETCH_HEAD
 actual="$(git -C "$SOURCE" rev-parse HEAD)"
 [[ "$actual" == "$FREECAD_REF" ]] || { echo "Source SHA mismatch: $actual" >&2; exit 1; }
 printf '%s\n' "$actual" > "$OUT/full-freecad-source-sha.txt"
+
+# Android pthread functions live in libc; there is no separate libpthread.
+sed -i 's/if(UNIX AND NOT APPLE)/if(UNIX AND NOT APPLE AND NOT ANDROID)/' "$SOURCE/cMake/FreeCAD_Helpers/SetupBoost.cmake"
 
 echo 'Full upstream FreeCAD configure for Android arm64-v8a — no host ABI fallbacks'
 cmake --version | tee "$OUT/cmake-version.txt"
@@ -58,11 +62,11 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$OUT/installed" \
   -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK;$XERCES" \
+  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK;$XERCES;$BOOST" \
   -DQt6_DIR="$QT/lib/cmake/Qt6" \
   -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)" \
   -DQT_HOST_PATH="$QT_HOST" \
-  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK;$XERCES" \
+  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK;$XERCES;$BOOST" \
   -DXercesC_INCLUDE_DIR="$XERCES/include" \
   -DXercesC_LIBRARY="$XERCES/lib/libxerces-c.so" \
   -DPython3_ROOT_DIR="$PYSDK" \
@@ -75,6 +79,9 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DICU_I18N_LIBRARY="$ICU/lib/libicui18n.so" \
   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
   -DFREECAD_USE_CCACHE=ON \
+  -DEIGEN3_INCLUDE_DIR=/usr/include/eigen3 \
+  -DBoost_DIR="$BOOST/lib/cmake/Boost-1.88.0" \
+  -DFREECAD_USE_FREETYPE=OFF \
   -DBUILD_GUI=OFF \
   -DBUILD_FEM=OFF -DBUILD_FEM_NETGEN=OFF \
   -DBUILD_MESH_PART=OFF -DBUILD_ROBOT=OFF \
