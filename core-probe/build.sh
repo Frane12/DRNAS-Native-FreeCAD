@@ -12,7 +12,7 @@ SRC="$ROOT/.deps/freecad/src"
 OUT="$ROOT/out/freecad-base-probe"
 mkdir -p "$SRC/Base" "$OUT/host" "$OUT/android/lib"
 for path in src/Base/Base64.cpp src/Base/Base64.h src/FCGlobal.h \
-            src/Base/Vector3D.cpp src/Base/Vector3D.h; do
+            src/Base/Vector3D.cpp src/Base/Vector3D.h src/Base/Tools.h; do
     target="$ROOT/.deps/freecad/$path"
     if [[ ! -s "$target" ]]; then
         curl --fail --location --silent --show-error --retry 3 \
