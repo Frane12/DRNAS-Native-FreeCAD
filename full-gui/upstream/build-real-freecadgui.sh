@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Compile the ACTUAL pinned upstream src/Gui/FreeCADGui Android ARM64 target.
+# After success, downstream GitHub Actions packages the real FreeCADGui and
+# its bundled Coin3D/GL4ES/OCCT runtime into a separate QtActivity ARM64 APK.
 # Keep original successful headless FreeCADBase/App build script unchanged.
 # Failure is an honest GUI dependency blocker; do not quietly substitute
 # our working OCCT Android viewport for upstream FreeCADGui.
