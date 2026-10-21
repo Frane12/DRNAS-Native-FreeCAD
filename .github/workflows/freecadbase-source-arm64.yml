@@ -1,0 +1,71 @@
+name: DRNAS FreeCAD - Native Android FreeCADBase Source
+on:
+  push:
+    branches: [feature/freecad-base-android]
+    paths:
+      - 'core-probe/**'
+      - '.github/workflows/freecadbase-source-arm64.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freecadbase-source-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+  FREECAD_REF: 'd4ffc7f725973e073907746e88d320d3e438fd34'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/freecadbase
+  CCACHE_MAXSIZE: '128M'
+  CCACHE_COMPRESS: 'true'
+
+jobs:
+  freecadbase-source:
+    name: Compile actual FreeCAD Base source slice for Android ARM64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install required host tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build binutils file ccache curl
+          mkdir -p "$CCACHE_DIR" out
+      - name: Android NDK presence
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake"
+      - name: Restore incremental FreeCADBase C++ cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/freecadbase
+          key: freecadbase-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            freecadbase-android-arm64-
+      - name: Run host check and cross-compile pinned FreeCAD source
+        id: compile
+        run: bash core-probe/build.sh
+      - name: Show compiler cache efficiency
+        if: always()
+        run: ccache --show-stats || true
+      - name: Save ccache even after a failed build
+        if: always() && steps.compile.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/freecadbase
+          key: freecadbase-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload upstream FreeCAD C++ Android ARM64 ELF and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-freecadbase-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/freecad-base-probe/
+          if-no-files-found: warn
+          retention-days: 30
