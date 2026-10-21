@@ -84,7 +84,29 @@ check='''    if(ANDROID)
 path.write_text(source.replace(needle,check+needle))
 PY_VALIDATE_GLU
 """
-s=s.replace(config_marker,validate_glu+config_marker)
+# Bundled Coin3D compiles native EGL offscreen glue under Android, so
+# libCoin.so must link against the *real NDK libEGL* (no fake symbols).
+# Set the link dependency after add_subdirectory(src) defines Coin.
+coin_egl_patch = """python3 - "$SOURCE/CMakeLists.txt" <<'PY_COIN_EGL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+cmake = path.read_text()
+anchor = 'add_subdirectory(src)\\n'
+assert cmake.count(anchor) == 1, 'Upstream FreeCAD src anchor changed'
+addition = '''
+if(ANDROID)
+    if(NOT TARGET Coin)
+        message(FATAL_ERROR "Real bundled Coin3D target is missing")
+    endif()
+    target_link_libraries(Coin PRIVATE EGL)
+    message(STATUS "Real Android NDK EGL linked to libCoin.so")
+endif()
+'''
+path.write_text(cmake.replace(anchor, anchor + addition))
+PY_COIN_EGL
+"""
+s=s.replace(config_marker,validate_glu+coin_egl_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
