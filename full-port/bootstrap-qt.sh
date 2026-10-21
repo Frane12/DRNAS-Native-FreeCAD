@@ -12,9 +12,9 @@ aqt="$RUNNER_TEMP/aqt-python/bin/aqt"
 # Qt >= 6.7 has its Android binary archives under the all_os host.
 # Linux x86_64 host binaries (moc/rcc) come from a SEPARATE desktop package.
 "$aqt" install-qt all_os android "$QT_VERSION" android_arm64_v8a \
-  --archives qtbase -O "$qt" \
+  --archives qtbase qttools -O "$qt" \
   2>&1 | tee "$ROOT/out/full-freecad/qt-android-download.log"
 "$aqt" install-qt linux desktop "$QT_VERSION" linux_gcc_64 \
-  --archives qtbase -O "$qt" \
+  --archives qtbase qttools -O "$qt" \
   2>&1 | tee "$ROOT/out/full-freecad/qt-host-download.log"
 bash "$ROOT/full-port/verify-qt-android.sh"

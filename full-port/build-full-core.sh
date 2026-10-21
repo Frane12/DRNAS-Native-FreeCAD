@@ -37,6 +37,8 @@ actual="$(git -C "$SOURCE" rev-parse HEAD)"
 [[ "$actual" == "$FREECAD_REF" ]] || { echo "Source SHA mismatch: $actual" >&2; exit 1; }
 printf '%s\n' "$actual" > "$OUT/full-freecad-source-sha.txt"
 
+# FreeCADApp embeds translations even in headless builds.
+sed -i 's/set(FREECAD_QT_COMPONENTS Core Concurrent Network Xml)/set(FREECAD_QT_COMPONENTS Core Concurrent Network Xml LinguistTools)/' "$SOURCE/cMake/FreeCAD_Helpers/SetupQt.cmake"
 # Android pthread functions live in libc; there is no separate libpthread.
 sed -i 's/if(UNIX AND NOT APPLE)/if(UNIX AND NOT APPLE AND NOT ANDROID)/' "$SOURCE/cMake/FreeCAD_Helpers/SetupBoost.cmake"
 
