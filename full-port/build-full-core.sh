@@ -13,6 +13,7 @@ OCCT="$ROOT/out/occt-android"
 YAML="$ROOT/out/full-deps/yaml-cpp"
 ICU="$ROOT/out/full-deps/icu"
 PYSDK="$ROOT/out/full-deps/python"
+XERCES="$ROOT/out/full-deps/xerces-c"
 SOURCE="$ROOT/.deps/freecad-upstream-full"
 BUILDDIR="$ROOT/.build/freecad-upstream-android-arm64"
 OUT="$ROOT/out/full-freecad"
@@ -22,6 +23,7 @@ test -f "$OCCT/lib/libTKBO.so"
 test -d "$YAML/lib/cmake/yaml-cpp"
 test -f "$ICU/include/unicode/utypes.h"
 test -f "$PYSDK/include/python3.14/Python.h"
+test -f "$XERCES/include/xercesc/util/XercesVersion.hpp"
 if [[ ! -d "$SOURCE/.git" ]]; then
   mkdir -p "$SOURCE"
   git -C "$SOURCE" init -q
@@ -56,11 +58,13 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$OUT/installed" \
   -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK" \
+  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK;$XERCES" \
   -DQt6_DIR="$QT/lib/cmake/Qt6" \
   -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)" \
   -DQT_HOST_PATH="$QT_HOST" \
-  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK" \
+  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK;$XERCES" \
+  -DXercesC_INCLUDE_DIR="$XERCES/include" \
+  -DXercesC_LIBRARY="$XERCES/lib/libxerces-c.so" \
   -DPython3_ROOT_DIR="$PYSDK" \
   -DPython3_INCLUDE_DIR="$PYSDK/include/python3.14" \
   -DPython3_LIBRARY="$PYSDK/lib/libpython3.14.so" \
