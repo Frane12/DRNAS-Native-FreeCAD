@@ -38,6 +38,27 @@ copy_libs "$ROOT/out/full-deps/xerces-c/lib"
 copy_libs "$ROOT/out/full-deps/yaml-cpp/lib"
 cp -L "$CORE/libFreeCADBase.so" "$CORE/libFreeCADApp.so" "$ABI_DIR/"
 
+# The upstream ICU Android libraries use versioned ELF SONAMEs (*.so.75),
+# but Android Gradle packages APK native libraries under unversioned *.so
+# filenames only. Relocate those ICU DT_NEEDED references in staging COPIES.
+# Source artifacts remain unchanged and are SHA-256 verified above.
+command -v patchelf >/dev/null || { echo "patchelf is needed for ICU SONAME relocation" >&2; exit 1; }
+relocations=0
+for so in "$ABI_DIR"/lib*.so; do
+  while IFS= read -r needed; do
+    [[ "$needed" == libicu*.so.75 ]] || continue
+    canonical="${needed%.75}"
+    test -f "$ABI_DIR/$canonical" || { echo "Missing ICU target: $canonical" >&2; exit 1; }
+    patchelf --replace-needed "$needed" "$canonical" "$so"
+    relocations=$(( relocations + 1 ))
+  done < <(readelf -d "$so" | sed -n 's/.*Shared library: \\[\\([^]]*\\)\\].*/\\1/p')
+  if [[ "$(basename "$so")" == libicu*.so ]] &&
+     readelf -d "$so" | grep -q 'Library soname: \\[libicu.*\.so\.75\\]'; then
+    patchelf --set-soname "$(basename "$so")" "$so"
+  fi
+done
+echo "Relocated $relocations ICU 75 ELF DT_NEEDED entries for native APK packaging"
+
 # Reject wrong architecture / glibc and missing DT_NEEDED dependencies.
 # Android public NDK platform libraries are provided by the device.
 missing=0
