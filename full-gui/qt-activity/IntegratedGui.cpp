@@ -139,7 +139,8 @@ bool configureBundledPython(QString& error)
     const QByteArray runtimeBytes = root.toUtf8();
     const QByteArray nativeBytes = nativeDir.toUtf8();
     if (setenv("DRNAS_PYTHON_RUNTIME", runtimeBytes.constData(), 1) != 0 ||
-        setenv("DRNAS_PYTHON_NATIVE_DIR", nativeBytes.constData(), 1) != 0) {
+        setenv("DRNAS_PYTHON_NATIVE_DIR", nativeBytes.constData(), 1) != 0 ||
+        setenv("PATH_TO_FREECAD_LIBDIR", nativeBytes.constData(), 1) != 0) {
         error = QStringLiteral("Could not configure embedded Python environment");
         return false;
     }
