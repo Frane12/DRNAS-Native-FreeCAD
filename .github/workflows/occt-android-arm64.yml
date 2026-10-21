@@ -1,0 +1,100 @@
+name: DRNAS FreeCAD - Android ARM64 OCCT
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/occt-android-arm64.yml'
+      - 'scripts/**'
+      - '.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: occt-android-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: '27.2.12479018'
+  OCCT_REF: 'V7_9_3'
+  ANDROID_API: '26'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+  CCACHE_MAXSIZE: '2G'
+  CCACHE_COMPRESS: 'true'
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_NOHASHDIR: 'true'
+
+jobs:
+  occt-android-arm64:
+    name: Build OCCT CAD kernel (arm64-v8a)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout DRNAS port tooling
+        uses: actions/checkout@v4
+      - name: Install build tools and ccache
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build git binutils file python3 ccache
+          mkdir -p "$CCACHE_DIR" out
+          ccache --version
+      - name: Locate / install Android NDK
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Android SDK missing on runner}"
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake"
+      - name: Verify NDK creates Android ARM64 PIE (fail fast)
+        run: bash scripts/android-ndk-smoke.sh
+      - name: Restore verified OCCT library cache
+        id: occt_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Restore incremental compiler cache
+        if: steps.occt_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/ccache
+          key: ccache-android-arm64-V7_9_3-ndk27.2-api26-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-android-arm64-V7_9_3-ndk27.2-api26-
+      - name: Cross-compile Open CASCADE CAD kernel
+        id: build
+        if: steps.occt_cache.outputs.cache-hit != 'true'
+        run: bash scripts/build-occt-android.sh
+      - name: Inspect Android ELF and create SHA256 manifest
+        id: audit
+        run: |
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
+          bash scripts/write-build-info.sh
+      - name: Save verified native OCCT libraries
+        if: steps.audit.outcome == 'success' && steps.occt_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats || true
+      - name: Save incremental compiler cache (including after build failures)
+        if: always() && steps.build.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/ccache
+          key: ccache-android-arm64-V7_9_3-ndk27.2-api26-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload native binaries, SHA256 and diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-freecad-occt-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 5

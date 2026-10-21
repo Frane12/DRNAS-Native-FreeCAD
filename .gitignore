@@ -1,0 +1,9 @@
+# Generated build data
+out/
+.build/
+.deps/
+.cache/
+*.o
+*.a
+*.so
+*.so.*
