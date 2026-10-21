@@ -1,4 +1,4 @@
-name: DRNAS FreeCAD - Native CAD Render LAB APK
+name: DRNAS FreeCAD - Native CAD Viewer and STL APK
 on:
   push:
     branches: [feature/freecad-base-android]
@@ -71,6 +71,13 @@ jobs:
       - name: Cross-link FreeCAD C++ and Open CASCADE JNI bridge
         id: jni
         run: bash android-smoke/stage-native.sh
+      - name: Verify binary STL format with host Java test
+        run: |
+          mkdir -p "$RUNNER_TEMP/stl-check"
+          javac -d "$RUNNER_TEMP/stl-check" \
+            android-smoke/app/src/main/java/org/drnas/freecad/smoke/StlWriter.java \
+            android-smoke/tests/StlWriterTest.java
+          java -cp "$RUNNER_TEMP/stl-check" org.drnas.freecad.smoke.StlWriterTest
       - name: Gradle compile isolated Android ARM64 LAB APK
         id: gradle
         run: |
@@ -80,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/render-lab-apk
-          cp android-smoke/app/build/outputs/apk/debug/app-debug.apk out/render-lab-apk/DRNAS-FreeCAD-Render-LAB-ARM64-debug.apk
+          cp android-smoke/app/build/outputs/apk/debug/app-debug.apk out/render-lab-apk/DRNAS-FreeCAD-Viewer-STL-ARM64-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose out/render-lab-apk/*.apk
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging out/render-lab-apk/*.apk | grep "package: name='org.drnas.freecad.coreprobe'"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging out/render-lab-apk/*.apk | grep "native-code: 'arm64-v8a'"
@@ -102,7 +109,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: DRNAS-FreeCAD-Render-LAB-APK-${{ github.run_id }}-${{ github.run_attempt }}
+          name: DRNAS-FreeCAD-Viewer-STL-APK-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             out/render-lab-apk/
             out/freecad-base-probe/android-elf-audit.txt
