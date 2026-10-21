@@ -14,15 +14,18 @@ import android.widget.TextView;
 public final class MainActivity extends Activity {
     private TextView output;
 
+    private String performNativeTest() {
+        try {
+            return NativeCAD.runGeometry();
+        } catch (Throwable t) {
+            return "NATIVE LOAD / EXECUTION FAILED\\n" + android.util.Log.getStackTraceString(t);
+        }
+    }
+
     private void runTest() {
         output.setText("Running Open CASCADE solid modelling on Android ARM64…");
         new Thread(() -> {
-            final String status;
-            try {
-                status = NativeCAD.runGeometry();
-            } catch (Throwable t) {
-                status = "NATIVE LOAD / EXECUTION FAILED\n" + android.util.Log.getStackTraceString(t);
-            }
+            final String status = performNativeTest();
             runOnUiThread(() -> output.setText(status));
         }, "drnas-occt-test").start();
     }
