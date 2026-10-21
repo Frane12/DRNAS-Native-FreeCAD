@@ -33,6 +33,8 @@ fi
 git -C "$SOURCE" fetch --depth 1 --filter=blob:none origin "$FREECAD_REF" \
     2>&1 | tee "$OUT/freecad-fetch.log"
 git -C "$SOURCE" checkout --detach --force FETCH_HEAD
+git -C "$SOURCE" submodule update --init --recursive --depth 1 \
+  2>&1 | tee "$OUT/freecad-submodules.log"
 actual="$(git -C "$SOURCE" rev-parse HEAD)"
 [[ "$actual" == "$FREECAD_REF" ]] || { echo "Source SHA mismatch: $actual" >&2; exit 1; }
 printf '%s\n' "$actual" > "$OUT/full-freecad-source-sha.txt"
