@@ -1,0 +1,49 @@
+name: FreeCAD - instant failure repair trigger
+
+on:
+  workflow_run:
+    workflows:
+      - DRNAS REAL upstream FreeCADGui Full ARM64 Build
+    types: [completed]
+
+# Listen on the DEFAULT branch. GitHub fires workflow_run after a build
+# finishes; this does not depend on Gmail or a phone being powered on.
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: drnas-freecad-on-failure-autofix
+  cancel-in-progress: false
+
+jobs:
+  auto-fix:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'feature/full-freecad-android' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Trusted fixer code is always checked out from main, NOT from the
+      # failing branch. The failing branch is treated only as patch data.
+      - name: Checkout trusted auto-fixer from main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: controller
+          persist-credentials: false
+      - name: Checkout exact failed branch for analysis and patch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 8
+          path: target
+          persist-credentials: true
+      - name: Analyze failure and attempt one guarded AI patch
+        run: python3 controller/scripts/freecad-ai-autofix.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AUTO_FIX_MODEL: gpt-5-mini
