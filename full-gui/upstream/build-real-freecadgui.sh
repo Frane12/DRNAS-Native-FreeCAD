@@ -92,7 +92,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 cmake = path.read_text()
-anchor = 'add_subdirectory(src)\\n'
+anchor = 'add_subdirectory(src)\n'
 assert cmake.count(anchor) == 1, 'Upstream FreeCAD src anchor changed'
 addition = '''
 if(ANDROID)
