@@ -67,7 +67,7 @@ Java_org_drnas_freecad_smoke_NativeCAD_nativeCheckFullFreeCADCore(JNIEnv* env,
 
     static void* baseHandle = nullptr;
     static void* appHandle = nullptr;
-    std::string result = "REAL FREECAD ANDROID ARM64 CORE\\n";
+    std::string result = "REAL FREECAD ANDROID ARM64 CORE\n";
     struct Library { const char* name; void** handle; };
     const Library libs[] = {
         {"FreeCADBase", &baseHandle},
@@ -82,16 +82,16 @@ Java_org_drnas_freecad_smoke_NativeCAD_nativeCheckFullFreeCADCore(JNIEnv* env,
                 const char* error = dlerror();
                 result += "FAIL: lib";
                 result += lib.name;
-                result += ".so\\n";
+                result += ".so\n";
                 result += (error ? error : "dlopen returned null with no error");
                 return env->NewStringUTF(result.c_str());
             }
         }
         result += "PASS: lib";
         result += lib.name;
-        result += ".so linked (Bionic dlopen)\\n";
+        result += ".so linked (Bionic dlopen)\n";
     }
-    result += "Both real ARM64 core libraries resolved on-device.\\n";
+    result += "Both real ARM64 core libraries resolved on-device.\n";
     result += "Qt JNI_OnLoad intentionally bypassed; runtime CAD documents, "
               "Qt bootstrap and desktop GUI are NOT yet verified.";
     return env->NewStringUTF(result.c_str());
