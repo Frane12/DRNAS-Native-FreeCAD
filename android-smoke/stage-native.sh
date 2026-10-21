@@ -38,8 +38,10 @@ fi
   -I"$ROOT/native-tests" -c \
   "$ROOT/android-smoke/jni/drnas_smoke_jni.cpp" -o "$OBJ/jni.o"
 "$CXX" -shared -Wl,--no-undefined -Wl,-soname,libdrnas_freecad_smoke.so \
-  -L"$DIR" "$OBJ/jni.o" -ldrnas_occt_geometry -ldrnas_freecadbase_probe \
+  -L"$DIR" "$OBJ/jni.o" -ldrnas_occt_geometry -ldrnas_freecadbase_probe -ldl \
   -o "$DIR/libdrnas_freecad_smoke.so"
+readelf --dyn-syms --wide "$DIR/libdrnas_freecad_smoke.so" | \
+  grep -q "Java_org_drnas_freecad_smoke_NativeCAD_nativeCheckFullFreeCADCore"
 
 # OCCT tessellation bridge: separate native module, cached C++ object.
 "${CACHE[@]}" "$CXX" -std=c++17 -O2 -fPIC \
