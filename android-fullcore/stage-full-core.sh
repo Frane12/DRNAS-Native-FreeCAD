@@ -51,9 +51,9 @@ for so in "$ABI_DIR"/lib*.so; do
     test -f "$ABI_DIR/$canonical" || { echo "Missing ICU target: $canonical" >&2; exit 1; }
     patchelf --replace-needed "$needed" "$canonical" "$so"
     relocations=$(( relocations + 1 ))
-  done < <(readelf -d "$so" | sed -n 's/.*Shared library: \\[\\([^]]*\\)\\].*/\\1/p')
+  done < <(readelf -d "$so" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')
   if [[ "$(basename "$so")" == libicu*.so ]] &&
-     readelf -d "$so" | grep -q 'Library soname: \\[libicu.*\.so\.75\\]'; then
+     readelf -d "$so" | grep -q 'Library soname: \[libicu.*\.so\.75\]'; then
     patchelf --set-soname "$(basename "$so")" "$so"
   fi
 done
