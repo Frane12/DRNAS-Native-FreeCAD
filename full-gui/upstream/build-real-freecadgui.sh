@@ -305,7 +305,8 @@ copyfile(bridge_source, bridge_dest)
 print('Real upstream FreeCADGui Android MainWindow bridge compiled into FreeCADGui')
 PY_ANDROID_BRIDGE
 """
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+config_marker)
+workbench_diagnostics_patch = 'python3 "$ROOT/full-gui/upstream/patch-workbench-diagnostics.py" "$SOURCE"\n'
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+workbench_diagnostics_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
