@@ -59,15 +59,20 @@ jobs:
           commit="$(jq -r '.head_sha' <<<"$info")"
           attempt="$(jq -r '.run_attempt' <<<"$info")"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          # Package the latest integration glue on our trusted feature branch.
+          # Native binary provenance remains pinned to the successful source SHA.
+          package_sha="$(gh api "repos/$GITHUB_REPOSITORY/branches/feature/full-freecad-android" --jq '.commit.sha')"
+          [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
-          echo "Source: $GITHUB_REPOSITORY@$commit; successful workflow run: $run_id / attempt $attempt"
+          echo "package_sha=$package_sha" >> "$GITHUB_OUTPUT"
+          echo "Packaging commit: $GITHUB_REPOSITORY@$package_sha; upstream binary source: $commit; successful upstream workflow run: $run_id / attempt $attempt"
 
-      - name: Checkout exact FreeCAD source that built the native GUI
+      - name: Checkout pinned Android integration source
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.upstream.outputs.commit }}
+          ref: ${{ steps.upstream.outputs.package_sha }}
           persist-credentials: false
 
       - name: Download real GUI, App, Base, Coin3D, GL4ES artifact
