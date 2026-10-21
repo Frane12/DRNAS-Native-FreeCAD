@@ -40,6 +40,28 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
           mkdir -p out/full-gui/qt-activity
+      # Qt 6.8.3 official host androiddeployqt needs ICU 73; Ubuntu 24.04
+      # has ICU 74, which must NOT be symlinked as a substitute.
+      - name: Restore real ICU 73 host runtime for Qt Android tools
+        id: host_icu
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-gui/host-icu73
+          key: drnas-qt-host-icu73-v1-${{ hashFiles('full-gui/bootstrap-icu73-host.sh') }}
+      - name: Compile ICU 73 x86_64 for official Qt tools, only once
+        if: steps.host_icu.outputs.cache-hit != 'true'
+        run: bash full-gui/bootstrap-icu73-host.sh
+      - name: Cache verified Qt host ICU 73 runtime
+        if: steps.host_icu.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-gui/host-icu73
+          key: drnas-qt-host-icu73-v1-${{ hashFiles('full-gui/bootstrap-icu73-host.sh') }}
+      - name: Use host ICU73 for androiddeployqt, never Android JNI
+        run: |
+          set -euo pipefail
+          test -f out/full-gui/host-icu73/lib/libicui18n.so.73
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/out/full-gui/host-icu73/lib" >> "$GITHUB_ENV"
       - name: Restore GUI Qt6 Android SDK (including QtSvg)
         id: qt
         uses: actions/cache/restore@v4
