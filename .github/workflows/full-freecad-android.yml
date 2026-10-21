@@ -366,6 +366,53 @@ jobs:
       - name: Attempt full FreeCAD source CMake + compile real libraries
         id: build
         run: bash full-port/build-full-core.sh
+      # GitHub runners are ephemeral: successful .so files otherwise vanish
+      # when the downstream FreeCADApp stage fails. Copy only linked, verified
+      # Android ELF libraries, including partial successes, before cleanup.
+      - name: Preserve verified FreeCADBase and FreeCADApp libraries on failure
+        if: ${{ always() && steps.build.outcome != 'skipped' }}
+        run: |
+          set -euo pipefail
+          stage="$GITHUB_WORKSPACE/out/native-freecad-core"
+          build="$GITHUB_WORKSPACE/.build/freecad-upstream-android-arm64/lib"
+          mkdir -p "$stage"
+          for name in FreeCADBase FreeCADApp; do
+            lib="$build/lib${name}.so"
+            if [[ ! -f "$lib" ]]; then
+              echo "Not yet built: lib${name}.so"
+              continue
+            fi
+            if ! readelf -h "$lib" | grep -q 'Machine:.*AArch64' ||
+               ! readelf -h "$lib" | grep -q 'Type:.*DYN' ||
+               readelf -d "$lib" | grep -Eq 'libc\\.so\\.6|ld-linux|libstdc\\+\\+\\.so\\.6'; then
+              echo "::warning::Skipping invalid or non-Android $lib"
+              continue
+            fi
+            cp -L "$lib" "$stage/lib${name}.so"
+            ( cd "$stage" && sha256sum "lib${name}.so" >> SHA256SUMS )
+            echo "Preserved native Android ARM64 lib${name}.so"
+          done
+          if [[ -f "$stage/SHA256SUMS" ]]; then
+            {
+              echo "FreeCAD source commit: $FREECAD_REF"
+              echo "GitHub source commit: $GITHUB_SHA"
+              echo "Android ABI: arm64-v8a"
+              echo "Android API: $ANDROID_API"
+              echo "Qt: $QT_VERSION; NDK: $NDK_VERSION"
+              echo "Run: $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
+            } > "$stage/BUILD-INFO.txt"
+            cat "$stage/SHA256SUMS"
+          else
+            echo "No linked FreeCAD core libraries available to preserve."
+          fi
+      - name: Upload native FreeCAD core binaries even when build fails
+        if: ${{ always() && steps.build.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-native-freecad-core-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/native-freecad-core/
+          if-no-files-found: warn
+          retention-days: 30
       - name: Compiler cache diagnostics
         if: always()
         run: ccache --show-stats || true
