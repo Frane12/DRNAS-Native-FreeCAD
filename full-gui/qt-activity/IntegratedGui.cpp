@@ -70,8 +70,62 @@ bool configureBundledPython(QString& error)
             return false;
         }
     }
-    // Python's C extension modules must remain under Android's approved
-    // nativeLibraryDir (in the signed APK, not a writable .so directory).
+    // Standard-library extension modules (for example _struct and _ssl) are
+    // compiled for Android and cannot be imported directly out of a zipfile.
+    // CPython's official Android testbed likewise extracts these assets.
+    QFile manifest(QStringLiteral("assets:/drnas/python-ext-manifest.txt"));
+    if (!manifest.open(QIODevice::ReadOnly)) {
+        error = QStringLiteral("Python native-extension manifest missing: %1")
+                    .arg(manifest.errorString());
+        return false;
+    }
+    const QString extdir = root + QStringLiteral("/lib-dynload");
+    if (!QDir().mkpath(extdir)) {
+        error = QStringLiteral("Cannot create Python extension directory");
+        return false;
+    }
+    const QList<QByteArray> extensions = manifest.readAll().split('\n');
+    int extensionCount = 0;
+    for (const QByteArray& nameBytes : extensions) {
+        const QString name = QString::fromUtf8(nameBytes.trimmed());
+        if (name.isEmpty()) continue;
+        // Never allow a manifest entry to escape app-private storage.
+        if (name.contains(QLatin1Char('/')) || name.contains(QLatin1Char('\\'))
+            || name.contains(QStringLiteral("..")) || !name.endsWith(QStringLiteral(".so"))) {
+            error = QStringLiteral("Unsafe embedded Python extension filename: %1").arg(name);
+            return false;
+        }
+        QFile module(QStringLiteral("assets:/drnas/python-ext/") + name);
+        if (!module.open(QIODevice::ReadOnly) || module.size() == 0) {
+            error = QStringLiteral("Missing Android CPython module: %1").arg(name);
+            return false;
+        }
+        const QString dest = extdir + QLatin1Char('/') + name;
+        if (!QFileInfo::exists(dest) || QFileInfo(dest).size() != module.size()) {
+            QSaveFile target(dest);
+            if (!target.open(QIODevice::WriteOnly)) {
+                error = QStringLiteral("Cannot stage Python extension: %1").arg(name);
+                return false;
+            }
+            while (!module.atEnd()) {
+                const QByteArray bytes = module.read(256 * 1024);
+                if (bytes.isEmpty() || target.write(bytes) != bytes.size()) {
+                    target.cancelWriting();
+                    error = QStringLiteral("Cannot copy Python extension: %1").arg(name);
+                    return false;
+                }
+            }
+            if (!target.commit()) {
+                error = QStringLiteral("Cannot commit Python extension: %1").arg(name);
+                return false;
+            }
+        }
+        ++extensionCount;
+    }
+    if (!extensionCount) {
+        error = QStringLiteral("No Android Python extension modules were bundled");
+        return false;
+    }
     // libpython has already been loaded by the explicit FreeCAD dlopen test.
     dlerror();
     void* pyInit = dlsym(RTLD_DEFAULT, "Py_InitializeFromConfig");
