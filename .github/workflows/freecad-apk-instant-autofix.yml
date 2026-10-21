@@ -1,0 +1,45 @@
+name: DRNAS - AI repair failed native FreeCADGui APK
+on:
+  workflow_run:
+    workflows:
+      - DRNAS FreeCADGui QtActivity APK Integration
+    types: [completed]
+
+# The original trusted bot lives on main. Only the user's feature branch
+# is eligible for narrowly scoped fixes; no secrets are exposed to builds.
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: drnas-freecad-apk-autofix
+  cancel-in-progress: false
+
+jobs:
+  auto-fix-apk:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout trusted AI repair controller on main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: controller
+          persist-credentials: false
+      - name: Checkout latest approved FreeCAD integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/full-freecad-android
+          fetch-depth: 8
+          path: target
+          persist-credentials: true
+      - name: Analyze failed APK and submit at most one guarded repair
+        run: python3 controller/scripts/freecad-apk-ai-autofix.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AUTO_FIX_MODEL: gpt-5-mini
