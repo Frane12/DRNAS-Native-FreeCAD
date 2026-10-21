@@ -10,12 +10,14 @@ NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
 QT="$ROOT/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
 QT_HOST="$ROOT/out/full-deps/qt/$QT_VERSION/gcc_64"
 OCCT="$ROOT/out/occt-android"
+YAML="$ROOT/out/full-deps/yaml-cpp"
 SOURCE="$ROOT/.deps/freecad-upstream-full"
 BUILDDIR="$ROOT/.build/freecad-upstream-android-arm64"
 OUT="$ROOT/out/full-freecad"
 mkdir -p "$OUT" "$(dirname "$SOURCE")" "$(dirname "$BUILDDIR")"
 test -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake"
 test -f "$OCCT/lib/libTKBO.so"
+test -d "$YAML/lib/cmake/yaml-cpp"
 if [[ ! -d "$SOURCE/.git" ]]; then
   mkdir -p "$SOURCE"
   git -C "$SOURCE" init -q
@@ -50,15 +52,16 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$OUT/installed" \
   -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-  -DCMAKE_PREFIX_PATH="$QT;$OCCT" \
+  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML" \
   -DQt6_DIR="$QT/lib/cmake/Qt6" \
   -DQT_HOST_PATH="$QT_HOST" \
-  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT" \
+  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML" \
   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
   -DFREECAD_USE_CCACHE=ON \
   -DBUILD_GUI=OFF \
   -DBUILD_FEM=OFF -DBUILD_FEM_NETGEN=OFF \
   -DBUILD_MESH_PART=OFF -DBUILD_ROBOT=OFF \
+  -DBUILD_FLAT_MESH=OFF -DBUILD_OPENSCAD=OFF \
   -DBUILD_BIM=OFF -DBUILD_ASSEMBLY=OFF \
   -DBUILD_TEST=OFF -DENABLE_DEVELOPER_TESTS=OFF \
   -DBUILD_WEB=OFF -DBUILD_DESIGNER_PLUGIN=OFF \
