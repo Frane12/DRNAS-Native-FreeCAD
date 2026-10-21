@@ -100,7 +100,13 @@ if(ANDROID)
         message(FATAL_ERROR "Real bundled Coin3D target is missing")
     endif()
     target_link_libraries(Coin PRIVATE EGL)
-    message(STATUS "Real Android NDK EGL linked to libCoin.so")
+    # FreeCADGui includes legacy GL/gl.h directly; the NDK itself ships
+    # GLES headers, so expose the verified real Android GL4ES headers.
+    if(NOT TARGET FreeCADGui)
+        message(FATAL_ERROR "Real upstream FreeCADGui target is missing")
+    endif()
+    target_include_directories(FreeCADGui PRIVATE "${OPENGL_INCLUDE_DIR}")
+    message(STATUS "Real Android NDK EGL linked to libCoin.so and GL4ES headers to FreeCADGui")
 endif()
 '''
 path.write_text(cmake.replace(anchor, anchor + addition))
