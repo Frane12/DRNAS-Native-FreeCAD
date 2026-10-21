@@ -144,20 +144,30 @@ jobs:
           stage="$GITHUB_WORKSPACE/out/upstream-freecad-gui/native"
           libdir="$GITHUB_WORKSPACE/.build/freecad-upstream-real-gui-arm64/lib"
           mkdir -p "$stage"
-          for name in FreeCADBase FreeCADApp FreeCADGui; do
-            file="$libdir/lib${name}.so"
-            if [[ ! -f "$file" ]]; then
-              echo "Not built yet: lib${name}.so"
-              continue
-            fi
+          # Save ALL genuine native upstream libraries needed by Android.
+          # In particular, libCoin.so is a direct dependency of FreeCADGui.
+          : > "$stage/SHA256SUMS"
+          test -d "$libdir"
+          while IFS= read -r -d '' file; do
+            base="$(basename "$file")"
             readelf -h "$file" | grep -q 'Machine:.*AArch64'
+            readelf -h "$file" | grep -q 'Type:.*DYN'
             if readelf -d "$file" | grep -Eq 'libc\.so\.6|ld-linux|libstdc\+\+\.so\.6'; then
               echo "::error::Rejecting host Linux ABI library: $file"
               exit 1
             fi
-            cp -L "$file" "$stage/lib${name}.so"
-            ( cd "$stage" && sha256sum "lib${name}.so" >> SHA256SUMS )
-          done
+            cp -L "$file" "$stage/$base"
+            ( cd "$stage" && sha256sum "$base" >> SHA256SUMS )
+          done < <(find "$libdir" -maxdepth 1 -type f -name 'lib*.so' -print0 | sort -z)
+          if [[ "${{ steps.build.outcome }}" == success ]]; then
+            for required in FreeCADBase FreeCADApp FreeCADGui Coin; do
+              test -s "$stage/lib${required}.so" || {
+                echo "::error::Missing real upstream lib${required}.so after successful build"
+                exit 1
+              }
+            done
+          fi
+          echo "Saved $(find "$stage" -maxdepth 1 -type f -name 'lib*.so' | wc -l) upstream ARM64 libraries"
 
       - name: Compiler cache reuse diagnostic
         if: always()
