@@ -130,17 +130,17 @@ def main():
     if not (
         wr.get("name") == PACKAGE_WORKFLOW_NAME and
         wr.get("conclusion") == "failure" and
-        wr.get("head_branch") == "main" and
+        wr.get("head_branch") == TARGET_BRANCH and
         wr.get("head_repository", {}).get("full_name") == REPO and
         wr.get("repository", {}).get("full_name") == REPO and
-        wr.get("event") in ("workflow_run", "workflow_dispatch")
+        wr.get("event") == "workflow_dispatch"
     ):
         stop("Ignoring unrelated workflow run.")
 
     run_id = int(wr["id"])
     last = api(
         f"repos/{REPO}/actions/workflows/{PACKAGE_WORKFLOW}/runs"
-        "?branch=main&per_page=8"
+        f"?branch={TARGET_BRANCH}&per_page=8"
     )["workflow_runs"]
     if not last or int(last[0]["id"]) != run_id:
         stop("A newer QtActivity integration run exists; no duplicate auto-fix.")
@@ -218,7 +218,7 @@ def main():
     run(["git", "push", "origin", f"HEAD:refs/heads/{TARGET_BRANCH}"], cwd=target)
     # A GitHub GITHUB_TOKEN push cannot trigger Actions. Dispatch explicitly.
     run(["gh", "workflow", "run", PACKAGE_WORKFLOW, "--repo", REPO,
-         "--ref", "main"])
+         "--ref", TARGET_BRANCH])
     note("✅ One limited APK fix committed and a new signed APK workflow dispatched.")
 
 
