@@ -28,7 +28,7 @@ assert s.count('--target FreeCADBase FreeCADApp') == 1
 s=s.replace('--target FreeCADBase FreeCADApp',
             '--target FreeCADBase FreeCADApp FreeCADGui')
 # Attempt genuine native FreeCADGui and fail if its .so is absent.
-needle='echo \\'FULL FreeCADBase + FreeCADApp Android ARM64: BUILD PASS\\' | tee "$OUT/full-core-result.txt"'
+needle = """echo 'FULL FreeCADBase + FreeCADApp Android ARM64: BUILD PASS' | tee "$OUT/full-core-result.txt"""
 assert s.count(needle)==1
 s=s.replace(needle, """
 gui="$(find "$BUILDDIR" -type f -name 'libFreeCADGui.so' -print -quit)"
