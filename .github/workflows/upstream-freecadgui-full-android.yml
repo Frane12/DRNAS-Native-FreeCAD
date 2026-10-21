@@ -178,6 +178,34 @@ jobs:
           test -f out/upstream-freecad-gui/opengl-compat/lib/libGL.so
           test -f out/upstream-freecad-gui/opengl-compat/lib/libGLU.so
           readelf -h out/upstream-freecad-gui/opengl-compat/lib/libGLU.so | grep -q AArch64
+      # Actual Part geometry needs native FreeType/HarfBuzz shaping.
+      # Cache compiled AArch64 archives independently of expensive OCCT.
+      - name: Restore Android FreeType HarfBuzz SDK
+        id: fonts
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/font-text
+          key: drnas-freecad-font-text-static-arm64-ndk27-v1-${{ hashFiles('full-gui/upstream/build-freetype-harfbuzz-android.sh') }}
+      - name: Compile genuine Android FreeType HarfBuzz if not cached
+        if: steps.fonts.outputs.cache-hit != 'true'
+        run: bash full-gui/upstream/build-freetype-harfbuzz-android.sh
+      - name: Verify native text geometry libraries
+        run: |
+          set -euo pipefail
+          test -s out/full-deps/font-text/include/freetype2/ft2build.h
+          test -s out/full-deps/font-text/include/harfbuzz/hb.h
+          for lib in libfreetype.a libharfbuzz.a; do
+            readelf -h "out/full-deps/font-text/lib/$lib" | awk '
+              /Machine:/ { if ($0 !~ /AArch64/) bad=1; count++ }
+              END { if (bad || !count) exit 1 }'
+          done
+      - name: Cache genuine FreeType HarfBuzz Android SDK
+        if: steps.fonts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/font-text
+          key: drnas-freecad-font-text-static-arm64-ndk27-v1-${{ hashFiles('full-gui/upstream/build-freetype-harfbuzz-android.sh') }}
+
       - name: Restore incremental compiler cache, including from headless core runs
         uses: actions/cache/restore@v4
         with:

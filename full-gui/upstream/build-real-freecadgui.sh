@@ -49,6 +49,27 @@ s = s.replace(source_root, 'ROOT="' + root + '"')
 assert s.count('-DBUILD_GUI=OFF \\') == 1, "Core script's GUI switch changed unexpectedly"
 s=s.replace('-DBUILD_GUI=OFF \\', '''-DBUILD_GUI=ON \\
   -DBUILD_PART=ON -DBUILD_SKETCHER=ON -DBUILD_PART_DESIGN=ON \\''')
+# This pinned original Part/Geometry.cpp directly compiles FreeType/HarfBuzz
+# glyph shaping and outline-to-CAD operations. The previous headless build
+# disabled FreeType, so full Part.so requires real native Android libraries.
+ft_old = '-DFREECAD_USE_FREETYPE=OFF ' + chr(92)
+assert s.count(ft_old) == 1, 'Pinned original FreeCAD FreeType setting changed'
+ft_flags = [
+    '-DFREECAD_USE_FREETYPE=ON',
+    '-DFREETYPE_LIBRARY="$ROOT/out/full-deps/font-text/lib/libfreetype.a"',
+    '-DFREETYPE_LIBRARY_RELEASE="$ROOT/out/full-deps/font-text/lib/libfreetype.a"',
+    '-DFREETYPE_INCLUDE_DIRS="$ROOT/out/full-deps/font-text/include/freetype2"',
+    '-DFREETYPE_INCLUDE_DIR_ft2build="$ROOT/out/full-deps/font-text/include/freetype2"',
+    '-DFREETYPE_INCLUDE_DIR_freetype2="$ROOT/out/full-deps/font-text/include/freetype2"',
+    '-DHARFBUZZ_INCLUDE_DIR="$ROOT/out/full-deps/font-text/include/harfbuzz"',
+    '-DHARFBUZZ_LIBRARY="$ROOT/out/full-deps/font-text/lib/libharfbuzz.a"',
+]
+s = s.replace(ft_old, (' ' + chr(92) + chr(10) + '  ').join(ft_flags)
+              + ' ' + chr(92))
+for findpath in ('CMAKE_PREFIX_PATH', 'CMAKE_FIND_ROOT_PATH'):
+    p = '-D' + findpath + '="$QT;$OCCT;$YAML;$ICU;$PYSDK;$XERCES;$BOOST"'
+    assert s.count(p) == 1, 'Original cross-target SDK search paths changed'
+    s = s.replace(p, p[:-1] + ';$ROOT/out/full-deps/font-text"')
 # Keep first configure as complete FreeCAD with real GUI and intended CAD modules.
 # No stubs for missing COIN/OpenGL/GLU/PySide or other prerequisites.
 s=s.replace('GUI=OFF (first full native core target FreeCADBase+FreeCADApp)',
