@@ -13,6 +13,11 @@ python3 - "$base" "$driver" <<'PY'
 from pathlib import Path
 import sys
 s=Path(sys.argv[1]).read_text()
+# Driver lives under out/, so pin ROOT to the actual repository root.
+root = str(Path(sys.argv[1]).resolve().parent.parent)
+source_root = 'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"'
+assert s.count(source_root) == 1
+s = s.replace(source_root, 'ROOT="' + root + '"')
 assert s.count('-DBUILD_GUI=OFF \\') == 1, "Core script's GUI switch changed unexpectedly"
 s=s.replace('-DBUILD_GUI=OFF \\', '-DBUILD_GUI=ON \\')
 # Keep first configure as complete FreeCAD with real GUI and intended CAD modules.
