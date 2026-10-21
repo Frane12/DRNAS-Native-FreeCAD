@@ -49,12 +49,54 @@ jobs:
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
           fi
 
-      - name: Restore verified OCCT Android geometry SDK
+      # Previous SDK compiled only geometry. Part imports STEP/IGES/OCAF and
+      # requires Interface_Static.hxx and the corresponding OCCT toolkits.
+      - name: Restore extended Android OCCT CAD SDK (geometry + DataExchange + OCAF)
         id: occt
         uses: actions/cache/restore@v4
         with:
           path: out/occt-android
+          key: occt-fullcad-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Reuse geometry SDK while extending missing OCCT toolkits
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
           key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+          restore-keys: |
+            occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-
+      - name: Restore previous OCCT object compilation cache
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/ccache
+          key: ccache-android-arm64-V7_9_3-ndk27.2-api26-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-android-arm64-V7_9_3-ndk27.2-api26-
+      - name: Build complete OCCT STEP IGES and OCAF Android modules
+        if: steps.occt.outputs.cache-hit != 'true'
+        env:
+          OCCT_FULL_CAD: '1'
+          CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+        run: |
+          set -euo pipefail
+          bash scripts/build-occt-android.sh
+      - name: Verify full native OCCT SDK before FreeCAD compilation
+        run: |
+          set -euo pipefail
+          for file in Interface_Static.hxx STEPControl_Reader.hxx IGESControl_Reader.hxx TDF_Label.hxx; do
+            test -s "out/occt-android/include/opencascade/$file" || { echo "::error::Missing OCCT $file"; exit 1; }
+          done
+          for lib in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
+            test -s "out/occt-android/lib/lib${lib}.so" || { echo "::error::Missing OCCT lib${lib}.so"; exit 1; }
+          done
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
+      - name: Save complete OCCT Android SDK for later GUI builds
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/occt-android
+          key: occt-fullcad-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
       - name: Restore compiled Qt 6 Android GUI SDK / QtSvg / host Qt tools
         id: qt
         uses: actions/cache/restore@v4
