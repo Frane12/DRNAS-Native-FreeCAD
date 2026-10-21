@@ -7,6 +7,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="$ROOT/out/upstream-freecad-gui"
 mkdir -p "$OUT"
+# Align the legacy GL4ES extension typedef with Android GLES2/Qt headers.
+# This const qualifier changes no binary ABI; keep the real GL implementation.
+python3 - "$OUT/opengl-compat/include/GL/glext.h" <<'PY_GL_HEADER'
+from pathlib import Path
+import sys
+header = Path(sys.argv[1])
+source = header.read_text()
+old = 'typedef void (APIENTRYP PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const GLchar* *string, const GLint *length);'
+new = 'typedef void (APIENTRYP PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length);'
+if old in source:
+    assert source.count(old) == 1, 'Ambiguous GL4ES shader-source typedef'
+    header.write_text(source.replace(old, new))
+else:
+    assert new in source, 'Pinned GL4ES shader-source typedef changed unexpectedly'
+print('GL4ES shader-source typedef matches Android GLES2 const qualifiers')
+PY_GL_HEADER
 base="$ROOT/full-port/build-full-core.sh"
 driver="$OUT/genuine-FreeCADGui-build-driver.sh"
 python3 - "$base" "$driver" <<'PY'
