@@ -162,4 +162,19 @@ echo "PASS: injected ${#names[@]} deferred ARM64 libraries; retained $skipped Qt
 for required_asset in assets/drnas/python314.zip assets/drnas/python-ext-manifest.txt; do
     grep -Fx "$required_asset" "$OUT/apk-files.txt"
 done
+# Verify nested zip Python packages: an APK containing only libpython can pass
+# the ABI audit yet fail on-device at the first 'import freecad' statement.
+python3 - "$apk" <<'PY_VERIFY_FREECAD_NAMESPACE'
+from io import BytesIO
+from zipfile import ZipFile
+import sys
+with ZipFile(sys.argv[1]) as android_apk:
+    with ZipFile(BytesIO(android_apk.read("assets/drnas/python314.zip"))) as python_zip:
+        entries = set(python_zip.namelist())
+        needed = {"encodings/__init__.py", "freecad/__init__.py", "freecad/utils.py"}
+        missing = needed - entries
+        if missing:
+            raise SystemExit(f"Missing authentic FreeCAD/Python runtime in APK: {sorted(missing)}")
+        print("PASS: APK embeds genuine freecad namespace and CPython encodings")
+PY_VERIFY_FREECAD_NAMESPACE
 echo "SAFE MODE: QtLoader no longer preloads FreeCADGui/Coin3D before main()."
