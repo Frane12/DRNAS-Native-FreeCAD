@@ -157,4 +157,5 @@ Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
 # and native NDK toolchain (same exact versions as proven core build).
+bash -n "$driver"
 bash "$driver"
