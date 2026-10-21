@@ -1,30 +1,52 @@
-# Native FreeCAD GUI integration — not a desktop GUI mock
+# DRNAS native FreeCAD Android — genuine GUI library integration
 
-The real upstream FreeCADBase + FreeCADApp ARM64 libraries pass Bionic
-dlopen on the user's Android phone. The 3D CAD viewport (Open CASCADE/
-OpenGL ES), gestures, camera controls and STL export have been tested.
+## Verified milestones
 
-**Upstream FreeCADGui is not compiled or running yet.** This task aims
-to port it rather than falsely label an Android view as full FreeCAD.
+- **PASS:** pinned upstream FreeCAD `libFreeCADBase.so`, `libFreeCADApp.so`
+  and `libFreeCADGui.so` compiled using Android NDK AArch64/Bionic.
+- **PASS:** original upstream ARM64 full GUI build:
+  [GitHub Actions run 39613337502](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39613337502).
+- **PASS:** separate Qt 6 Android QtActivity / OCCT GUI-LAB APK was already built.
+- **NEW:** real `libCoin.so` and other compiled GUI .so libraries are preserved
+  in subsequent upstream build artifacts (previous success archived only the three
+  FreeCAD .so files, so a new upstream native build is needed).
+- **NEW:** `full-gui/integrated-apk/stage-runtime.sh` validates, namespaces ICU,
+  stages Android FreeCADGui, Coin3D, real GL4ES/GLU and other native dependency
+  libraries for `QT_ANDROID_EXTRA_LIBS`.
+- **NEW:** `full-gui/qt-activity/main.cpp` uses Qt's Android QApplication and
+  runs a real `dlopen` probe after Qt boots; displays the exact load result.
+- **NOT YET PROVED:** actual upstream FreeCAD desktop MainWindow/Sketcher/
+  PartDesign/parametric document editing on a phone. The QtActivity test app
+  still displays the existing real OCCT interactive CAD viewport, not
+  FreeCAD's original workspace. Passing a `dlopen` check is not full GUI.
 
-## First compile milestone
+## Automatic full GUI -> APK pipeline
 
-Reuse the known-good Qt 6.8.3 Android QtBase/QtTools cache; add the QtSvg
-module without rebuilding other SDK libraries. Cross-link a real
-QMainWindow + QOpenGLWidget + QDockWidget + QTreeWidget + QtSvgRenderer
-for Android Bionic arm64. The resulting library has a function to create
-a Qt GUI window, but that function must ONLY be called after QtActivity
-has initialized QApplication: compiling or dlopen alone is not enough.
+1. Trigger **DRNAS REAL upstream FreeCADGui Full ARM64 Build** on
+   `feature/full-freecad-android`. The new build produces `libCoin.so`
+   in the archived native artifact along with FreeCADGui/Base/App.
+2. On success, the default-branch
+   `.github/workflows/freecadgui-apk-on-upstream-success.yml` triggers
+   `DRNAS FreeCADGui QtActivity APK Integration` on the feature branch.
+3. Packaging restores the existing feature-branch Qt/OCCT/ICU/Boost/Python
+   cache, downloads the verified upstream build artifact, and attempts to
+   assemble a signed Android ARM64 APK.
+4. The APK job checks the signature, application ID, and the real native
+   `libFreeCADGui.so` / `libCoin.so` inside the ZIP. Build artifacts hold the
+   APK and logs.
+5. A failed *upstream* compilation invokes the existing guarded
+   `freecad-instant-autofix.yml` bot. A failed *APK integration* invokes
+   `freecad-apk-instant-autofix.yml`, which can attempt up to two safe
+   corrections in approved packaging files and dispatch a new APK build.
+   Neither bot runs on your phone; both use GitHub's workflow-run events.
 
-## Remaining upstream GUI dependencies
+Neither workflow deploys to Play Store, publishes a release, or claims
+successful real-phone testing. The original standalone FreeCAD/OCCT APK
+and the new integration have different Android package identifiers.
 
-* Android QtActivity platform bootstrapping, runtime plugins and assets.
-* Coin3D/Pivy as actual Android ARM64 libraries with GPU paths.
-* OpenGL desktop/GLU compatibility with Android OpenGL ES; FreeCADGui
-  cannot be made to work just by setting BUILD_GUI=ON.
-* PySide6/Shiboken6 compiled for the same Android CPython and Qt.
-* Actual FreeCAD Document <-> ViewProvider <-> Sketcher/PartDesign
-  connectivity and real .FCStd document opening and saving.
+## Run manually
 
-The known working OCCT viewport APK is deliberately not overwritten;
-runtime testing of a Qt GUI waits for its matching Android bootstrap.
+- [Full genuine FreeCADGui ARM64](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/workflows/upstream-freecadgui-full-android.yml)
+- [Pack native FreeCADGui QtActivity APK](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/workflows/freecadgui-qtactivity-native-apk.yml)
+- [Full build AI auto-fixer](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/workflows/freecad-instant-autofix.yml)
+- [Native APK AI auto-fixer](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/workflows/freecad-apk-instant-autofix.yml)
