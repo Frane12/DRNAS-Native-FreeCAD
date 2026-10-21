@@ -59,6 +59,23 @@ for so in "$ABI_DIR"/lib*.so; do
 done
 echo "Relocated $relocations ICU 75 ELF DT_NEEDED entries for native APK packaging"
 
+# Android's bionic linker validates non-weak C++ RTTI symbols eagerly.
+# FreeCAD Base relies on the PUBLIC ICU 75 NumberFormat typeinfo exported
+# from libicui18n. Verify the actual staged dynamic symbol BEFORE uploading
+# an APK; ELF NEEDED checks alone cannot catch a missing symbol.
+{
+  echo "FreeCADBase ICU 75 RTTI imports:"
+  readelf --dyn-syms --wide "$ABI_DIR/libFreeCADBase.so" | grep -F '_ZTIN6icu_7512NumberFormatE' || true
+  echo "ICU i18n dynamic RTTI exports:"
+  readelf --dyn-syms --wide "$ABI_DIR/libicui18n.so" | grep -F '_ZTIN6icu_7512NumberFormatE' || true
+  echo "Staged ICU i18n SONAME and dependencies:"
+  readelf -d "$ABI_DIR/libicui18n.so" | grep -E 'NEEDED|SONAME'
+} | tee "$ROOT/out/android-fullcore/icu-rtti-audit.txt"
+if ! readelf --dyn-syms --wide "$ABI_DIR/libicui18n.so" | grep -Eq '(_ZTIN6icu_7512NumberFormatE)([[:space:]]|$)'; then
+  echo "::error::ICU 75 NumberFormat RTTI not exported; on-device FreeCADBase dlopen would fail"
+  exit 1
+fi
+
 # Reject wrong architecture / glibc and missing DT_NEEDED dependencies.
 # Android public NDK platform libraries are provided by the device.
 missing=0
