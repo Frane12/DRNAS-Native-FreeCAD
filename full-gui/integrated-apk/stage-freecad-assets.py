@@ -12,7 +12,9 @@ REQUIRED = {
 
 
 def main():
-    source, bundle = map(Path, sys.argv[1:])
+    if len(sys.argv) != 4:
+        raise SystemExit("Usage: stage-freecad-assets.py upstream-resources asset-dir relocated-ELFs")
+    source, bundle, native = map(Path, sys.argv[1:])
     if not source.is_dir():
         raise SystemExit("FreeCAD native artifact is missing the upstream GUI assets")
     names = []
@@ -26,7 +28,20 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(file, target)
         names.append(relative.as_posix())
-    if len(names) < 25 or not REQUIRED.issubset(names):
+    # Android's native library extractor can ignore Python extension ELF names
+    # such as Part.so (no "lib" prefix). Ship the exact relocated binaries in
+    # app-private FreeCAD/lib as a reliable CPython and module-loader fallback.
+    for module in ("Part", "PartGui", "Sketcher", "SketcherGui",
+                   "PartDesign", "PartDesignGui"):
+        name = module + ".so"
+        library = native / name
+        if not library.is_file() or library.stat().st_size < 8192:
+            raise SystemExit(f"Missing verified Android GUI extension: {library}")
+        target = bundle / "freecad" / "lib" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(library, target)
+        names.append("lib/" + name)
+        if len(names) < 25 or not REQUIRED.issubset(names):
         raise SystemExit(f"FreeCAD GUI assets incomplete: {REQUIRED - set(names)}")
     (bundle / "freecad-manifest.txt").write_text(
         "\n".join(names) + "\n", encoding="utf-8"

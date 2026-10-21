@@ -127,7 +127,7 @@ done < "$work/bundle/assets/drnas/python-ext-manifest.txt"
 test "${#names[@]}" -gt 0
 # Package real FreeCAD workbenches/themes into the signed APK as Android assets.
 python3 "$ROOT/full-gui/integrated-apk/stage-freecad-assets.py" \
-  "$ARTIFACT/resources" "$work/bundle/assets/drnas"
+  "$ARTIFACT/resources" "$work/bundle/assets/drnas" "$STAGE"
 
 # Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
 # Keep the same packaging policy. Uncompressed debug DSOs ballooned to >550 MB.
