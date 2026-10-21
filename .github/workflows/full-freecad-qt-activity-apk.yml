@@ -73,6 +73,19 @@ jobs:
           test "${{ steps.qt.outputs.cache-hit }}" = true
           test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6SvgWidgets/Qt6SvgWidgetsConfig.cmake
           test -f out/full-deps/qt/$QT_VERSION/gcc_64/bin/qmake6
+      - name: Restore verified native OpenCASCADE 7.9.3 ARM64 library SDK
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Require cached native Android OCCT B-Rep, no recompilation
+        run: |
+          set -euo pipefail
+          test "${{ steps.occt.outputs.cache-hit }}" = true
+          test -f out/occt-android/lib/libTKBO.so
+          test -f out/occt-android/include/opencascade/TopoDS_Shape.hxx
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
       - name: Configure official Qt Android QtActivity app with CMake
         run: |
           set -euo pipefail
@@ -85,6 +98,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_PREFIX_PATH="$qt" -DCMAKE_FIND_ROOT_PATH="$qt" \
             -DQT_HOST_PATH="$host" -DANDROID_SDK_ROOT="$ANDROID_HOME" \
+            -DOCCT_ANDROID_ROOT="$GITHUB_WORKSPACE/out/occt-android" \
             2>&1 | tee out/full-gui/qt-activity/cmake-configure.log
       - name: Build standalone Qt Widgets/OpenGLWidgets APK with androiddeployqt
         id: build
@@ -102,7 +116,14 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | tee out/full-gui/qt-activity/badging.txt
           grep -F "org.drnas.freecad.qtgui" out/full-gui/qt-activity/badging.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep -F "arm64-v8a"
-          cp "$apk" out/full-gui/qt-activity/DRNAS-FreeCAD-QtActivity-GUI-LAB-ARM64-debug.apk
+          for so in libTKBO.so libTKBRep.so libTKPrim.so; do
+            unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$so" || {
+              echo "::error::Missing native OCCT geometry DLL inside Qt GUI APK: $so"
+              exit 1
+            }
+          done
+          echo 'Native Qt + REAL OpenCASCADE 3D B-Rep viewport included in APK.'
+          cp "$apk" out/full-gui/qt-activity/DRNAS-FreeCAD-QtActivity-Native-OCCT-Viewport-ARM64-debug.apk
           (cd out/full-gui/qt-activity && sha256sum *.apk > APK-SHA256SUMS.txt)
           echo "PASS: QtActivity + native Qt6 GUI lab APK packaged; device execution not yet tested."
       - name: Preserve APK, Gradle build outputs and failure logs
