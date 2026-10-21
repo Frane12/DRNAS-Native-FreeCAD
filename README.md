@@ -1,3 +1,13 @@
+## ✅ Native CAD Viewer + STL LAB v0.0.4 — Android arm64-v8a
+
+[**Successful CI run #39565267562**](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39565267562) • [**Download Android APK artifact ZIP**](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39565267562/artifacts/12329646322)
+
+**New:** shape chooser (Boolean-drilled box, solid cube, cylinder, sphere), automatic camera fit, shaded OCCT tessellation, optional **triangle edges**, Android SAF **Save STL** (binary STL mesh, dimensions in mm, no external storage permission). Previously phone-tested native CAD and upstream FreeCAD C++ tests remain available. The blue CAD compass launcher icon is retained.
+
+CI **PASS**: original Android OCCT + FreeCAD Base C++ cross-compile, native JNI, Java STL binary-format unit test, Gradle APK build, signing (v2), arm64-v8a package check. The original OCCT 19-library Android SDK was restored from verified cache; **no OCCT rebuild**. FreeCAD C++ ccache was restored but reported zero compiler hits in this run — treat further optimization as pending. **New shape-switching and STL saving have not yet been tested on a physical phone.**
+
+This is **still a prototype native CAD viewer**, not the full FreeCAD application or parametric `.FCStd` editing environment. [CAD viewer details](docs/cad-viewer-stl.md)
+
 ## ✅ Android 3D Render LAB v0.0.3 (build success — hardware test pending)
 
 [GitHub Actions run #39563209652](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39563209652) successfully cross-compiled, linked, signed and packaged **DRNAS FreeCAD Render LAB** for arm64-v8a with the new blue mechanical CAD icon.
