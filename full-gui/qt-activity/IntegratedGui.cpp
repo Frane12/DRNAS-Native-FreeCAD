@@ -51,6 +51,18 @@ public:
         selector_->setMinimumWidth(136);
         selectorRow->addWidget(selector_);
         outer->addLayout(selectorRow);
+        // Device-level runtime evidence, never confuse dlopen with running
+        // FreeCAD's actual upstream MainWindow / Python workbenches.
+        auto* nativeStatus = new QLabel(
+            qEnvironmentVariable("DRNAS_FREECAD_NATIVE_STATUS",
+                                 "Native FreeCAD runtime not probed"), central);
+        nativeStatus->setWordWrap(true);
+        nativeStatus->setStyleSheet(QStringLiteral("QLabel{background:#20344a;color:#b9e7ce;padding:5px;}"));
+        outer->addWidget(nativeStatus);
+        auto* integrationState = new QLabel(
+            QStringLiteral("FreeCADGui ARM64 library integration • Full FreeCAD desktop workspace startup: pending"), central);
+        integrationState->setWordWrap(true);
+        outer->addWidget(integrationState);
 
         auto* buttonRow=new QHBoxLayout;
         buttonRow->setSpacing(3);
