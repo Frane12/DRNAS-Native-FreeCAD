@@ -1,0 +1,131 @@
+name: DRNAS FreeCAD Full Core Android ARM64
+
+on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - '.github/workflows/full-freecad-android.yml'
+      - 'full-port/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: '6.8.3'
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+  FREECAD_REF: 'd4ffc7f725973e073907746e88d320d3e438fd34'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/full-freecad
+  CCACHE_MAXSIZE: '2G'
+  CCACHE_COMPRESS: 'true'
+
+concurrency:
+  group: drnas-full-freecad-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qt-android:
+    name: Bootstrap official Qt6 Android ARM64 SDK + host tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt downloader and NDK tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv p7zip-full cmake ninja-build binutils file
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+          mkdir -p out/full-freecad out/full-deps/qt
+      - name: Restore previously verified Qt6 Android SDK (no redownload)
+        id: qtcache
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt6-android-arm64-v6.8.3-host-linux-qtbase-v1-${{ hashFiles('full-port/verify-qt-android.sh', 'full-port/bootstrap-qt.sh') }}
+      - name: Download official Android ARM64 Qt6 + Linux host Qt6
+        if: steps.qtcache.outputs.cache-hit != 'true'
+        run: bash full-port/bootstrap-qt.sh
+      - name: Verify Qt6 Android ELF and cross-link QtCore + QtXml
+        id: verify
+        run: bash full-port/verify-qt-android.sh
+      - name: Save verified official Android Qt6 SDK
+        if: steps.qtcache.outputs.cache-hit != 'true' && steps.verify.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt6-android-arm64-v6.8.3-host-linux-qtbase-v1-${{ hashFiles('full-port/verify-qt-android.sh', 'full-port/bootstrap-qt.sh') }}
+      - name: Upload Qt SDK validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-qt6-android-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/full-freecad/
+          if-no-files-found: warn
+          retention-days: 21
+
+  freecad-full:
+    name: Configure and compile REAL upstream FreeCADBase + FreeCADApp
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    needs: qt-android
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real build prerequisites (host tools only)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build git python3 ccache binutils file
+          mkdir -p out/full-freecad "$CCACHE_DIR"
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+      - name: Restore verified OCCT Android modeling SDK (no kernel rebuild)
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Restore Qt6 Android ARM64 SDK
+        id: qt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt6-android-arm64-v6.8.3-host-linux-qtbase-v1-${{ hashFiles('full-port/verify-qt-android.sh', 'full-port/bootstrap-qt.sh') }}
+      - name: Refuse any accidental host ABI mixing
+        run: |
+          test "${{ steps.occt.outputs.cache-hit }}" = true || { echo "::error::No verified OCCT Android SDK"; exit 1; }
+          test "${{ steps.qt.outputs.cache-hit }}" = true || { echo "::error::No verified Android Qt6 SDK"; exit 1; }
+          test -f out/occt-android/lib/libTKBO.so
+          test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6/Qt6Config.cmake
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
+      - name: Restore full core incremental C++ compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/full-freecad
+          key: full-freecad-android-arm64-ndk27-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            full-freecad-android-arm64-ndk27-
+      - name: Attempt full FreeCAD source CMake + compile real libraries
+        id: build
+        run: bash full-port/build-full-core.sh
+      - name: Compiler cache diagnostics
+        if: always()
+        run: ccache --show-stats || true
+      - name: Save partial FreeCAD compiler progress (including on failures)
+        if: always() && steps.build.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/full-freecad
+          key: full-freecad-android-arm64-ndk27-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload honest full upstream build logs and dependency diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-full-freecad-android-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/full-freecad/
+          if-no-files-found: warn
+          retention-days: 30
