@@ -114,6 +114,26 @@ bool configureBundledFreeCADHome(QString& error)
             return false;
         }
     }
+    // FreeCAD's original overlay/stylesheet icons are referenced using
+    // qss:overlay/icons/*.svg, not absolute paths. Desktop FreeCAD registers
+    // this Qt search-path prefix during style setup, but Android's custom
+    // QtActivity startup does not. The SVGs ARE packaged and extracted above;
+    // connect FreeCAD's qss: URLs to that verified on-device asset directory.
+    const QString stylesheets = root + QStringLiteral("/data/Gui/Stylesheets");
+    QDir::setSearchPaths(QStringLiteral("qss"), QStringList{stylesheets});
+    for (const char* icon : {
+             "taskshow.svg", "taskshow_lightgray.svg",
+             "editshow.svg", "editshow_lightgray.svg",
+             "edithide.svg", "edithide_lightgray.svg",
+             "float.svg", "overlay.svg", "close.svg", "mode.svg",
+             "transparent.svg", "autohide.svg", "autohide_lightgray.svg"}) {
+        const QString uri = QStringLiteral("qss:overlay/icons/") + QString::fromLatin1(icon);
+        if (!QFileInfo::exists(uri)) {
+            error = QStringLiteral("FreeCAD QSS icon path unresolved: %1 (source %2)")
+                        .arg(uri, stylesheets);
+            return false;
+        }
+    }
     const QByteArray home = (root + QLatin1Char('/')).toUtf8();
     if (setenv("DRNAS_FREECAD_HOME", home.constData(), 1) != 0) {
         error = QStringLiteral("Failed to set original FreeCAD home path");
