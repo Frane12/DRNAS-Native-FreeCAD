@@ -142,13 +142,23 @@ jobs:
       - name: Verify complete Android-target dependency caches
         run: |
           set -euo pipefail
-          # OCCT may be built and verified above instead of restored from cache.
-          for key in "${{ steps.qt.outputs.cache-hit }}" \
-                     "${{ steps.yaml.outputs.cache-hit }}" "${{ steps.icu.outputs.cache-hit }}" \
-                     "${{ steps.python.outputs.cache-hit }}" "${{ steps.xerces.outputs.cache-hit }}" \
-                     "${{ steps.boost.outputs.cache-hit }}" "${{ steps.host_icu.outputs.cache-hit }}"; do
-            [[ "$key" == true ]] || { echo "::error::Missing verified dependency cache"; exit 1; }
+          # Full OCCT (including STEP, IGES and OCAF) was verified above,
+          # regardless of whether it was restored or newly compiled.
+          # Identify missing *other* dependencies without falsely failing on
+          # the OCCT cache-miss that this run successfully rebuilt and saved.
+          for cache in \
+            "Qt6:${{ steps.qt.outputs.cache-hit }}" \
+            "yaml-cpp:${{ steps.yaml.outputs.cache-hit }}" \
+            "ICU75:${{ steps.icu.outputs.cache-hit }}" \
+            "CPython3.14:${{ steps.python.outputs.cache-hit }}" \
+            "Xerces-C:${{ steps.xerces.outputs.cache-hit }}" \
+            "Boost:${{ steps.boost.outputs.cache-hit }}" \
+            "Host-ICU73:${{ steps.host_icu.outputs.cache-hit }}"; do
+            name="${cache%%:*}"
+            hit="${cache#*:}"
+            [[ "$hit" == true ]] || { echo "::error::Missing verified Android dependency cache: $name"; exit 1; }
           done
+          echo "PASS: previously built or restored full OCCT STEP/IGES/OCAF SDK is preserved and verified."
           test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6OpenGLWidgets/Qt6OpenGLWidgetsConfig.cmake
           test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6SvgWidgets/Qt6SvgWidgetsConfig.cmake
           test -f out/full-deps/boost/include/boost/bimap.hpp
