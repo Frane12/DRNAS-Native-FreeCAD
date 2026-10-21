@@ -133,10 +133,10 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(0xff0a1b3a);
         root.setPadding(10,12,10,6);
         root.setFitsSystemWindows(true);
-        TextView title=label("DRNAS FreeCAD • Render LAB",21,Color.WHITE);
+        TextView title=label("DRNAS FreeCAD • Native Core",21,Color.WHITE);
         title.setTypeface(null,Typeface.BOLD);
         root.addView(title);
-        root.addView(label("Native CAD solids • GPU viewer • STL export",12,0xff81bff1));
+        root.addView(label("FreeCADBase + FreeCADApp ARM64 • OCCT GPU viewer",12,0xff81bff1));
 
         canvas=new CADRenderView(this);
         root.addView(canvas,new LinearLayout.LayoutParams(-1,0,1f));
@@ -172,7 +172,17 @@ public final class MainActivity extends Activity {
         tests.setOrientation(LinearLayout.HORIZONTAL);
         root.addView(tests);
         action("CAD test",tests,() -> nativeTest(false));
-        action("FreeCAD C++ test",tests,() -> nativeTest(true));
+        action("Base source test",tests,() -> nativeTest(true));
+        LinearLayout fullCoreRow=new LinearLayout(this);
+        fullCoreRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(fullCoreRow);
+        action("TEST REAL FREECAD CORE",fullCoreRow,() -> {
+            status("Loading real FreeCADBase + FreeCADApp ARM64…");
+            new Thread(() -> {
+                String result=NativeCAD.checkFullFreeCADCore(getApplicationInfo().nativeLibraryDir);
+                status(result);
+            },"drnas-full-core-link-test").start();
+        });
 
         report=label("Creating initial CAD shape…",12,0xffd6e9fd);
         report.setPadding(9,9,9,9);
