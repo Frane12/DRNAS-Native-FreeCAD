@@ -43,6 +43,7 @@ cp -a "$SRC/gl4es-freecad/include/." "$OUT/include/"
   NDK_PROJECT_PATH="$SRC/glu-freecad" \
   APP_BUILD_SCRIPT="$SRC/glu-freecad/Android.mk" \
   APP_ABI=arm64-v8a APP_PLATFORM="android-$ANDROID_API" APP_STL=c++_shared \
+  APP_CPPFLAGS="-std=gnu++14" \
   NDK_OUT="$BUILD/glu-obj" NDK_LIBS_OUT="$BUILD/glu-libs" \
   -j4 2>&1 | tee "$OUT/glu-compile.log"
 gluStatic="$(find "$BUILD/glu-obj" -name 'libGLU.a' -type f -print -quit)"
