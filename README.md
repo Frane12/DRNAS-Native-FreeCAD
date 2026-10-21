@@ -1,3 +1,15 @@
+## ✅ Android 3D Render LAB v0.0.3 (build success — hardware test pending)
+
+[GitHub Actions run #39563209652](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39563209652) successfully cross-compiled, linked, signed and packaged **DRNAS FreeCAD Render LAB** for arm64-v8a with the new blue mechanical CAD icon.
+
+📱 **[Download Render LAB debug APK artifact ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39563209652/artifacts/12328542985)** — extract the APK from the ZIP. Android package ID is `org.drnas.freecad.coreprobe`; if an older Core LAB debug build is installed, uninstall that old APK first because CI debug signing certificates can differ.
+
+The renderer displays **real OCCT Boolean B-Rep triangulation** (10×20×30 box with cylindrical through-hole) via JNI and Android OpenGL ES 2.0, not a placeholder GL cube. Rotate with one finger, pinch to zoom, pan with two fingers, or reset camera. Previously validated Android native CAD geometry and upstream FreeCAD Base C++ tests are preserved. The output newline display bug is fixed.
+
+**Status: GitHub CI passes** and verifies Android ELF architecture, JNI shared libraries and APK v2 signature. We still need a **physical-device render test** to confirm visible triangles and touch controls. This is a 3D CAD geometry viewer/prototype, *not the complete FreeCAD GUI, FreeCADBase or FreeCADApp*.
+
+OCCT kernel was restored from the existing verified cache (19 libs), not rebuilt. The separate FreeCAD source CCache and Gradle caches remain enabled. See [implementation and limitations](docs/native-render-lab.md).
+
 ## Independent FreeCAD C++ Android Core LAB (development branch)
 
 On branch `feature/freecad-base-android`, a real subset of **upstream FreeCAD's own Base64.cpp and Vector3D.cpp** now cross-compiles with Android NDK, alongside the already phone-tested OpenCASCADE kernel. The FreeCAD host C++ tests passed and the Android shared library/PIE ELF audits passed. The **separate Android Core LAB debug APK is successfully built, signed and packed**: [Run #39560534869](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39560534869), [APK artifact ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39560534869/artifacts/12327696324).
