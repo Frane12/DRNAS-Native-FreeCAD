@@ -137,6 +137,15 @@ jobs:
         id: build
         run: bash full-gui/upstream/build-real-freecadgui.sh
 
+      - name: Stage real native FreeCAD Part, Sketcher, PartDesign workbench UI and icons
+        if: ${{ steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          python3 full-gui/upstream/stage-full-resources.py \
+            .deps/freecad-upstream-full \
+            .build/freecad-upstream-real-gui-arm64 \
+            out/upstream-freecad-gui/resources
+
       - name: Preserve any validated native FreeCADGui/Base/App .so on FAILURE
         if: ${{ always() && steps.build.outcome != 'skipped' }}
         run: |
@@ -160,7 +169,7 @@ jobs:
             ( cd "$stage" && sha256sum "$base" >> SHA256SUMS )
           done < <(find "$libdir" -maxdepth 1 -type f -name 'lib*.so' -print0 | sort -z)
           if [[ "${{ steps.build.outcome }}" == success ]]; then
-            for required in FreeCADBase FreeCADApp FreeCADGui Coin; do
+            for required in FreeCADBase FreeCADApp FreeCADGui Coin Part PartGui Sketcher SketcherGui PartDesign PartDesignGui; do
               test -s "$stage/lib${required}.so" || {
                 echo "::error::Missing real upstream lib${required}.so after successful build"
                 exit 1

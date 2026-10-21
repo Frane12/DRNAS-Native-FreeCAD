@@ -47,14 +47,15 @@ source_root = 'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"'
 assert s.count(source_root) == 1
 s = s.replace(source_root, 'ROOT="' + root + '"')
 assert s.count('-DBUILD_GUI=OFF \\') == 1, "Core script's GUI switch changed unexpectedly"
-s=s.replace('-DBUILD_GUI=OFF \\', '-DBUILD_GUI=ON \\')
+s=s.replace('-DBUILD_GUI=OFF \\', '''-DBUILD_GUI=ON \\
+  -DBUILD_PART=ON -DBUILD_SKETCHER=ON -DBUILD_PART_DESIGN=ON \\''')
 # Keep first configure as complete FreeCAD with real GUI and intended CAD modules.
 # No stubs for missing COIN/OpenGL/GLU/PySide or other prerequisites.
 s=s.replace('GUI=OFF (first full native core target FreeCADBase+FreeCADApp)',
             'GUI=ON (actual upstream FreeCADGui target; do not fake Coin3D)')
 assert s.count('--target FreeCADBase FreeCADApp') == 1
 s=s.replace('--target FreeCADBase FreeCADApp',
-            '--target FreeCADBase FreeCADApp FreeCADGui')
+            '--target FreeCADBase FreeCADApp FreeCADGui Part PartGui Sketcher SketcherGui PartDesign PartDesignGui')
 # Attempt genuine native FreeCADGui and fail if its .so is absent.
 needle = "echo 'FULL FreeCADBase + FreeCADApp Android ARM64: BUILD PASS' | tee \"$OUT/full-core-result.txt\""
 assert s.count(needle)==1
@@ -305,8 +306,30 @@ copyfile(bridge_source, bridge_dest)
 print('Real upstream FreeCADGui Android MainWindow bridge compiled into FreeCADGui')
 PY_ANDROID_BRIDGE
 """
+android_home_patch = """python3 - "$SOURCE/src/App/Application.cpp" <<'PY_DRNAS_HOME'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+needle = '''    mConfig["AppHomePath"] = Base::FileInfo::pathToString(
+        ApplicationDirectories::findHomePath(argv[0])
+    );'''
+if s.count(needle) != 1:
+    raise SystemExit("Pinned FreeCAD home location changed")
+replacement = needle + """
+#ifdef __ANDROID__
+    // Android's QtActivity has no conventional desktop bin/ location.
+    if (const char* home = std::getenv("DRNAS_FREECAD_HOME"); home && *home) {
+        mConfig["AppHomePath"] = home;
+    }
+#endif
+"""
+p.write_text('#include <cstdlib>\n' + s.replace(needle, replacement))
+print('Original FreeCAD AppHomePath now resolves bundled Android workbenches')
+PY_DRNAS_HOME
+"""
 workbench_diagnostics_patch = 'python3 "$ROOT/full-gui/upstream/patch-workbench-diagnostics.py" "$SOURCE"\n'
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+workbench_diagnostics_patch+config_marker)
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+android_home_patch+workbench_diagnostics_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces

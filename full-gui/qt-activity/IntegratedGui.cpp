@@ -34,6 +34,94 @@
 // Qt's assets: filesystem is backed by Android's AssetManager; Python itself
 // cannot import from that virtual filesystem.
 namespace {
+
+// Extract the original FreeCAD workbench resource tree into private filesystem.
+// Android assets:/ is a Qt resource URL, not an importable Python directory.
+bool configureBundledFreeCADHome(QString& error)
+{
+    const QString root = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation) + QStringLiteral("/drnas-freecad-home");
+    QFile manifest(QStringLiteral("assets:/drnas/freecad-manifest.txt"));
+    if (!manifest.open(QIODevice::ReadOnly)) {
+        error = QStringLiteral("Bundled original FreeCAD GUI manifest missing");
+        return false;
+    }
+    const QByteArray index = manifest.readAll();
+    if (index.size() < 50 || !QDir().mkpath(root + QStringLiteral("/lib")) ||
+        !QDir().mkpath(root + QStringLiteral("/bin"))) {
+        error = QStringLiteral("Original FreeCAD resource manifest/home invalid");
+        return false;
+    }
+    const QString stamp = root + QStringLiteral("/.asset-manifest");
+    QFile previous(stamp);
+    const bool current = previous.open(QIODevice::ReadOnly) &&
+        previous.readAll() == index &&
+        QFileInfo::exists(root + QStringLiteral("/Mod/Part/InitGui.py")) &&
+        QFileInfo::exists(root + QStringLiteral("/Mod/Sketcher/InitGui.py")) &&
+        QFileInfo::exists(root + QStringLiteral("/Mod/PartDesign/InitGui.py")) &&
+        QFileInfo::exists(root + QStringLiteral("/data/Gui/Stylesheets/overlay/icons/taskshow.svg"));
+    if (!current) {
+        int count = 0;
+        for (const QByteArray& record : index.split('\n')) {
+            const QString relative = QString::fromUtf8(record.trimmed());
+            if (relative.isEmpty()) continue;
+            const QStringList segments = relative.split(QLatin1Char('/'));
+            if (relative.startsWith(QLatin1Char('/')) ||
+                relative.contains(QLatin1Char('\\')) ||
+                segments.contains(QStringLiteral("..")) ||
+                segments.contains(QStringLiteral(".")) ||
+                segments.contains(QString())) {
+                error = QStringLiteral("Unsafe original FreeCAD asset: %1").arg(relative);
+                return false;
+            }
+            QFile input(QStringLiteral("assets:/drnas/freecad/") + relative);
+            if (!input.open(QIODevice::ReadOnly)) {
+                error = QStringLiteral("FreeCAD asset missing: %1").arg(relative);
+                return false;
+            }
+            const QString destination = root + QLatin1Char('/') + relative;
+            if (!QDir().mkpath(QFileInfo(destination).absolutePath())) {
+                error = QStringLiteral("Cannot create FreeCAD resource folder: %1").arg(relative);
+                return false;
+            }
+            QSaveFile output(destination);
+            if (!output.open(QIODevice::WriteOnly)) {
+                error = QStringLiteral("Cannot write FreeCAD asset: %1").arg(relative);
+                return false;
+            }
+            while (!input.atEnd()) {
+                const QByteArray bytes = input.read(256 * 1024);
+                if (bytes.isEmpty() || output.write(bytes) != bytes.size()) {
+                    output.cancelWriting();
+                    error = QStringLiteral("Failed to copy FreeCAD asset: %1").arg(relative);
+                    return false;
+                }
+            }
+            if (!output.commit()) {
+                error = QStringLiteral("Failed to commit FreeCAD asset: %1").arg(relative);
+                return false;
+            }
+            ++count;
+        }
+        if (count < 25) {
+            error = QStringLiteral("Too few original FreeCAD GUI assets");
+            return false;
+        }
+        QSaveFile saved(stamp);
+        if (!saved.open(QIODevice::WriteOnly) ||
+            saved.write(index) != index.size() || !saved.commit()) {
+            error = QStringLiteral("Could not save FreeCAD GUI asset manifest");
+            return false;
+        }
+    }
+    const QByteArray home = (root + QLatin1Char('/')).toUtf8();
+    if (setenv("DRNAS_FREECAD_HOME", home.constData(), 1) != 0) {
+        error = QStringLiteral("Failed to set original FreeCAD home path");
+        return false;
+    }
+    return true;
+}
+
 bool configureBundledPython(QString& error)
 {
     const QString root = QStandardPaths::writableLocation(
@@ -268,6 +356,16 @@ public:
                 nativeStatus->setText(message);
                 QSettings settings;
                 settings.setValue(QStringLiteral("nativeProbe/result"), message);
+                settings.sync();
+                launchOriginal->setEnabled(true);
+                return;
+            }
+            QString resourceError;
+            if (!configureBundledFreeCADHome(resourceError)) {
+                const QString failed = QStringLiteral("Original FreeCAD resources: %1").arg(resourceError);
+                nativeStatus->setText(failed);
+                QSettings settings;
+                settings.setValue(QStringLiteral("nativeProbe/result"), failed);
                 settings.sync();
                 launchOriginal->setEnabled(true);
                 return;

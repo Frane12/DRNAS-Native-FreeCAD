@@ -5,6 +5,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STAGE="$ROOT/.build/freecad-integration-staging/native-libs"
+ARTIFACT="$ROOT/out/upstream-freecad-gui"
 OUT="$ROOT/out/integrated-freecad-qtapk"
 APK_BUILD="$ROOT/.build/freecad-native-integration"
 SDK_BUILDTOOLS="$ANDROID_HOME/build-tools/35.0.0"
@@ -124,6 +125,10 @@ while IFS= read -r extension; do
     ! readelf -d "$module" | grep -Eq 'libc\.so\.6|ld-linux'
 done < "$work/bundle/assets/drnas/python-ext-manifest.txt"
 test "${#names[@]}" -gt 0
+# Package real FreeCAD workbenches/themes into the signed APK as Android assets.
+python3 "$ROOT/full-gui/integrated-apk/stage-freecad-assets.py" \
+  "$ARTIFACT/resources" "$work/bundle/assets/drnas"
+
 # Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
 # Keep the same packaging policy. Uncompressed debug DSOs ballooned to >550 MB.
 ( cd "$work/bundle" && zip -q -9 "$work/unsigned.apk" "${names[@]}" )
@@ -155,11 +160,11 @@ apk="$OUT/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
 "$SDK_BUILDTOOLS/apksigner" verify --verbose "$apk"
 "$SDK_BUILDTOOLS/zipalign" -c -P 16 4 "$apk"
 unzip -Z1 "$apk" > "$OUT/apk-files.txt"
-for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so; do
+for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so libPart.so libPartGui.so libSketcher.so libSketcherGui.so libPartDesign.so libPartDesignGui.so; do
     grep -Fx "lib/arm64-v8a/$needed" "$OUT/apk-files.txt"
 done
 echo "PASS: injected ${#names[@]} deferred ARM64 libraries; retained $skipped Qt/OCCT entries."
-for required_asset in assets/drnas/python314.zip assets/drnas/python-ext-manifest.txt; do
+for required_asset in assets/drnas/python314.zip assets/drnas/python-ext-manifest.txt assets/drnas/freecad-manifest.txt assets/drnas/freecad/Mod/Part/InitGui.py assets/drnas/freecad/Mod/Sketcher/InitGui.py assets/drnas/freecad/Mod/PartDesign/InitGui.py assets/drnas/freecad/data/Gui/Stylesheets/overlay/icons/taskshow.svg; do
     grep -Fx "$required_asset" "$OUT/apk-files.txt"
 done
 # Verify nested zip Python packages: an APK containing only libpython can pass
