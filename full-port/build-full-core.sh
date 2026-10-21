@@ -12,6 +12,7 @@ QT_HOST="$ROOT/out/full-deps/qt/$QT_VERSION/gcc_64"
 OCCT="$ROOT/out/occt-android"
 YAML="$ROOT/out/full-deps/yaml-cpp"
 ICU="$ROOT/out/full-deps/icu"
+PYSDK="$ROOT/out/full-deps/python"
 SOURCE="$ROOT/.deps/freecad-upstream-full"
 BUILDDIR="$ROOT/.build/freecad-upstream-android-arm64"
 OUT="$ROOT/out/full-freecad"
@@ -20,6 +21,7 @@ test -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake"
 test -f "$OCCT/lib/libTKBO.so"
 test -d "$YAML/lib/cmake/yaml-cpp"
 test -f "$ICU/include/unicode/utypes.h"
+test -f "$PYSDK/include/python3.14/Python.h"
 if [[ ! -d "$SOURCE/.git" ]]; then
   mkdir -p "$SOURCE"
   git -C "$SOURCE" init -q
@@ -54,10 +56,14 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$OUT/installed" \
   -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU" \
+  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK" \
   -DQt6_DIR="$QT/lib/cmake/Qt6" \
   -DQT_HOST_PATH="$QT_HOST" \
-  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU" \
+  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK" \
+  -DPython3_ROOT_DIR="$PYSDK" \
+  -DPython3_INCLUDE_DIR="$PYSDK/include/python3.14" \
+  -DPython3_LIBRARY="$PYSDK/lib/libpython3.14.so" \
+  -DPython3_EXECUTABLE="$(command -v python3)" \
   -DICU_ROOT="$ICU" \
   -DICU_INCLUDE_DIR="$ICU/include" \
   -DICU_UC_LIBRARY="$ICU/lib/libicuuc.so" \

@@ -166,13 +166,65 @@ jobs:
           path: out/full-freecad/icu*
           if-no-files-found: warn
 
+  python-android:
+    name: Verify official CPython 3.14.8 Android embeddable SDK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Android NDK and verify toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends binutils file curl
+          mkdir -p out/full-freecad
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+      - name: Restore verified official Android Python 3.14 SDK
+        id: pycache
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Acquire and NDK-link official Python Android embeddable libraries
+        if: steps.pycache.outputs.cache-hit != 'true'
+        run: bash full-port/bootstrap-python-android.sh
+      - name: Verify Android CPython SDK ELF on cached or new build
+        id: verify
+        run: |
+          set -euo pipefail
+          test -f out/full-deps/python/include/python3.14/Python.h
+          lib="$(find out/full-deps/python/lib -maxdepth 2 -name 'libpython3.14.so*' -print -quit)"
+          test -n "$lib"
+          readelf -h "$lib" | grep -q 'Machine:.*AArch64'
+          readelf -h "$lib" | grep -q 'Type:.*DYN'
+          ! readelf -d "$lib" | grep -Eq 'libc\\.so\\.6|ld-linux'
+      - name: Save verified Python Android SDK
+        if: steps.pycache.outputs.cache-hit != 'true' && steps.verify.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Upload Python SDK origin, checksum and ELF audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-python-android-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/full-freecad/python*
+          if-no-files-found: warn
+
   freecad-full:
     name: Configure and compile REAL upstream FreeCADBase + FreeCADApp
     runs-on: ubuntu-24.04
     timeout-minutes: 150
-    needs: [qt-android, yaml-android, icu-android]
+    needs: [qt-android, yaml-android, icu-android, python-android]
     steps:
       - uses: actions/checkout@v4
+      - name: Set up matching host CPython 3.14 interpreter
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.8'
       - name: Install real build prerequisites (host tools only)
         run: |
           set -euo pipefail
@@ -206,12 +258,19 @@ jobs:
         with:
           path: out/full-deps/icu
           key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
+      - name: Restore verified official CPython Android embed SDK
+        id: python
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
       - name: Refuse any accidental host ABI mixing
         run: |
           test "${{ steps.occt.outputs.cache-hit }}" = true || { echo "::error::No verified OCCT Android SDK"; exit 1; }
           test "${{ steps.qt.outputs.cache-hit }}" = true || { echo "::error::No verified Android Qt6 SDK"; exit 1; }
           test "${{ steps.yaml.outputs.cache-hit }}" = true || { echo "::error::No verified Android yaml-cpp SDK"; exit 1; }
           test "${{ steps.icu.outputs.cache-hit }}" = true || { echo "::error::No verified ICU Android SDK"; exit 1; }
+          test "${{ steps.python.outputs.cache-hit }}" = true || { echo "::error::No verified CPython Android SDK"; exit 1; }
           test -f out/occt-android/lib/libTKBO.so
           test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6/Qt6Config.cmake
           bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
