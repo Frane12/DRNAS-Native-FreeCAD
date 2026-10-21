@@ -14,14 +14,24 @@ from pathlib import Path
 import sys
 header = Path(sys.argv[1])
 source = header.read_text()
-old = 'typedef void (APIENTRYP PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const GLchar* *string, const GLint *length);'
-new = 'typedef void (APIENTRYP PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length);'
-if old in source:
-    assert source.count(old) == 1, 'Ambiguous GL4ES shader-source typedef'
-    header.write_text(source.replace(old, new))
-else:
-    assert new in source, 'Pinned GL4ES shader-source typedef changed unexpectedly'
-print('GL4ES shader-source typedef matches Android GLES2 const qualifiers')
+declarations = [
+    (
+        'typedef void (APIENTRYP PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const GLchar* *string, const GLint *length);',
+        'typedef void (APIENTRYP PFNGLSHADERSOURCEPROC) (GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length);',
+    ),
+    (
+        'GLAPI void APIENTRY glShaderSource (GLuint shader, GLsizei count, const GLchar* *string, const GLint *length);',
+        'GLAPI void APIENTRY glShaderSource (GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length);',
+    ),
+]
+for old, new in declarations:
+    if old in source:
+        assert source.count(old) == 1, 'Ambiguous GL4ES shader-source declaration'
+        source = source.replace(old, new)
+    else:
+        assert new in source, 'Pinned GL4ES shader-source declaration changed unexpectedly'
+header.write_text(source)
+print('GL4ES shader-source typedef and prototype match Android GLES2 const qualifiers')
 PY_GL_HEADER
 base="$ROOT/full-port/build-full-core.sh"
 driver="$OUT/genuine-FreeCADGui-build-driver.sh"
@@ -152,7 +162,32 @@ for filename, (old, new) in replacements.items():
 print('Style diagnostics use explicit Value string representation for libc++')
 PY_STYLE_FORMAT
 """
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+config_marker)
+# OpenGL ES has multisampling defined by framebuffer/sample count, not a
+# desktop GL_MULTISAMPLE enable/disable capability. Preserve desktop code,
+# but omit unsupported GL_MULTISAMPLE state toggles in Android Quarter UI.
+quarter_android_patch = r"""python3 - "$SOURCE/src/Gui/Quarter/QuarterWidget.cpp" <<'PY_QUARTER_ANDROID'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+state = '    QOpenGLFunctions* functions = w->context() ? w->context()->functions() : nullptr;\n    const bool multisampleEnabled = functions && functions->glIsEnabled(GL_MULTISAMPLE) == GL_TRUE;'
+restore = '''    if (functions) {
+        if (multisampleEnabled) {
+            functions->glEnable(GL_MULTISAMPLE);
+        }
+        else {
+            functions->glDisable(GL_MULTISAMPLE);
+        }
+    }'''
+assert source.count(state) == 1, 'Upstream Quarter multisample state changed'
+assert source.count(restore) == 1, 'Upstream Quarter multisample restore changed'
+source = source.replace(state, '#ifndef ANDROID\n' + state + '\n#endif')
+source = source.replace(restore, '#ifndef ANDROID\n' + restore + '\n#endif')
+path.write_text(source)
+print('Quarter Android GLES2 omits unsupported GL_MULTISAMPLE toggling')
+PY_QUARTER_ANDROID
+"""
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
