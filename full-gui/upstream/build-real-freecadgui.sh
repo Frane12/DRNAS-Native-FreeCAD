@@ -211,12 +211,12 @@ replacement = '''def init_applications() -> None:
         InitPipeline().run()'''
 assert source.count(needle) == 1, 'Pinned FreeCADInit pipeline changed'
 source = source.replace(needle, replacement)
-needle = """    except Exception as ex:
-        Err(f'Error in init_applications {ex!s}')"""
-replacement = """    except Exception as ex:
+needle = '''    except Exception as ex:
+        Err(f'Error in init_applications {ex!s}')'''
+replacement = '''    except Exception as ex:
         # Preserve the *real* underlying exception before FreeCADGuiInit runs.
         App.__DRNAS_AndroidInitError__ = traceback.format_exc()
-        Err(f'Error in init_applications {ex!s}')"""
+        Err(f'Error in init_applications {ex!s}')'''
 assert source.count(needle) == 1, 'Pinned FreeCADInit exception handling changed'
 path.write_text(source.replace(needle, replacement))
 print('FreeCAD Android app module cache initialized and real startup traceback retained')
