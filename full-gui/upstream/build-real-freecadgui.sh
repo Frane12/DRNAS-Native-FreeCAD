@@ -358,7 +358,35 @@ print('Original FreeCAD AppHomePath now resolves bundled Android workbenches')
 PY_DRNAS_HOME
 """
 workbench_diagnostics_patch = 'python3 "$ROOT/full-gui/upstream/patch-workbench-diagnostics.py" "$SOURCE"\n'
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+android_home_patch+workbench_diagnostics_patch+config_marker)
+# Android's Bionic runtime does not ship desktop fontconfig headers/libs.
+# Preserve FreeCAD Sketcher's real TrueType/OpenType font discovery via Qt
+# and the device's actual font directories, without a dummy fontconfig shim.
+android_sketcher_fonts_patch = """python3 - "$SOURCE/src/Mod/Sketcher/Gui/FontProvider.cpp" <<'PY_ANDROID_FONTS'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+linux_guard = '#if defined(FC_OS_LINUX) || defined(FC_OS_BSD)'
+assert source.count(linux_guard) == 2, 'Pinned Sketcher FontProvider platform guards changed'
+source = source.replace(linux_guard,
+    '#if (defined(FC_OS_LINUX) || defined(FC_OS_BSD)) && !defined(__ANDROID__)')
+windows_guard = '#elif defined(FC_OS_WIN32)'
+assert source.count(windows_guard) == 1, 'Pinned Sketcher FontProvider OS branches changed'
+android_branch = '''#elif defined(__ANDROID__)
+QStringList platformFontFiles()
+{
+    QStringList directories = QStandardPaths::standardLocations(QStandardPaths::FontsLocation);
+    directories << QStringLiteral("/system/fonts") << QStringLiteral("/product/fonts");
+    directories.removeDuplicates();
+    return filesInDirectories(directories);
+}
+'''
+source = source.replace(windows_guard, android_branch + windows_guard)
+path.write_text(source)
+print('Android Sketcher FontProvider uses Qt and real Android fonts, not Linux fontconfig')
+PY_ANDROID_FONTS
+"""
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+android_home_patch+workbench_diagnostics_patch+android_sketcher_fonts_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
