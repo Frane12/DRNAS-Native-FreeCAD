@@ -189,6 +189,71 @@ path.write_text(source)
 print('Quarter Android GLES2 omits unsupported GL_MULTISAMPLE toggling')
 PY_QUARTER_ANDROID
 """
+# FreeCAD's upstream Python 3.11+ embedding uses an isolated PyConfig and
+# therefore ignores PYTHONHOME/PYTHONPATH.  The original GUI reached
+# Py_InitializeFromConfig on device, but failed there because the APK carried
+# libpython3.14.so with *no* encodings/stdlib. Keep the original interpreter,
+# explicitly pointing it at our verified Android CPython 3.14 assets. Also
+# retain the real PyStatus explanation instead of losing it in a generic -3.
+android_python_patch = """python3 - "$SOURCE/src/Base/Interpreter.cpp" <<'PY_ANDROID_EMBED_PYTHON'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = '''    status = Py_InitializeFromConfig(&config);
+    if (PyStatus_Exception(status)) {
+        throw Base::RuntimeError("Failed to init from config");
+    }'''
+assert source.count(needle) == 1, "Pinned upstream Python init block changed"
+replacement = '''#ifdef __ANDROID__
+    // QtActivity stages the authentic CPython 3.14 Android stdlib under its
+    // app-private files directory. PyConfig_InitIsolatedConfig explicitly
+    // ignores PYTHONPATH, so supply the actual module paths through PyConfig.
+    const char* drnasPython = getenv("DRNAS_PYTHON_RUNTIME");
+    const char* drnasNative = getenv("DRNAS_PYTHON_NATIVE_DIR");
+    if (drnasPython && *drnasPython) {
+        status = PyConfig_SetBytesString(&config, &config.home, drnasPython);
+        if (PyStatus_Exception(status)) {
+            throw Base::RuntimeError(std::string("Python home: ")
+                + (status.err_msg ? status.err_msg : "configuration error"));
+        }
+        const std::string root(drnasPython);
+        std::vector<std::string> paths = {
+            root + "/python314.zip", root + "/lib-dynload"
+        };
+        if (drnasNative && *drnasNative) {
+            paths.emplace_back(drnasNative);
+        }
+        for (const std::string& modulePath : paths) {
+            wchar_t* wide = Py_DecodeLocale(modulePath.c_str(), nullptr);
+            if (!wide) {
+                throw Base::RuntimeError("Could not decode Android Python path");
+            }
+            status = PyWideStringList_Append(&config.module_search_paths, wide);
+            PyMem_RawFree(wide);
+            if (PyStatus_Exception(status)) {
+                throw Base::RuntimeError(std::string("Python module path: ")
+                    + (status.err_msg ? status.err_msg : "configuration error"));
+            }
+        }
+        config.module_search_paths_set = 1;
+    }
+#endif
+    status = Py_InitializeFromConfig(&config);
+    if (PyStatus_Exception(status)) {
+        throw Base::RuntimeError(std::string("Failed to init from config: ")
+            + (status.err_msg ? status.err_msg : "unknown Python error"));
+    }'''
+# App::Interpreter.cpp already depends on std::vector from FreeCAD headers;
+# include it explicitly so the NDK build is independent of include order.
+source = source.replace(needle, replacement)
+include = '#include <sstream>'
+assert source.count(include) == 1
+source = source.replace(include, include + '\\n#include <vector>')
+path.write_text(source)
+print('Android FreeCAD isolated PyConfig now resolves official CPython 3.14 stdlib')
+PY_ANDROID_EMBED_PYTHON
+"""
 # The Android entrypoint lives inside the genuine libFreeCADGui.so, avoiding
 # any eager DT_NEEDED dependency from QtLoader's main QtActivity library.
 # This keeps the already-working OCCT viewer in safe mode until explicitly
@@ -207,7 +272,7 @@ copyfile(bridge_source, bridge_dest)
 print('Real upstream FreeCADGui Android MainWindow bridge compiled into FreeCADGui')
 PY_ANDROID_BRIDGE
 """
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_bridge_patch+config_marker)
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_python_patch+android_bridge_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
