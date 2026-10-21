@@ -1,0 +1,39 @@
+name: DRNAS - verify OpenAI API key
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/check-openai-api-key.yml'
+  workflow_dispatch:
+
+# Checks presence and OpenAI authentication without printing or uploading
+# any secret. GET /v1/models is non-billable. It does not test billing.
+permissions:
+  contents: read
+
+jobs:
+  verify-key:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Check secret and authentication without exposing the key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+            echo "::error::OPENAI_API_KEY is missing from repository Actions secrets."
+            exit 1
+          fi
+          echo "OPENAI_API_KEY secret is configured."
+          status="$(curl --silent --show-error --max-time 20 --output /dev/null --write-out '%{http_code}' \
+            --header "Authorization: Bearer ${OPENAI_API_KEY}" \
+            https://api.openai.com/v1/models)"
+          case "$status" in
+            200) echo "PASS: OpenAI accepted the API key (models listing endpoint).";;
+            401) echo "::error::OpenAI rejected the API key (401 Unauthorized)."; exit 1;;
+            403) echo "::warning::Key exists, but this endpoint was forbidden (403). Check key scopes."; exit 1;;
+            429) echo "::warning::Key exists, but API is rate limited or quota constrained (429)."; exit 1;;
+            *)   echo "::error::OpenAI key check was inconclusive (HTTP $status)."; exit 1;;
+          esac
