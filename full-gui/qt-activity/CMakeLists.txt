@@ -41,19 +41,22 @@ endforeach()
 # shared libraries into the installable APK, alongside Qt6 runtime libraries.
 file(GLOB ANDROID_OCCT_LIBS "${OCCT_LIB}/libTK*.so")
 list(SORT ANDROID_OCCT_LIBS)
-# Full upstream ABI integration. This is a real FreeCADGui binary runtime
-# load probe, NOT a claim that FreeCAD's original desktop MainWindow runs.
-# androiddeployqt packages the app's linked Qt6 libraries separately.
+# FreeCAD shared objects are present in the *final signed APK*, but must
+# NOT be added to QtLoader's eager native load list: Android loads its
+# QT_ANDROID_EXTRA_LIBS before main(), making a premature SIGABRT invisible.
+# androiddeployqt automatically packages Qt6 and the working OCCT viewer.
 if(DRNAS_FREECAD_RUNTIME_DIR)
     foreach(required libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so libGL.so libGLU.so)
         if(NOT EXISTS "${DRNAS_FREECAD_RUNTIME_DIR}/${required}")
             message(FATAL_ERROR "Native upstream FreeCAD/GL4ES runtime missing: ${required}")
         endif()
     endforeach()
-    file(GLOB DRNAS_UPSTREAM_LIBS "${DRNAS_FREECAD_RUNTIME_DIR}/lib*.so")
-    list(SORT DRNAS_UPSTREAM_LIBS)
-    set(ANDROID_OCCT_LIBS "${DRNAS_UPSTREAM_LIBS}")
-    message(STATUS "Packaging ${DRNAS_UPSTREAM_LIBS} with real FreeCADGui native Android runtime")
+    # CRITICAL: QT_ANDROID_EXTRA_LIBS are loaded by Android's QtLoader
+    # BEFORE our C++ main() and BEFORE any GUI can report a crash. Do not
+    # register upstream FreeCADGui/Coin3D here. Package them separately by
+    # signed APK injection, leaving QtLoader's previously working OCCT
+    # startup list untouched. The user tests them by opt-in dlopen.
+    message(STATUS "SAFE MODE: upstream FreeCADGui runtime is bundled after Qt packaging, not eagerly loaded by QtLoader")
 endif()
 set_target_properties(drnas_freecad_qtgui PROPERTIES
     QT_ANDROID_EXTRA_LIBS "${ANDROID_OCCT_LIBS}")
