@@ -54,6 +54,33 @@ glflags = '''  -DOPENGL_INCLUDE_DIR="$ROOT/out/upstream-freecad-gui/opengl-compa
   -DOPENGL_GLU_FOUND=TRUE \\
 '''
 s = s.replace(qt_flag, glflags + qt_flag)
+# FreeCAD's legacy custom GLU detection does not honor the explicitly
+# imported Android GLU file under recent cross-compiling FindOpenGL.
+# Only report GLU present if ALL real Android libraries/headers exist.
+config_marker="echo 'Full upstream FreeCAD configure for Android arm64-v8a — no host ABI fallbacks'"
+assert s.count(config_marker) == 1
+validate_glu = """python3 - "$SOURCE/cMake/FreeCAD_Helpers/SetupOpenGL.cmake" <<'PY_VALIDATE_GLU'
+from pathlib import Path
+import sys
+path=Path(sys.argv[1])
+source=path.read_text()
+needle='    if(OPENGL_GLU_FOUND)'
+assert source.count(needle)==1
+check='''    if(ANDROID)
+        if(EXISTS "${OPENGL_gl_LIBRARY}" AND EXISTS "${OPENGL_glu_LIBRARY}"
+            AND EXISTS "${OPENGL_INCLUDE_DIR}/GL/gl.h"
+            AND EXISTS "${OPENGL_INCLUDE_DIR}/GL/glu.h")
+            set(OPENGL_GLU_FOUND TRUE)
+            message(STATUS "Verified real Android AArch64 GL4ES and Mesa GLU libraries")
+        else()
+            message(FATAL_ERROR "Required REAL Android GL4ES/GLU paths or headers are missing")
+        endif()
+    endif()
+'''
+path.write_text(source.replace(needle,check+needle))
+PY_VALIDATE_GLU
+"""
+s=s.replace(config_marker,validate_glu+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
