@@ -37,6 +37,20 @@ endforeach()
 # shared libraries into the installable APK, alongside Qt6 runtime libraries.
 file(GLOB ANDROID_OCCT_LIBS "${OCCT_LIB}/libTK*.so")
 list(SORT ANDROID_OCCT_LIBS)
+# Full upstream ABI integration. This is a real FreeCADGui binary runtime
+# load probe, NOT a claim that FreeCAD's original desktop MainWindow runs.
+# androiddeployqt packages the app's linked Qt6 libraries separately.
+if(DRNAS_FREECAD_RUNTIME_DIR)
+    foreach(required libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so libGL.so libGLU.so)
+        if(NOT EXISTS "${DRNAS_FREECAD_RUNTIME_DIR}/${required}")
+            message(FATAL_ERROR "Native upstream FreeCAD/GL4ES runtime missing: ${required}")
+        endif()
+    endforeach()
+    file(GLOB DRNAS_UPSTREAM_LIBS "${DRNAS_FREECAD_RUNTIME_DIR}/lib*.so")
+    list(SORT DRNAS_UPSTREAM_LIBS)
+    set(ANDROID_OCCT_LIBS "${DRNAS_UPSTREAM_LIBS}")
+    message(STATUS "Packaging ${DRNAS_UPSTREAM_LIBS} with real FreeCADGui native Android runtime")
+endif()
 set_target_properties(drnas_freecad_qtgui PROPERTIES
     QT_ANDROID_EXTRA_LIBS "${ANDROID_OCCT_LIBS}")
 set_target_properties(drnas_freecad_qtgui PROPERTIES
@@ -48,3 +62,12 @@ set_target_properties(drnas_freecad_qtgui PROPERTIES
     QT_ANDROID_VERSION_CODE 2
     QT_ANDROID_VERSION_NAME "0.2.0-occt"
 )
+
+if(DRNAS_FREECAD_RUNTIME_DIR)
+    set_target_properties(drnas_freecad_qtgui PROPERTIES
+        QT_ANDROID_PACKAGE_NAME "org.drnas.freecad.integrated"
+        QT_ANDROID_APP_NAME "DRNAS FreeCAD Native GUI Integration"
+        QT_ANDROID_VERSION_CODE 3
+        QT_ANDROID_VERSION_NAME "0.3.0-alpha"
+    )
+endif()
