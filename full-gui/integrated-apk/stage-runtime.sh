@@ -53,6 +53,22 @@ copy_sos "$ROOT/out/full-deps/python/lib"
 copy_sos "$ROOT/out/full-deps/xerces-c/lib"
 copy_sos "$ROOT/out/full-deps/yaml-cpp/lib"
 
+# GL4ES was built with Linux-compatible libGL.so.1 SONAME although the
+# Android APK can only package its native library as libGL.so. Normalize
+# the *staged* copy and all AArch64 consumers, preserving upstream artifacts.
+test -s "$STAGE/libGL.so"
+patchelf --set-soname libGL.so "$STAGE/libGL.so"
+for so in "$STAGE"/lib*.so; do
+    if readelf -d "$so" | grep -Fq 'Shared library: [libGL.so.1]'; then
+        patchelf --replace-needed libGL.so.1 libGL.so "$so"
+    fi
+done
+# Do not allow a versioned name to slip past the dependency audit.
+if readelf -d "$STAGE/libFreeCADGui.so" | grep -Fq 'libGL.so.1'; then
+    echo "::error::FreeCADGui still depends on unpackagable libGL.so.1"
+    exit 1
+fi
+
 # Android's system ICU uses incompatible symbols: namespace staged ICU 75.
 for so in "$STAGE"/lib*.so; do
     while IFS= read -r needed; do
