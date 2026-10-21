@@ -75,7 +75,7 @@ with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED,
     init = (freecad_ext / "__init__.py.template").read_text()
     if "import FreeCAD as app" not in init or "from pkgutil import extend_path" not in init:
         raise SystemExit("Upstream freecad namespace initializer changed")
-    init = init.replace("\${FREECAD_LIBRARY_INSTALL_DIR}", ".")
+    init = init.replace("${FREECAD_LIBRARY_INSTALL_DIR}", ".")
     z.writestr("freecad/__init__.py", init)
     modules = sorted(freecad_ext.glob("*.py"))
     if not modules or not any(p.name == "utils.py" for p in modules):
