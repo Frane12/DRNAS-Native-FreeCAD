@@ -123,6 +123,14 @@ path = Path(sys.argv[1])
 cmake = path.read_text()
 anchor = 'add_subdirectory(src)' + chr(10)
 assert cmake.count(anchor) == 1, 'Upstream FreeCAD src anchor changed'
+# The core FreeCAD GUI includes GL/gl.h from MaterialGui, SketcherGui and
+# other subprojects, not only from libFreeCADGui.so. Make the real Android
+# GL4ES headers available BEFORE CMake descends into src/ subdirectories.
+gl_includes = '''
+if(ANDROID)
+    include_directories("${OPENGL_INCLUDE_DIR}")
+endif()
+'''
 addition = '''
 if(ANDROID)
     if(NOT TARGET Coin)
@@ -138,7 +146,7 @@ if(ANDROID)
     message(STATUS "Real Android NDK EGL linked to libCoin.so and GL4ES headers to FreeCADGui")
 endif()
 '''
-path.write_text(cmake.replace(anchor, anchor + addition))
+path.write_text(cmake.replace(anchor, gl_includes + anchor + addition))
 PY_COIN_EGL
 """
 # libc++ eagerly checks diagnostic format arguments in these templates.
