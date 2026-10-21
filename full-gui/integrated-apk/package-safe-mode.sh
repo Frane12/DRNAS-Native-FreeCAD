@@ -38,10 +38,66 @@ while IFS= read -r -d '' so; do
     cp -L "$so" "$work/bundle/lib/arm64-v8a/$base"
     names+=("$member")
 done < <(find "$STAGE" -maxdepth 1 -type f -name 'lib*.so' -print0 | sort -z)
+# Python 3.14 cannot initialize from libpython alone: encodings, importlib,
+# codecs and the rest of the standard library must be in the APK. Ship the
+# verified official Android CPython prefix rather than host-system Python.
+# Only the Python .py/data files go in python314.zip; native extension modules
+# must be extracted to a real directory (zipimport cannot dlopen .so files).
+pyhome="$ROOT/out/full-deps/python/lib/python3.14"
+test -s "$pyhome/encodings/__init__.py"
+test -d "$pyhome/lib-dynload"
+mkdir -p "$work/bundle/assets/drnas/python-ext"
+python3 - "$pyhome" "$work/bundle/assets/drnas" <<'PY_ANDROID_STDLIB'
+from pathlib import Path
+import sys
+import zipfile
+
+stdlib, dest = map(Path, sys.argv[1:])
+archive = dest / "python314.zip"
+count = 0
+with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED,
+                     compresslevel=8, allowZip64=True) as z:
+    for source in sorted(stdlib.rglob("*")):
+        if not source.is_file() or source.is_symlink():
+            continue
+        rel = source.relative_to(stdlib)
+        if any(p in {"lib-dynload", "site-packages", "__pycache__", "test", "tests"}
+               for p in rel.parts):
+            continue
+        if rel.suffix in {".so", ".pyc", ".pyo", ".a", ".o"}:
+            continue
+        z.write(source, rel.as_posix())
+        count += 1
+    if "encodings/__init__.py" not in z.namelist():
+        raise SystemExit("CRITICAL: bundled Python archive lacks encodings")
+print(f"PACKAGED {count} real Android Python 3.14 stdlib sources/data into {archive}")
+modules = sorted((stdlib / "lib-dynload").glob("*.so"))
+if not modules:
+    raise SystemExit("CRITICAL: official Android Python lib-dynload is empty")
+manifest = dest / "python-ext-manifest.txt"
+manifest.write_text("".join(p.name + "\n" for p in modules))
+for extension in modules:
+    output = dest / "python-ext" / extension.name
+    output.write_bytes(extension.read_bytes())
+print(f"PACKAGED {len(modules)} Android CPython binary extension modules")
+PY_ANDROID_STDLIB
+# The packaging script is intentionally strict: missing/host ABI stdlib
+# binaries must fail CI, not ship a GUI that dies silently on device.
+while IFS= read -r extension; do
+    test -n "$extension" || continue
+    module="$work/bundle/assets/drnas/python-ext/$extension"
+    test -s "$module"
+    readelf -h "$module" | grep -q 'Machine:.*AArch64'
+    ! readelf -d "$module" | grep -Eq 'libc\.so\.6|ld-linux'
+done < "$work/bundle/assets/drnas/python-ext-manifest.txt"
 test "${#names[@]}" -gt 0
 # Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
 # Keep the same packaging policy. Uncompressed debug DSOs ballooned to >550 MB.
 ( cd "$work/bundle" && zip -q -9 "$work/unsigned.apk" "${names[@]}" )
+# Add embedded CPython standard library/extensions as Android assets, without
+# eager-loading anything into QtLoader before the user's GUI button click.
+( cd "$work/bundle" && zip -q -6 -r "$work/unsigned.apk" assets/drnas )
+
 # Support Android's newer 16 KB memory pages for uncompressed native ELF.
 "$SDK_BUILDTOOLS/zipalign" -P 16 -f 4 "$work/unsigned.apk" "$work/aligned.apk"
 # Official Qt CMake/androiddeployqt may sign using a temporary local
@@ -70,4 +126,7 @@ for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so lib
     grep -Fx "lib/arm64-v8a/$needed" "$OUT/apk-files.txt"
 done
 echo "PASS: injected ${#names[@]} deferred ARM64 libraries; retained $skipped Qt/OCCT entries."
+for required_asset in assets/drnas/python314.zip assets/drnas/python-ext-manifest.txt; do
+    grep -Fx "$required_asset" "$OUT/apk-files.txt"
+done
 echo "SAFE MODE: QtLoader no longer preloads FreeCADGui/Coin3D before main()."
