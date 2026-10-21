@@ -200,6 +200,11 @@ jobs:
           for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
             grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
           done
+          # Verify transitive dependencies for EVERY arm64 library, not only
+          # FreeCADGui/Base/App. Prior signed APK crashed instantly because
+          # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.
+          python3 full-gui/integrated-apk/verify-apk-native-dependencies.py "$apk" \
+            2>&1 | tee out/integrated-freecad-qtapk/native-dt-needed-audit.txt
           cp "$apk" out/integrated-freecad-qtapk/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-Alpha.apk
           (cd out/integrated-freecad-qtapk && sha256sum *.apk > APK-SHA256SUMS.txt)
           echo 'PASS: Signed ARM64 APK bundles actual upstream FreeCADGui/FreeCADApp/FreeCADBase and Coin3D.'
