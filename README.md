@@ -1,3 +1,11 @@
+## Independent FreeCAD C++ Android Core LAB (development branch)
+
+On branch `feature/freecad-base-android`, a real subset of **upstream FreeCAD's own Base64.cpp and Vector3D.cpp** now cross-compiles with Android NDK, alongside the already phone-tested OpenCASCADE kernel. The FreeCAD host C++ tests passed and the Android shared library/PIE ELF audits passed. The **separate Android Core LAB debug APK is successfully built, signed and packed**: [Run #39560534869](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39560534869), [APK artifact ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39560534869/artifacts/12327696324).
+
+App ID `org.drnas.freecad.coreprobe` is deliberately different from the OCCT smoke app; they can coexist. Test **RUN REAL FREECAD C++ TEST** on a phone and capture PASS/FAIL. Native Android execution of the FreeCAD source has **not yet** been verified on a device (unlike the previously confirmed OCCT operations).
+
+**Not a full FreeCADBase or FreeCADApp build.** Compiling 2 upstream C++ files is an initial source-port validation, not a parametric FreeCAD document/Part runtime. The real FreeCADBase/App dependencies (Qt6, ICU, Python/PyCXX, Xerces-C, Boost, etc.) remain. The saved verified OCCT native cache is reused; no expensive OCCT rebuild.
+
 # DRNAS Native FreeCAD — Android ARM64
 
 Independent **Android porting effort**, based on upstream [FreeCAD](https://github.com/FreeCAD/FreeCAD) and [Open CASCADE Technology](https://github.com/Open-Cascade-SAS/OCCT).
