@@ -230,6 +230,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build git python3 ccache binutils file
+          python3 -m pip install --disable-pip-version-check 'pybind11==3.0.1'
           mkdir -p out/full-freecad "$CCACHE_DIR"
           if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"

@@ -58,6 +58,7 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
   -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK" \
   -DQt6_DIR="$QT/lib/cmake/Qt6" \
+  -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)" \
   -DQT_HOST_PATH="$QT_HOST" \
   -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU;$PYSDK" \
   -DPython3_ROOT_DIR="$PYSDK" \
