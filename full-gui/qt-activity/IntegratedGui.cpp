@@ -6,6 +6,12 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QStandardPaths>
+#include <cstdlib>
 #include <QSettings>
 #include <dlfcn.h>
 #include <QComboBox>
@@ -22,6 +28,70 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+
+// Copy the exact Android CPython 3.14 standard library supplied by the
+// verified Python SDK into our private data directory before FreeCAD App::init.
+// Qt's assets: filesystem is backed by Android's AssetManager; Python itself
+// cannot import from that virtual filesystem.
+namespace {
+bool configureBundledPython(QString& error)
+{
+    const QString root = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation) + QStringLiteral("/drnas-python314");
+    if (!QDir().mkpath(root)) {
+        error = QStringLiteral("Cannot create private Python runtime directory: %1").arg(root);
+        return false;
+    }
+    QFile source(QStringLiteral("assets:/drnas/python314.zip"));
+    if (!source.open(QIODevice::ReadOnly) || source.size() < 10000) {
+        error = QStringLiteral("Missing embedded Python 3.14 standard library asset: %1")
+                    .arg(source.errorString());
+        return false;
+    }
+    const QString archive = root + QStringLiteral("/python314.zip");
+    if (!QFileInfo::exists(archive) || QFileInfo(archive).size() != source.size()) {
+        QSaveFile target(archive);
+        if (!target.open(QIODevice::WriteOnly)) {
+            error = QStringLiteral("Cannot stage Python standard library: %1")
+                        .arg(target.errorString());
+            return false;
+        }
+        while (!source.atEnd()) {
+            const QByteArray chunk = source.read(256 * 1024);
+            if (chunk.isEmpty() || target.write(chunk) != chunk.size()) {
+                error = QStringLiteral("Writing Python standard library failed");
+                target.cancelWriting();
+                return false;
+            }
+        }
+        if (!target.commit()) {
+            error = QStringLiteral("Committing Python standard library failed: %1")
+                        .arg(target.errorString());
+            return false;
+        }
+    }
+    // Python's C extension modules must remain under Android's approved
+    // nativeLibraryDir (in the signed APK, not a writable .so directory).
+    // libpython has already been loaded by the explicit FreeCAD dlopen test.
+    dlerror();
+    void* pyInit = dlsym(RTLD_DEFAULT, "Py_InitializeFromConfig");
+    Dl_info location{};
+    if (!pyInit || !dladdr(pyInit, &location) || !location.dli_fname) {
+        error = QStringLiteral("libpython3.14.so location unavailable");
+        return false;
+    }
+    const QString nativeDir = QFileInfo(QString::fromLocal8Bit(location.dli_fname))
+                                  .absolutePath();
+    const QByteArray runtimeBytes = root.toUtf8();
+    const QByteArray nativeBytes = nativeDir.toUtf8();
+    if (setenv("DRNAS_PYTHON_RUNTIME", runtimeBytes.constData(), 1) != 0 ||
+        setenv("DRNAS_PYTHON_NATIVE_DIR", nativeBytes.constData(), 1) != 0) {
+        error = QStringLiteral("Could not configure embedded Python environment");
+        return false;
+    }
+    return true;
+}
+}
 
 // A restart-safe breadcrumb for *each stage* of real upstream MainWindow
 // startup. Native aborts (OpenGL/GL4ES/Python) cannot be caught in C++.
@@ -133,6 +203,17 @@ public:
                 nativeStatus->setText(QStringLiteral(
                     "This APK has no Android original-GUI bridge symbol. "
                     "Rebuild libFreeCADGui.so with AndroidMainWindowBridge."));
+                launchOriginal->setEnabled(true);
+                return;
+            }
+            QString pythonError;
+            if (!configureBundledPython(pythonError)) {
+                const QString message = QStringLiteral("Python bootstrap failed: %1")
+                                            .arg(pythonError);
+                nativeStatus->setText(message);
+                QSettings settings;
+                settings.setValue(QStringLiteral("nativeProbe/result"), message);
+                settings.sync();
                 launchOriginal->setEnabled(true);
                 return;
             }
