@@ -116,11 +116,61 @@ jobs:
           path: out/full-freecad/yaml*
           if-no-files-found: warn
 
+  icu-android:
+    name: Build ICU uc/i18n/data with Linux generators and Android ARM64 binaries
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ICU build tools and Android NDK
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends git build-essential python3 autoconf pkg-config binutils file
+          mkdir -p out/full-freecad
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+      - name: Restore verified Android ICU 75.1 SDK
+        id: icucache
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/icu
+          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
+      - name: Build host data generators and Android ICU libraries
+        if: steps.icucache.outputs.cache-hit != 'true'
+        run: bash full-port/bootstrap-icu-android.sh
+      - name: Verify Android ICU shared libraries
+        id: verify
+        run: |
+          set -euo pipefail
+          for name in icuuc icui18n icudata; do
+            lib="$(find out/full-deps/icu/lib -maxdepth 1 -type f -name "lib${name}.so.*" -print -quit)"
+            test -n "$lib"
+            readelf -h "$lib" | grep -q 'Machine:.*AArch64'
+            readelf -h "$lib" | grep -q 'Type:.*DYN'
+            ! readelf -d "$lib" | grep -Eq 'libc\\.so\\.6|ld-linux'
+          done
+          echo 'PASS: ICU uc+i18n+data verified Android AArch64'
+      - name: Cache real ICU binaries only after verification
+        if: steps.icucache.outputs.cache-hit != 'true' && steps.verify.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/icu
+          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
+      - name: Upload ICU cross compile diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-icu-android-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/full-freecad/icu*
+          if-no-files-found: warn
+
   freecad-full:
     name: Configure and compile REAL upstream FreeCADBase + FreeCADApp
     runs-on: ubuntu-24.04
     timeout-minutes: 150
-    needs: [qt-android, yaml-android]
+    needs: [qt-android, yaml-android, icu-android]
     steps:
       - uses: actions/checkout@v4
       - name: Install real build prerequisites (host tools only)
@@ -150,11 +200,18 @@ jobs:
         with:
           path: out/full-deps/yaml-cpp
           key: drnas-yaml-cpp-0.8.0-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-yaml-android.sh') }}
+      - name: Restore verified Android ICU uc, i18n, data
+        id: icu
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/icu
+          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
       - name: Refuse any accidental host ABI mixing
         run: |
           test "${{ steps.occt.outputs.cache-hit }}" = true || { echo "::error::No verified OCCT Android SDK"; exit 1; }
           test "${{ steps.qt.outputs.cache-hit }}" = true || { echo "::error::No verified Android Qt6 SDK"; exit 1; }
           test "${{ steps.yaml.outputs.cache-hit }}" = true || { echo "::error::No verified Android yaml-cpp SDK"; exit 1; }
+          test "${{ steps.icu.outputs.cache-hit }}" = true || { echo "::error::No verified ICU Android SDK"; exit 1; }
           test -f out/occt-android/lib/libTKBO.so
           test -f out/full-deps/qt/$QT_VERSION/android_arm64_v8a/lib/cmake/Qt6/Qt6Config.cmake
           bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"

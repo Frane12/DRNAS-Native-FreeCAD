@@ -11,6 +11,7 @@ QT="$ROOT/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
 QT_HOST="$ROOT/out/full-deps/qt/$QT_VERSION/gcc_64"
 OCCT="$ROOT/out/occt-android"
 YAML="$ROOT/out/full-deps/yaml-cpp"
+ICU="$ROOT/out/full-deps/icu"
 SOURCE="$ROOT/.deps/freecad-upstream-full"
 BUILDDIR="$ROOT/.build/freecad-upstream-android-arm64"
 OUT="$ROOT/out/full-freecad"
@@ -18,6 +19,7 @@ mkdir -p "$OUT" "$(dirname "$SOURCE")" "$(dirname "$BUILDDIR")"
 test -f "$QT/lib/cmake/Qt6Core/Qt6CoreConfig.cmake"
 test -f "$OCCT/lib/libTKBO.so"
 test -d "$YAML/lib/cmake/yaml-cpp"
+test -f "$ICU/include/unicode/utypes.h"
 if [[ ! -d "$SOURCE/.git" ]]; then
   mkdir -p "$SOURCE"
   git -C "$SOURCE" init -q
@@ -52,10 +54,14 @@ cmake -S "$SOURCE" -B "$BUILDDIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$OUT/installed" \
   -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML" \
+  -DCMAKE_PREFIX_PATH="$QT;$OCCT;$YAML;$ICU" \
   -DQt6_DIR="$QT/lib/cmake/Qt6" \
   -DQT_HOST_PATH="$QT_HOST" \
-  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML" \
+  -DCMAKE_FIND_ROOT_PATH="$QT;$OCCT;$YAML;$ICU" \
+  -DICU_ROOT="$ICU" \
+  -DICU_INCLUDE_DIR="$ICU/include" \
+  -DICU_UC_LIBRARY="$ICU/lib/libicuuc.so" \
+  -DICU_I18N_LIBRARY="$ICU/lib/libicui18n.so" \
   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY \
   -DFREECAD_USE_CCACHE=ON \
   -DBUILD_GUI=OFF \
