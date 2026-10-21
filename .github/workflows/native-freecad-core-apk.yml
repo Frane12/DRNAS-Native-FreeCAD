@@ -1,0 +1,153 @@
+name: DRNAS FreeCAD - Real Native Core Android APK
+on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - '.github/workflows/native-freecad-core-apk.yml'
+      - 'android-fullcore/**'
+      - 'android-smoke/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  QT_VERSION: '6.8.3'
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+  FREECAD_REF: 'd4ffc7f725973e073907746e88d320d3e438fd34'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/native-apk
+  CCACHE_MAXSIZE: '128M'
+  CCACHE_COMPRESS: 'true'
+
+concurrency:
+  group: drnas-native-core-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-core-apk:
+    name: Package actual FreeCADBase + FreeCADApp with Android OCCT GPU viewer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 17 for Android Gradle plugin
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Cache Android Gradle dependencies
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+          cache-read-only: false
+      - name: Install Android build tools and native compiler
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache binutils file unzip libboost-dev
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
+          mkdir -p out/android-fullcore "$CCACHE_DIR"
+
+      - name: Download VERIFIED full FreeCADBase + FreeCADApp from completed run 20
+        uses: actions/download-artifact@v4
+        with:
+          name: drnas-native-freecad-core-39582462578-1
+          repository: Frane12/DRNAS-Native-FreeCAD
+          run-id: '39582462578'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: out/full-core-binary
+
+      - name: Restore cached OCCT 7.9.3 Android CAD kernel (no recompilation)
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Restore Qt6 Android AArch64 SDK (never the Linux host library)
+        id: qt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt6-android-arm64-v6.8.3-host-linux-qtbase-v1-${{ hashFiles('full-port/verify-qt-android.sh', 'full-port/bootstrap-qt.sh') }}
+      - name: Restore Android Boost 1.88 shared libraries
+        id: boost
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/boost
+          key: drnas-boost188-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-boost-android.sh') }}
+      - name: Restore Android ICU
+        id: icu
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/icu
+          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
+      - name: Restore Android embedded CPython
+        id: python
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Restore Android Xerces-C
+        id: xerces
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/xerces-c
+          key: drnas-xerces325-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-xerces-android.sh') }}
+      - name: Restore Android yaml-cpp
+        id: yaml
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/yaml-cpp
+          key: drnas-yaml-cpp-0.8.0-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-yaml-android.sh') }}
+
+      - name: Verify all native Android SDK caches are present
+        run: |
+          set -euo pipefail
+          for state in "${{ steps.occt.outputs.cache-hit }}" "${{ steps.qt.outputs.cache-hit }}" \
+                       "${{ steps.boost.outputs.cache-hit }}" "${{ steps.icu.outputs.cache-hit }}" \
+                       "${{ steps.python.outputs.cache-hit }}" "${{ steps.xerces.outputs.cache-hit }}" \
+                       "${{ steps.yaml.outputs.cache-hit }}"; do
+            [[ "$state" == true ]] || { echo "::error::Missing verified native Android SDK cache"; exit 1; }
+          done
+          ( cd out/full-core-binary && sha256sum -c SHA256SUMS )
+      - name: Compile tiny legacy OCCT viewer JNI bridge (not FreeCAD core)
+        run: |
+          set -euo pipefail
+          bash core-probe/build.sh
+          bash android-smoke/stage-native.sh
+      - name: Stage actual FreeCADBase and FreeCADApp and validate all packaged dependencies
+        id: stage
+        run: bash android-fullcore/stage-full-core.sh
+      - name: Build FreeCAD Native Core ARM64 PRE-ALPHA APK
+        id: gradle
+        run: |
+          cd android-smoke
+          gradle --no-daemon :app:assembleDebug
+      - name: Verify signature, distinct app ID, actual FreeCAD libraries in APK
+        run: |
+          set -euo pipefail
+          apk=android-smoke/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep "package: name='org.drnas.freecad.nativecore'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep "native-code: 'arm64-v8a'"
+          for so in libFreeCADBase.so libFreeCADApp.so libdrnas_occt_mesh.so libpython3.14.so; do
+            unzip -Z1 "$apk" | grep -Fx "lib/arm64-v8a/$so" || { echo "Missing core APK library: $so"; exit 1; }
+          done
+          cp "$apk" out/android-fullcore/DRNAS-FreeCAD-Native-Core-ARM64-PreAlpha-debug.apk
+          (cd out/android-fullcore && sha256sum DRNAS-FreeCAD-Native-Core-ARM64-PreAlpha-debug.apk > APK-SHA256SUMS.txt)
+          echo 'PASS: Signed installable Android arm64 APK containing actual FreeCADBase + FreeCADApp and GPU viewer'
+      - name: Compiler cache diagnostics
+        if: always()
+        run: ccache --show-stats || true
+      - name: Upload signed native-core APK and binary/ABI audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DRNAS-FreeCAD-Native-Core-ARM64-PreAlpha-APK-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/android-fullcore/
+          if-no-files-found: warn
+          retention-days: 30
