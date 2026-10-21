@@ -55,6 +55,7 @@ glflags = '''  -DOPENGL_INCLUDE_DIR="$ROOT/out/upstream-freecad-gui/opengl-compa
   -DCOIN_BUILD_GLX=OFF \\
   -DCOIN_BUILD_EGL=OFF \\
   -DFREECAD_RCC_COMPRESSION_ALGO=zlib \\
+  -DFREECAD_RCC_COMPRESSION_LEVEL=9 \\
 '''
 s = s.replace(qt_flag, glflags + qt_flag)
 # FreeCAD's legacy custom GLU detection does not honor the explicitly
