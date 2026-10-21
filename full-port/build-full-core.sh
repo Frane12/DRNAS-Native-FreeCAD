@@ -41,6 +41,31 @@ printf '%s\n' "$actual" > "$OUT/full-freecad-source-sha.txt"
 
 # FreeCADApp embeds translations even in headless builds.
 sed -i 's/set(FREECAD_QT_COMPONENTS Core Concurrent Network Xml)/set(FREECAD_QT_COMPONENTS Core Concurrent Network Xml LinguistTools)/' "$SOURCE/cMake/FreeCAD_Helpers/SetupQt.cmake"
+# In the headless Android core, there is no GUI translation UI. Upstream
+# FreeCADApp otherwise invokes Qt's Linux-host lrelease, which in the official
+# Qt 6.8.3 host package requires libicui18n.so.73 absent on Ubuntu 24.04.
+# Only skip these translation generation steps in BUILD_GUI=OFF builds.
+# Avoid replacing host libraries with the Android ICU 75 (wrong ABI).
+python3 - "$SOURCE/src/App/CMakeLists.txt" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = '''qt_find_and_add_translation(QM_SRCS "Resources/translations/*_*.ts"
+    ${CMAKE_CURRENT_BINARY_DIR}/Resources/translations)
+qt_find_and_add_translation(QM_SRCS "${CMAKE_SOURCE_DIR}/src/Base/Resources/translations/*_*.ts"
+    ${CMAKE_CURRENT_BINARY_DIR}/Resources/translations)
+qt_create_resource_file(${FreeCADApp_TR_QRC} ${QM_SRCS})
+qt_add_resources(FreeCADApp_QRC_SRCS
+    ${FreeCADApp_TR_QRC}
+    OPTIONS ${FREECAD_RCC_OPTIONS}
+)'''
+assert source.count(needle) == 1, 'Unexpected upstream FreeCADApp translation block'
+source = source.replace(needle, 'if(BUILD_GUI)\n' + needle + '\nendif()')
+path.write_text(source)
+print('Headless FreeCADApp translations disabled; no host lrelease dependency')
+PY
+
 # Android pthread functions live in libc; there is no separate libpthread.
 sed -i 's/if(UNIX AND NOT APPLE)/if(UNIX AND NOT APPLE AND NOT ANDROID)/' "$SOURCE/cMake/FreeCAD_Helpers/SetupBoost.cmake"
 
