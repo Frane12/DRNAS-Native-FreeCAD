@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QSettings>
 #include "StartupDiagnostics.h"
+#include "LiveGuiLab.h"
 
 // Safe Android native bootstrap. Do NOT dlopen FreeCADGui/Coin3D here.
 // Loading untested native DSOs on the startup thread can abort before the
@@ -23,6 +24,9 @@ int main(int argc, char** argv)
     auto* window = static_cast<QMainWindow*>(
         drnas_create_qt_gui_shell_after_qt_android_bootstrap());
     window->show();
+#ifdef DRNAS_FREECAD_FULL_INTEGRATION
+    new DrnasLiveGuiLab(window);
+#endif
     DrnasDiagnostics::note(QStringLiteral("Qt GUI visible; entering event loop"));
     return app.exec();
 }
