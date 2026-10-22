@@ -567,34 +567,32 @@ finally:
                 return;
             }
             DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: import succeeded").arg(name));
-            state.setValue(key, name + QStringLiteral(":activate"));
-            state.sync();
-            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate begin").arg(name));
-            // Resolve the workbench registry before invoking the native activation
-            // bridge. An absent workbench raises KeyError and must not be treated
-            // as a fatal native crash on Android.
-            const QString command = QStringLiteral(
-                "import FreeCADGui as Gui, traceback\\n"
-                "_drnas_wbs = Gui.listWorkbenches()\\n"
-                "print('DRNAS registered workbenches:', sorted(_drnas_wbs.keys()))\\n"
-                "if '%1' not in _drnas_wbs:\\n"
-                "    print('DRNAS workbench missing: %1; skipping activation')\\n"
-                "else:\\n"
-                "    try:\\n"
-                "        Gui.activateWorkbench('%1')\\n"
-                "    except Exception:\\n"
-                "        traceback.print_exc()\\n").arg(name);
-            QString activationError;
-            const bool activated = runOriginalFreeCADPython(command, activationError);
-            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate returned success=%2 error=%3")
-                                       .arg(name).arg(activated ? 1 : 0, 0).arg(activationError));
-            if (activated) {
-                state.remove(key);
-            } else {
-                state.setValue(QStringLiteral("nativeProbe/workbenchLastError"),
-                               name + QStringLiteral(": ") + activationError);
-                state.remove(key); // A returned Python exception is not a native crash.
-            }
+            // Isolate every Python operation; a native abort leaves the
+            // last ENTER phase persisted for the next app launch.
+            auto phase = [&](const QString& id, const QString& code) -> bool {
+                state.setValue(key, name + QStringLiteral(":") + id);
+                state.sync();
+                DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 %2 ENTER").arg(name, id));
+                QString phaseError;
+                const bool ok = runOriginalFreeCADPython(code, phaseError);
+                DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 %2 EXIT ok=%3 error=%4")
+                    .arg(name, id).arg(ok).arg(phaseError));
+                if (!ok) {
+                    state.setValue(QStringLiteral("nativeProbe/workbenchLastError"),
+                                   name + QStringLiteral(":") + id + QStringLiteral(": ") + phaseError);
+                    state.remove(key); // Python error returned; not a native crash.
+                    state.sync();
+                }
+                return ok;
+            };
+            if (!phase(QStringLiteral("02-listWorkbenches"),
+                       QStringLiteral("import FreeCADGui as Gui\\n_drnas_wbs = Gui.listWorkbenches()"))) return;
+            if (!phase(QStringLiteral("03-checkRegistered"),
+                       QStringLiteral("assert '%1' in _drnas_wbs, 'Workbench not registered: %1'").arg(name))) return;
+            if (!phase(QStringLiteral("04-activate"),
+                       QStringLiteral("import FreeCADGui as Gui\\nGui.activateWorkbench('%1')").arg(name))) return;
+            DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 complete").arg(name));
+            state.remove(key);
             state.sync();
         });
     }
