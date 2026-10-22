@@ -458,7 +458,12 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     // No mock modeling, and no second desktop QApplication or native window.
     auto invoke = [report, upstream](const QString& code, const QString& label) {
         QString error;
-        if (runOriginalFreeCADPython(code, error)) {
+        if (label == QStringLiteral("New document"))
+            DrnasDiagnostics::note(QStringLiteral("NEW_CPP C02 before runOriginalFreeCADPython"));
+        const bool pythonOk = runOriginalFreeCADPython(code, error);
+        if (label == QStringLiteral("New document"))
+            DrnasDiagnostics::note(QStringLiteral("NEW_CPP C02R Python bridge returned result=%1").arg(pythonOk));
+        if (pythonOk) {
             report(label + QStringLiteral(" OK"));
             // A workbench switch rebuilds the original menus and toolbars.
             // Recompact them only after the upstream command finishes.
@@ -475,10 +480,12 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     auto* newDoc = toolbar->addAction(QStringLiteral("New"));
     newDoc->setToolTip(QStringLiteral("FreeCAD.newDocument()"));
     QObject::connect(newDoc, &QAction::triggered, shell, [invoke] {
+        DrnasDiagnostics::note(QStringLiteral("NEW_CPP C00 QAction triggered: entering handler"));
         DrnasDiagnostics::note(QStringLiteral("TOUCH New document: App document + GUI observer boundary"));
         // Persist checkpoints directly to the same previous-launch trace used by
         // workbench probes. A SIGSEGV/abort inside newDocument cannot be caught
         // by Python, but the last durable marker identifies the failing phase.
+        DrnasDiagnostics::note(QStringLiteral("NEW_CPP C01 before invoke/Python bridge"));
         invoke(QStringLiteral(R"DRNAS(
 import os, sys, time, traceback, faulthandler
 _drnas_path = os.environ.get('DRNAS_WB_LOG_PATH', '')
@@ -526,6 +533,7 @@ finally:
         os.close(_drnas_fault_fd)
 )DRNAS"),
                QStringLiteral("New document"));
+        DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
     // DRNAS crash isolation: opt-in tests in the SAME original GUI, without
     // automatic workbench activation or an additional Qt/OpenGL window.
