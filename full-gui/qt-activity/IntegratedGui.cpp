@@ -523,11 +523,21 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (!window || window == shell || (!beforeFirstShow && !window->isVisible())) {
             continue;
         }
-        // Before first show the real FreeCAD QMainWindow is still hidden.
-        // Identify it by its actual dock (avoid grabbing unrelated dialogs).
-        if (!window->findChild<QDockWidget*>(QStringLiteral("Report view"))) {
+        // The upstream AndroidMainWindowBridge sets QuitOnClosed=false on
+        // the *real* Gui::MainWindow immediately after constructing it.
+        // At this early stage Report view and other QDockWidgets are not
+        // guaranteed to exist yet; requiring that dock caused early
+        // embedding to fail, spawning a second Android native window which
+        // intercepted every touch above the DRNAS toolbar.
+        const QVariant quitMarker = window->property("QuitOnClosed");
+        if (!quitMarker.isValid() || quitMarker.toBool()) {
             continue;
         }
+        qInfo() << "DRNAS matched real FreeCAD MainWindow before show:"
+                << window->metaObject()->className()
+                << "visible=" << window->isVisible()
+                << "topLevel=" << window->isWindow()
+                << "nativeHandle=" << (window->windowHandle() != nullptr);
 
         // Reduce oversized desktop UI furniture before Android measures it.
         QFont compactFont = window->font();
@@ -587,6 +597,19 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // QtActivity shell is already shown; don't showMaximized/raise it
         // during GL startup because that may recreate Android's EGLSurface.
         return true;
+    }
+    // Diagnostic if Qt/FreeCAD changes its startup sequence: no native
+    // reparenting of unrelated Qt dialog windows as a fallback.
+    qWarning() << "DRNAS upstream MainWindow not found at early embed;"
+                  " expected QuitOnClosed=false set by AndroidMainWindowBridge";
+    for (QWidget* candidate : QApplication::topLevelWidgets()) {
+        if (auto* main = qobject_cast<QMainWindow*>(candidate)) {
+            qWarning() << "DRNAS embed candidate:"
+                       << main->metaObject()->className()
+                       << "visible=" << main->isVisible()
+                       << "quitMarker=" << main->property("QuitOnClosed")
+                       << "docks=" << main->findChildren<QDockWidget*>().size();
+        }
     }
     return false;
 }
