@@ -480,7 +480,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
         // workbench probes. A SIGSEGV/abort inside newDocument cannot be caught
         // by Python, but the last durable marker identifies the failing phase.
         invoke(QStringLiteral(R"DRNAS(
-import os, traceback, FreeCAD as App
+import os, sys, time, traceback, faulthandler
 _drnas_path = os.environ.get('DRNAS_WB_LOG_PATH', '')
 def _drnas_new_mark(msg):
     if _drnas_path:
@@ -490,15 +490,40 @@ def _drnas_new_mark(msg):
             os.fsync(fd)
         finally:
             os.close(fd)
-_drnas_new_mark('ENTER App.newDocument (GUI observers may run synchronously)')
+# Keep a dedicated fd alive so native fatal signals can leave a Python stack.
+_drnas_fault_fd = None
 try:
-    _drnas_doc = App.newDocument()
-    _drnas_new_mark('RETURN App.newDocument name=' + str(_drnas_doc.Name))
+    _drnas_new_mark('N00 ENTER NEW bridge pid=' + str(os.getpid()))
+    if _drnas_path:
+        _drnas_fault_fd = os.open(_drnas_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        faulthandler.enable(file=_drnas_fault_fd, all_threads=True)
+    _drnas_new_mark('N01 before import FreeCAD')
+    import FreeCAD as App
+    _drnas_new_mark('N02 FreeCAD imported')
+    _drnas_new_mark('N03 before listDocuments')
+    _drnas_before = tuple(App.listDocuments().keys())
+    _drnas_new_mark('N04 listDocuments OK count=' + str(len(_drnas_before)))
+    _drnas_new_mark('N05 before import FreeCADGui')
     import FreeCADGui as Gui
-    _drnas_new_mark('Gui.activeDocument present=' + str(Gui.activeDocument() is not None))
+    _drnas_new_mark('N06 FreeCADGui imported')
+    _drnas_new_mark('N07 before App.newDocument; GUI observers may run synchronously')
+    _drnas_t0 = time.monotonic_ns()
+    _drnas_doc = App.newDocument()
+    _drnas_new_mark('N08 App.newDocument RETURN elapsed_ms=' + str((time.monotonic_ns()-_drnas_t0)//1000000))
+    _drnas_new_mark('N09 before document.Name')
+    _drnas_new_mark('N10 document.Name=' + str(_drnas_doc.Name))
+    _drnas_new_mark('N11 before Gui.activeDocument')
+    _drnas_gui_doc = Gui.activeDocument()
+    _drnas_new_mark('N12 Gui.activeDocument present=' + str(_drnas_gui_doc is not None))
+    _drnas_new_mark('N13 NEW completed')
 except BaseException:
-    _drnas_new_mark('PYTHON EXCEPTION ' + traceback.format_exc())
+    _drnas_new_mark('NERR PYTHON EXCEPTION ' + traceback.format_exc())
     raise
+finally:
+    # faulthandler owns the fd while enabled; disable before closing.
+    if _drnas_fault_fd is not None:
+        faulthandler.disable()
+        os.close(_drnas_fault_fd)
 )DRNAS"),
                QStringLiteral("New document"));
     });
