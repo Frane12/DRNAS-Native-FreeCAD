@@ -396,8 +396,17 @@ bool runOriginalFreeCADPython(const QString& script, QString& error)
     const QByteArray command = script.toUtf8();
     DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: acquire GIL"));
     const int state = acquire();
+    // Persist boundaries before crossing into embedded Python; a native abort
+    // cannot be caught by C++ and must leave a useful previous-launch trace.
     DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: execute begin"));
+    const auto isWorkbenchActivation = script.contains(QStringLiteral("activateWorkbench("));
+    if (isWorkbenchActivation) {
+        DrnasDiagnostics::note(QStringLiteral("WB CRITICAL: PyRun_SimpleStringFlags ENTER; command=") + script.left(300));
+        DrnasDiagnostics::note(QStringLiteral("WB CRITICAL: if next checkpoint is absent, failure is inside Python/FreeCAD workbench activation"));
+    }
     const int result = execute(command.constData(), nullptr);
+    if (isWorkbenchActivation)
+        DrnasDiagnostics::note(QStringLiteral("WB CRITICAL: PyRun_SimpleStringFlags RETURN code=%1").arg(result));
     DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: execute returned=%1").arg(result));
     release(state);
     DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: GIL released"));
