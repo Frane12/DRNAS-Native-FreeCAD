@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <cstdlib>
 #include <QtGlobal>
 #ifdef Q_OS_ANDROID
 #include <android/log.h>
@@ -99,6 +100,11 @@ void DrnasDiagnostics::start()
         prior.rename(previousLog);
     }
     currentLog = next;
+    // Shared app-private phase journal written directly by libFreeCADGui.so.
+    // The native library cannot call this executable's Qt log handler reliably.
+    const QByteArray nativePath = next.toUtf8();
+    if (setenv("DRNAS_WB_LOG_PATH", nativePath.constData(), 1) != 0)
+        note(QStringLiteral("WARN: native workbench log path unavailable"));
     QSettings state;
     const bool previousUnclean = state.value(
         QStringLiteral("drnasLog/sessionActive"), false).toBool();
