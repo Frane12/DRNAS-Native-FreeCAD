@@ -302,9 +302,11 @@ void shrinkOriginalFreeCADReport(QWidget* shell)
             if (dock->isFloating() || !dock->isVisible()) {
                 continue;
             }
-            const int desired = std::max(90, window->height() / 6);
-            window->resizeDocks({dock}, {desired}, Qt::Vertical);
-            return; // One-time initial sizing: user can resize thereafter.
+            // The desktop Report View consumes most of the short Android
+            // landscape layout. Users can re-enable it via View > Panels.
+            // Keep error reporting available in QSettings and the shell.
+            dock->hide();
+            return;
         }
     }
 }
@@ -344,21 +346,30 @@ void compactOriginalFreeCADWindow(QWidget* shell)
             toolbar->setIconSize(QSize(18, 18));
         }
 
-        // Start at roughly half the desktop window's screen area. This is
-        // measured in logical Qt coordinates, so it adapts to tablet DPI.
-        // A user can still manually maximize or resize it afterward.
+        // Android's native activity header can cover the top of a second
+        // QMainWindow. In landscape this is especially noticeable: the real
+        // FreeCAD menus end up behind the large title/action area.
+        // Reserve top space and fit the compact window BELOW that area.
+        // Screen dimensions here are Qt logical coordinates, not raw pixels.
+        const bool landscape = available.width() > available.height();
+        const int topReserve = landscape ? available.height() * 27 / 100
+                                         : available.height() * 12 / 100;
+        const int safeHeight = std::max(120, available.height() - topReserve - 8);
         const int targetWidth = std::min(available.width(),
                                          std::max(120, available.width() * 74 / 100));
-        const int targetHeight = std::min(available.height(),
+        const int targetHeight = std::min(safeHeight,
                                           std::max(120, available.height() * 70 / 100));
+        const int targetX = available.x() + (available.width() - targetWidth) / 2;
+        const int targetY = available.y() + topReserve +
+                            (safeHeight - targetHeight) / 2;
+
         window->setMinimumSize(0, 0);
         if (window->isMaximized() || window->isFullScreen()) {
             window->showNormal();
         }
-        window->resize(targetWidth, targetHeight);
-        window->move(available.x() + (available.width() - window->width()) / 2,
-                     available.y() + (available.height() - window->height()) / 2);
-        // Retain the existing Report View dock-size correction.
+        // One geometry operation rather than resize() plus move(): avoids
+        // extra Qt/Android top-level surface transitions during startup.
+        window->setGeometry(targetX, targetY, targetWidth, targetHeight);
         shrinkOriginalFreeCADReport(shell);
         break;
     }
