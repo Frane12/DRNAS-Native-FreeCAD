@@ -27,6 +27,7 @@
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QToolBar>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -308,6 +309,61 @@ void shrinkOriginalFreeCADReport(QWidget* shell)
     }
 }
 
+// Compact the *original* upstream MainWindow on Android, not the Qt shell.
+// Changing the QtActivity layer avoids rebuilding the massive FreeCAD core.
+// Keep it user-resizable: never set a restrictive maximum size.
+void compactOriginalFreeCADWindow(QWidget* shell)
+{
+    for (QWidget* candidate : QApplication::topLevelWidgets()) {
+        auto* window = qobject_cast<QMainWindow*>(candidate);
+        if (!window || window == shell || !window->isVisible()) {
+            continue;
+        }
+        QScreen* screen = window->screen();
+        if (!screen) {
+            screen = QGuiApplication::primaryScreen();
+        }
+        if (!screen) {
+            continue;
+        }
+        const QRect available = screen->availableGeometry();
+        if (available.width() < 120 || available.height() < 120) {
+            continue;
+        }
+
+        // FreeCAD restores desktop toolbar and text sizes at startup;
+        // reduce both before calculating the small Android window geometry.
+        QFont compactFont = window->font();
+        if (compactFont.pointSizeF() > 0) {
+            compactFont.setPointSizeF(std::max(7.0, compactFont.pointSizeF() * 0.80));
+        } else if (compactFont.pixelSize() > 0) {
+            compactFont.setPixelSize(std::max(9, compactFont.pixelSize() * 4 / 5));
+        }
+        window->setFont(compactFont);
+        for (QToolBar* toolbar : window->findChildren<QToolBar*>()) {
+            toolbar->setIconSize(QSize(18, 18));
+        }
+
+        // Start at roughly half the desktop window's screen area. This is
+        // measured in logical Qt coordinates, so it adapts to tablet DPI.
+        // A user can still manually maximize or resize it afterward.
+        const int targetWidth = std::min(available.width(),
+                                         std::max(120, available.width() * 74 / 100));
+        const int targetHeight = std::min(available.height(),
+                                          std::max(120, available.height() * 70 / 100));
+        window->setMinimumSize(0, 0);
+        if (window->isMaximized() || window->isFullScreen()) {
+            window->showNormal();
+        }
+        window->resize(targetWidth, targetHeight);
+        window->move(available.x() + (available.width() - window->width()) / 2,
+                     available.y() + (available.height() - window->height()) / 2);
+        // Retain the existing Report View dock-size correction.
+        shrinkOriginalFreeCADReport(shell);
+        break;
+    }
+}
+
 void recordOriginalGuiStage(const char* stageName)
 {
     restoreOriginalFreeCADIconPaths();
@@ -465,7 +521,7 @@ public:
                 // collapse the report or disable its normal dock resizing.
                 QTimer::singleShot(0, this, [this] {
                     restoreOriginalFreeCADIconPaths();
-                    shrinkOriginalFreeCADReport(this);
+                    compactOriginalFreeCADWindow(this);
                 });
             }
             settings.sync();
