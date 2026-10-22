@@ -1,5 +1,6 @@
 #include "NativeOcctViewport.h"
 #include <algorithm>
+#include <QApplication>
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
