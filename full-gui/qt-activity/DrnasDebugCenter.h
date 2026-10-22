@@ -28,6 +28,9 @@
 #include <QVBoxLayout>
 #include <QWindow>
 #include <algorithm>
+#ifdef Q_OS_ANDROID
+#include <QJniObject>
+#endif
 
 class DrnasDebugCenter final : public QObject {
     QPointer<QMainWindow> host_;
@@ -36,6 +39,7 @@ class DrnasDebugCenter final : public QObject {
     QLabel* info_ = nullptr;
     QLabel* feedback_ = nullptr;
     QCheckBox* fullscreen_ = nullptr;
+    QCheckBox* immersive_ = nullptr;
     QCheckBox* verbose_ = nullptr;
     QComboBox* windowSize_ = nullptr;
     QComboBox* uiScale_ = nullptr;
@@ -81,6 +85,40 @@ class DrnasDebugCenter final : public QObject {
     void notify(const QString& value) {
         if (feedback_) feedback_->setText(value);
         DrnasDiagnostics::note(QStringLiteral("DBG ") + value);
+    }
+    static void setImmersiveAndroid(bool enabled) {
+#ifdef Q_OS_ANDROID
+        // Only the Android UI thread may change Activity system bars. No new
+        // native window, EGL context, or Qt application is created here.
+        QNativeInterface::QAndroidApplication::runOnAndroidMainThread([enabled] {
+            if (!QNativeInterface::QAndroidApplication::isActivityContext()) return;
+            QJniObject activity = QNativeInterface::QAndroidApplication::context();
+            if (!activity.isValid()) return;
+            QJniObject window = activity.callObjectMethod(
+                "getWindow", "()Landroid/view/Window;");
+            if (!window.isValid()) return;
+            if (QNativeInterface::QAndroidApplication::sdkVersion() >= 30) {
+                QJniObject controller = window.callObjectMethod(
+                    "getInsetsController", "()Landroid/view/WindowInsetsController;");
+                if (controller.isValid()) {
+                    // WindowInsets.Type.statusBars() | navigationBars().
+                    controller.callMethod<void>(enabled ? "hide" : "show",
+                                                "(I)V", 3);
+                }
+            } else {
+                QJniObject decor = window.callObjectMethod(
+                    "getDecorView", "()Landroid/view/View;");
+                if (decor.isValid()) {
+                    // IMMERSIVE_STICKY | HIDE_NAVIGATION | FULLSCREEN |
+                    // LAYOUT_STABLE | LAYOUT_HIDE_NAVIGATION | LAYOUT_FULLSCREEN
+                    decor.callMethod<void>("setSystemUiVisibility", "(I)V",
+                                           enabled ? 0x1706 : 0);
+                }
+            }
+        });
+#else
+        Q_UNUSED(enabled);
+#endif
     }
     void setFullScreen(bool enabled) {
         if (!host_) return;
@@ -277,6 +315,10 @@ public:
         fullscreen_ = new QCheckBox(QStringLiteral("Fullscreen (native device resolution)"));
         fullscreen_->setChecked(host_->isFullScreen());
         layout->addWidget(fullscreen_);
+        immersive_ = new QCheckBox(QStringLiteral(
+            "Hide Android status/navigation bars (immersive)"));
+        immersive_->setChecked(false);
+        layout->addWidget(immersive_);
 
         layout->addWidget(new QLabel(QStringLiteral(
             "Qt window size (windowed only; this does NOT change phone display pixels):")));
@@ -286,7 +328,7 @@ public:
             QStringLiteral("960 x 540"), QStringLiteral("1280 x 720")});
         layout->addWidget(windowSize_);
 
-        layout->addWidget(new QLabel(QStringLiteral("FreeCAD/Qt font scale:")));
+        layout->addWidget(new QLabel(QStringLiteral("Qt application font scale:")));
         uiScale_ = new QComboBox;
         uiScale_->addItems({QStringLiteral("70%"), QStringLiteral("85%"),
                             QStringLiteral("100%"), QStringLiteral("115%")});
@@ -323,6 +365,13 @@ public:
         connect(closeButton, &QPushButton::clicked, panel_, &QWidget::hide);
         connect(fullscreen_, &QCheckBox::toggled, this,
                 [this](bool checked) { if (!syncing_) setFullScreen(checked); });
+        connect(immersive_, &QCheckBox::toggled, this, [this](bool checked) {
+            QSettings s;
+            s.setValue(QStringLiteral("drnasDebug/immersive"), checked);
+            s.sync();
+            setImmersiveAndroid(checked);
+            notify(QStringLiteral("Android immersive system bars=%1").arg(checked));
+        });
         connect(windowSize_, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, [this](int index) { applyWindowSize(index); });
         connect(uiScale_, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -347,6 +396,7 @@ public:
             uiScale_->setCurrentIndex(2);
             windowSize_->setCurrentIndex(0);
             fullscreen_->setChecked(false);
+            immersive_->setChecked(false);
             syncing_ = false;
             applyScale(2);
             setFullScreen(false);
@@ -384,6 +434,9 @@ public:
                 syncing_ = true; fullscreen_->setChecked(true); syncing_ = false;
                 setFullScreen(true);
             });
+        }
+        if (s.value(QStringLiteral("drnasDebug/immersive"), false).toBool()) {
+            QTimer::singleShot(100, this, [this] { immersive_->setChecked(true); });
         }
         DrnasDiagnostics::note(QStringLiteral("DBG panel available at bottom-left"));
     }
