@@ -9,7 +9,7 @@ find_package(Qt6 6.8.3 REQUIRED COMPONENTS
 # Do not even compile the separate Qt/OCCT OpenGL startup viewer into that
 # APK; it can initialize an incompatible Android EGL/FBO before FreeCADGui.
 # Preserve the old viewport for the manually dispatched standalone OCCT LAB.
-set(DRNAS_QT_ACTIVITY_SOURCES main.cpp IntegratedGui.cpp)
+set(DRNAS_QT_ACTIVITY_SOURCES main.cpp IntegratedGui.cpp StartupDiagnostics.cpp)
 if(NOT DRNAS_FREECAD_RUNTIME_DIR)
     list(APPEND DRNAS_QT_ACTIVITY_SOURCES NativeOcctViewport.cpp)
 endif()
@@ -26,6 +26,9 @@ target_link_libraries(drnas_freecad_qtgui PRIVATE
     # Merely putting FreeCADGui.so in QT_ANDROID_EXTRA_LIBS does NOT cause
     # androiddeployqt to include their transitive Qt6 libraries.
     Qt6::Network Qt6::PrintSupport Qt6::Xml Qt6::Concurrent)
+if(ANDROID)
+    target_link_libraries(drnas_freecad_qtgui PRIVATE log)
+endif()
 
 # Real upstream OCCT 7.9.3 native libraries, reused from the stable
 # Android ARM64 FreeCAD viewport pipeline (no OCCT recompilation).
