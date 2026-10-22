@@ -74,7 +74,7 @@ class DrnasDebugCenter final : public QObject {
                 const QByteArray line = stat.readLine().trimmed();
                 for (const QByteArray& key : wanted) {
                     if (line.startsWith(key)) {
-                        report += QStringLiteral("\\nProcess ") + QString::fromLatin1(line);
+                        report += QStringLiteral("\nProcess ") + QString::fromLatin1(line);
                         break;
                     }
                 }
@@ -97,7 +97,7 @@ class DrnasDebugCenter final : public QObject {
         }
         QStringList mapped = found.values();
         mapped.sort();
-        report += QStringLiteral("\\nMapped GPU/FreeCAD modules: ")
+        report += QStringLiteral("\nMapped GPU/FreeCAD modules: ")
                 + (mapped.isEmpty() ? QStringLiteral("(none accessible)") : mapped.join(QStringLiteral(", ")));
         return report;
     }
