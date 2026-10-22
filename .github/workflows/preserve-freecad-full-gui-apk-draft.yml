@@ -1,0 +1,100 @@
+name: Preserve proven Android FreeCAD full-GUI APK in draft GitHub Release
+# Archive the exact CI-verified Android APK beyond short-lived Actions artifacts.
+# This workflow NEVER compiles FreeCAD or runs the costly native C++ toolchain.
+on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - '.github/workflows/preserve-freecad-full-gui-apk-draft.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: preserve-freecad-full-gui-apk-39710863637
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: drnas-freecad-android-full-gui-ci-39710863637
+      VERIFIED_APK_RUN: '39710863637'
+      VERIFIED_APK_SHA: f2d79df6aaaa87b0d96405fa407da8db3e930ef1
+    steps:
+      - name: Download immutable successful FreeCAD GUI ARM64 APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 39710863637
+          github-token: ${{ github.token }}
+          name: DRNAS-FreeCADGui-Real-Native-APK-39710863637-1
+          path: saved-apk
+
+      - name: Verify archive contains the signed APK and matching CI checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd saved-apk
+          test -s DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk
+          test -s APK-SHA256SUMS.txt
+          sha256sum -c APK-SHA256SUMS.txt
+          python3 - <<'PY'
+          import pathlib, zipfile
+          p=pathlib.Path("DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk")
+          if p.stat().st_size < 20_000_000:
+              raise SystemExit("Refusing suspiciously small APK")
+          with zipfile.ZipFile(p) as apk:
+              names=set(apk.namelist())
+              required={
+                  "lib/arm64-v8a/libFreeCADGui.so",
+                  "lib/arm64-v8a/Part.so",
+                  "lib/arm64-v8a/Sketcher.so",
+                  "lib/arm64-v8a/_PartDesign.so",
+                  "lib/arm64-v8a/PartDesignGui.so",
+                  "lib/arm64-v8a/Materials.so",
+                  "lib/arm64-v8a/MatGui.so",
+                  "assets/drnas/freecad/Mod/PartDesign/InitGui.py"
+              }
+              missing=required-names
+              if missing:
+                  raise SystemExit(f"Archive is incomplete: {sorted(missing)}")
+          print("PASS: full-GUI, Part, Sketcher, PartDesign, Material files preserved")
+          PY
+
+      - name: Keep validated APK permanently as an unpublished draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > saved-apk/PRESERVATION-NOTES.txt <<'EOF'
+          DRNAS Native FreeCAD for Android ARM64
+          SOURCE: Frane12/DRNAS-Native-FreeCAD
+          Upstream FreeCAD ARM64 full GUI artifact run: 39702053000
+          Verified Android APK packaging run: 39710863637
+          Packaging source commit: f2d79df6aaaa87b0d96405fa407da8db3e930ef1
+
+          Original FreeCAD GUI and bundled native Part, Sketcher, PartDesign,
+          Materials, MatGui, Qt and CPython runtime.
+          CI checks: APK v2/v3 signing, ELF architecture, native DT_NEEDED closure,
+          original FreeCAD Python resources. These checks PASSED.
+          On-device GUI/workbench operability has NOT yet been verified.
+          This is a test build, not a stable release.
+          EOF
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft release already exists, preserving exact original asset."
+          else
+            gh release create "$RELEASE_TAG" \
+              "saved-apk/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk" \
+              "saved-apk/APK-SHA256SUMS.txt" \
+              "saved-apk/PRESERVATION-NOTES.txt" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft --prerelease \
+              --target "$VERIFIED_APK_SHA" \
+              --title "FreeCAD Native Android ARM64 Full GUI — CI Test (39710863637)" \
+              --notes "Validated native FreeCAD GUI APK saved from successful CI. DRAFT — on-device runtime and all workbenches are not yet verified. Not a stable public release."
+          fi
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets,tagName \
+            --jq '{draft:.isDraft,tag:.tagName,assets:[.assets[].name]}'
