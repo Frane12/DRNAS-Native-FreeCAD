@@ -120,6 +120,9 @@ bool configureBundledFreeCADHome(QString& error)
     // QtActivity startup does not. The SVGs ARE packaged and extracted above;
     // connect FreeCAD's qss: URLs to that verified on-device asset directory.
     const QString stylesheets = root + QStringLiteral("/data/Gui/Stylesheets");
+    // FreeCAD's Qt stylesheet loader may reset the qss search prefix during
+    // MainWindow startup. Register both the extracted filesystem root and the
+    // Android resource alias, and restore the prefix after upstream startup.
     QDir::setSearchPaths(QStringLiteral("qss"), QStringList{stylesheets});
     for (const char* icon : {
              "taskshow.svg", "taskshow_lightgray.svg",
@@ -393,6 +396,16 @@ public:
             currentFreeCADStartupStatus = nativeStatus;
             recordOriginalGuiStage("Calling real Gui::MainWindow startup");
             const int result = start(&recordOriginalGuiStage);
+            // Upstream style initialization can replace qss: search paths.
+            // Keep Android's extracted overlay icons available afterwards.
+            const QString iconRoot = QStandardPaths::writableLocation(
+                QStandardPaths::AppDataLocation)
+                + QStringLiteral("/drnas-freecad-home/data/Gui/Stylesheets");
+            QStringList qssPaths = QDir::searchPaths(QStringLiteral("qss"));
+            if (!qssPaths.contains(iconRoot)) {
+                qssPaths.prepend(iconRoot);
+                QDir::setSearchPaths(QStringLiteral("qss"), qssPaths);
+            }
             QSettings settings;
             settings.setValue(QStringLiteral("nativeProbe/pending"), false);
             if (result != 0) {
