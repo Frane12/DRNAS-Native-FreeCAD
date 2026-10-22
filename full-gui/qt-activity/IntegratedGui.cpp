@@ -476,7 +476,34 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     for (const auto& probe : {
              std::pair<const char*, const char*>{"TEST 1 Part", "import Part"},
              {"TEST 2 PartGui", "import PartGui"},
-             {"TEST 3 Activate", "import FreeCADGui as Gui\nGui.activateWorkbench('PartWorkbench')"}}) {
+             {"TEST 3 Activate", R"DRNAS(
+import os, sys, faulthandler, FreeCADGui as Gui
+_drnas_path = os.environ.get('DRNAS_WB_LOG_PATH', '')
+_drnas_fd = os.open(_drnas_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600) if _drnas_path else -1
+_drnas_count = 0
+def _drnas_mark(message):
+    if _drnas_fd >= 0:
+        os.write(_drnas_fd, ('[PYTRACE] ' + message + '\\n').encode('utf-8', 'replace'))
+def _drnas_trace(frame, event, arg):
+    global _drnas_count
+    if event not in ('call', 'line', 'exception') or _drnas_count >= 1200:
+        return _drnas_trace
+    path = frame.f_code.co_filename.replace('\\\\', '/')
+    if '/Mod/Part/' in path or path.endswith('/Part/InitGui.py') or '/Mod/PartDesign/' in path:
+        _drnas_count += 1
+        _drnas_mark('%04d %s %s:%d %s' % (_drnas_count, event, path, frame.f_lineno, frame.f_code.co_name))
+    return _drnas_trace
+_drnas_mark('TEST 3: before activateWorkbench(PartWorkbench)')
+sys.settrace(_drnas_trace)
+try:
+    Gui.activateWorkbench('PartWorkbench')
+    _drnas_mark('TEST 3: activateWorkbench returned OK')
+finally:
+    sys.settrace(None)
+    _drnas_mark('TEST 3: trace disabled')
+    if _drnas_fd >= 0:
+        os.close(_drnas_fd)
+)DRNAS"}}) {
         const QString caption = QString::fromLatin1(probe.first);
         const QString command = QString::fromLatin1(probe.second);
         QAction* test = toolbar->addAction(caption);
