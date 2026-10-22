@@ -118,8 +118,8 @@ std::string drnasCurrentException()
     ]
     for statement, phase in phases:
         body = replace_once(body, statement,
-            f'phase = "{phase}";\\n    drnasWorkbenchPhase(phase, "BEGIN");\\n'
-            f'    {statement}\\n    drnasWorkbenchPhase(phase, "END");')
+            f'phase = "{phase}";\n    drnasWorkbenchPhase(phase, "BEGIN");\n'
+            f'    {statement}\n    drnasWorkbenchPhase(phase, "END");')
     new = '''bool Workbench::activate()
 {
     const char* phase = "begin";
