@@ -483,12 +483,12 @@ _drnas_fd = os.open(_drnas_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600) 
 _drnas_count = 0
 def _drnas_mark(message):
     if _drnas_fd >= 0:
-        os.write(_drnas_fd, ('[PYTRACE] ' + message + '\\n').encode('utf-8', 'replace'))
+        os.write(_drnas_fd, ('[PYTRACE] ' + message + '\n').encode('utf-8', 'replace'))
 def _drnas_trace(frame, event, arg):
     global _drnas_count
     if event not in ('call', 'line', 'exception') or _drnas_count >= 1200:
         return _drnas_trace
-    path = frame.f_code.co_filename.replace('\\\\', '/')
+    path = frame.f_code.co_filename.replace('\\', '/')
     if '/Mod/Part/' in path or path.endswith('/Part/InitGui.py') or '/Mod/PartDesign/' in path:
         _drnas_count += 1
         _drnas_mark('%04d %s %s:%d %s' % (_drnas_count, event, path, frame.f_lineno, frame.f_code.co_name))
