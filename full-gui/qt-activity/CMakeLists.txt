@@ -5,11 +5,20 @@ find_package(Qt6 6.8.3 REQUIRED COMPONENTS
     Core Gui Widgets OpenGL OpenGLWidgets Svg SvgWidgets UiTools Network PrintSupport Xml Concurrent)
 # Use Qt's official Android entrypoint and deployment settings instead of
 # calling QApplication from the unrelated OCCT Java Activity.
-qt_add_executable(drnas_freecad_qtgui
-    main.cpp
-    IntegratedGui.cpp
-    NativeOcctViewport.cpp
-)
+# FULL upstream FreeCAD uses its own Coin3D/OpenGL viewport.
+# Do not even compile the separate Qt/OCCT OpenGL startup viewer into that
+# APK; it can initialize an incompatible Android EGL/FBO before FreeCADGui.
+# Preserve the old viewport for the manually dispatched standalone OCCT LAB.
+set(DRNAS_QT_ACTIVITY_SOURCES main.cpp IntegratedGui.cpp)
+if(NOT DRNAS_FREECAD_RUNTIME_DIR)
+    list(APPEND DRNAS_QT_ACTIVITY_SOURCES NativeOcctViewport.cpp)
+endif()
+qt_add_executable(drnas_freecad_qtgui ${DRNAS_QT_ACTIVITY_SOURCES})
+if(DRNAS_FREECAD_RUNTIME_DIR)
+    target_compile_definitions(drnas_freecad_qtgui PRIVATE
+        DRNAS_FREECAD_FULL_INTEGRATION=1)
+    message(STATUS "FULL FREECAD NO-PREVIEW: bootstrap is Qt Widgets only; FreeCAD owns OpenGL")
+endif()
 target_link_libraries(drnas_freecad_qtgui PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets
     Qt6::Svg Qt6::SvgWidgets Qt6::UiTools
