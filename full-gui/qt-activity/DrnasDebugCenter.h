@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QSet>
 #include <QFont>
+#include <QFontInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -354,9 +355,21 @@ public:
         auto* title = new QLabel(QStringLiteral("DRNAS DEBUG — Android / Qt / OpenGL"));
         title->setWordWrap(true);
         layout->addWidget(title);
+        // Android fallback: checkbox indicator text may be invisible even when the box paints.
+        // Separate ordinary labels make each control identifiable independently of QCheckBox text.
+        auto addControlLabel = [layout](const QString& caption) {
+            auto* label = new QLabel(caption);
+            label->setWordWrap(true);
+            label->setStyleSheet(QStringLiteral(
+                "QLabel{color:#ffffff;background-color:#245878;"
+                "padding:6px;font-size:15px;font-weight:bold;}"));
+            layout->addWidget(label);
+        };
+        addControlLabel(QStringLiteral("1. FULLSCREEN - full Qt window"));
         fullscreen_ = new QCheckBox(QStringLiteral("Fullscreen (native device resolution)"));
         fullscreen_->setChecked(host_->isFullScreen());
         layout->addWidget(fullscreen_);
+        addControlLabel(QStringLiteral("2. ANDROID BARS - hide status / navigation bars")); 
         immersive_ = new QCheckBox(QStringLiteral(
             "Hide Android status/navigation bars (immersive)"));
         immersive_->setChecked(false);
@@ -376,9 +389,32 @@ public:
                             QStringLiteral("100%"), QStringLiteral("115%")});
         uiScale_->setCurrentIndex(2);
         layout->addWidget(uiScale_);
+        addControlLabel(QStringLiteral("3. VERBOSE EVENTS - extra Qt window logs"));
         verbose_ = new QCheckBox(QStringLiteral(
             "Detailed QWindow / widget geometry events (larger logs)"));
         layout->addWidget(verbose_);
+        auto* fontTestButton = new QPushButton(QStringLiteral("TEST FONT / LABELS"));
+        fontTestButton->setMinimumHeight(48);
+        fontTestButton->setStyleSheet(QStringLiteral(
+            "QPushButton{color:#000000;background:#ffed58;font-size:16px;"
+            "font-weight:bold;border:2px solid #000000;}"));
+        layout->addWidget(fontTestButton);
+        auto* fontTestResult = new QLabel(QStringLiteral("FONT TEST: ABC abc 123"));
+        fontTestResult->setWordWrap(true);
+        fontTestResult->setStyleSheet(QStringLiteral(
+            "QLabel{color:#000000;background:#ffed58;font-size:18px;padding:8px;}"));
+        layout->addWidget(fontTestResult);
+        connect(fontTestButton, &QPushButton::clicked, this, [this, fontTestResult] {
+            const QFont f = fontTestResult->font();
+            const QString result = QStringLiteral(
+                "FONT TEST: family=%1 point=%2 pixel=%3 resolved=%4 "
+                "labelText=%5 labelWidth=%6")
+                .arg(f.family()).arg(f.pointSizeF()).arg(f.pixelSize())
+                .arg(QFontInfo(f).family(), fontTestResult->text())
+                .arg(fontTestResult->width());
+            DrnasDiagnostics::note(QStringLiteral("DBG ") + result);
+            notify(result);
+        });
         auto* row1 = new QHBoxLayout;
         auto* snapshotButton = new QPushButton(QStringLiteral("SNAPSHOT"));
         auto* copyButton = new QPushButton(QStringLiteral("COPY FULL LOG"));
