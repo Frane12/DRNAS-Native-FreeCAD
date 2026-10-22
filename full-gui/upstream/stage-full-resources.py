@@ -39,6 +39,15 @@ def main():
     for name in ("PreferencePacks", "PreferencePackTemplates"):
         count += copy_assets(source / "src/Gui" / name, destination / "data/Gui" / name)
     count += copy_assets(built / "data/Gui", destination / "data/Gui")
+    # Legacy workbench scripts use 'from PySide import QtGui'. This pure-Python
+    # facade maps Qt 6 widgets to their old namespace, but NEVER fakes native
+    # PySide6/shiboken6 or Pivy. Those must be compiled and packaged separately.
+    compat = Path(__file__).resolve().parent / "python-compat"
+    count += copy_assets(compat, destination / "python-compat")
+    for name in ("__init__.py", "QtCore.py", "QtGui.py", "QtSvg.py"):
+        if not (destination / "python-compat/PySide" / name).is_file():
+            raise SystemExit(f"Missing DRNAS PySide compatibility file: {name}")
+
     for path in (
         "Mod/Part/InitGui.py", "Mod/Sketcher/InitGui.py",
         "Mod/PartDesign/InitGui.py",
