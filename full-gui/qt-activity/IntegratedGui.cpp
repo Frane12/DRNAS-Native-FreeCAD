@@ -486,7 +486,7 @@ def _drnas_new_mark(msg):
     if _drnas_path:
         fd = os.open(_drnas_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         try:
-            os.write(fd, ('[NEW_DOC] ' + msg + '\\n').encode('utf-8', 'replace'))
+            os.write(fd, ('[NEW_DOC] ' + msg + '\n').encode('utf-8', 'replace'))
             os.fsync(fd)
         finally:
             os.close(fd)
