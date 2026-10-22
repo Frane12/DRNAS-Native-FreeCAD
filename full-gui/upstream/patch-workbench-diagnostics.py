@@ -39,7 +39,7 @@ void drnasWorkbenchPhase(const char* phase, const char* event)
     const char* path = std::getenv("DRNAS_WB_LOG_PATH");
     if (path && *path) {
         if (FILE* file = std::fopen(path, "a")) {
-            std::fprintf(file, "[NATIVE] DRNAS_WB_PHASE %s %s\\n", phase, event);
+            std::fprintf(file, "[NATIVE] DRNAS_WB_PHASE %s %s\n", phase, event);
             std::fflush(file);
             ::fsync(::fileno(file));
             std::fclose(file);
