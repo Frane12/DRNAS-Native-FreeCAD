@@ -32,7 +32,7 @@ def main():
     # such as Part.so (no "lib" prefix). Ship the exact relocated binaries in
     # app-private FreeCAD/lib as a reliable CPython and module-loader fallback.
     for module in ("Part", "PartGui", "Sketcher", "SketcherGui",
-                   "PartDesign", "PartDesignGui"):
+                   "_PartDesign", "PartDesignGui"):
         name = module + ".so"
         library = native / name
         if not library.is_file() or library.stat().st_size < 8192:
@@ -41,7 +41,7 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(library, target)
         names.append("lib/" + name)
-        if len(names) < 25 or not REQUIRED.issubset(names):
+    if len(names) < 25 or not REQUIRED.issubset(names):
         raise SystemExit(f"FreeCAD GUI assets incomplete: {REQUIRED - set(names)}")
     (bundle / "freecad-manifest.txt").write_text(
         "\n".join(names) + "\n", encoding="utf-8"

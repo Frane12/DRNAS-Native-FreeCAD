@@ -37,7 +37,7 @@ def inspect(apk):
         required = {
             "libCoin.so", "libFreeCADGui.so", "libFreeCADApp.so",
             "Part.so", "PartGui.so", "Sketcher.so", "SketcherGui.so",
-            "PartDesign.so", "PartDesignGui.so",
+            "_PartDesign.so", "PartDesignGui.so",
             "libFreeCADBase.so", "libQt6Network_arm64-v8a.so",
             "libQt6PrintSupport_arm64-v8a.so", "libQt6Xml_arm64-v8a.so",
         }

@@ -130,7 +130,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: out/occt-android
-          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+          key: occt-fullcad-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
       - name: Restore native Boost
         id: boost
         uses: actions/cache/restore@v4
@@ -174,6 +174,9 @@ jobs:
           test -f out/full-gui/host-icu73/lib/libicui18n.so.73
           test -f out/upstream-freecad-gui/native/libFreeCADGui.so
           test -f out/upstream-freecad-gui/native/libCoin.so
+          for mod in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
+            test -s "out/occt-android/lib/lib${mod}.so" || { echo "::error::Missing complete OCCT lib${mod}.so"; exit 1; }
+          done
           bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/out/full-gui/host-icu73/lib" >> "$GITHUB_ENV"
 

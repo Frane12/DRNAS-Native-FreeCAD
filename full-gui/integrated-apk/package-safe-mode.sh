@@ -160,7 +160,7 @@ apk="$OUT/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
 "$SDK_BUILDTOOLS/apksigner" verify --verbose "$apk"
 "$SDK_BUILDTOOLS/zipalign" -c -P 16 4 "$apk"
 unzip -Z1 "$apk" > "$OUT/apk-files.txt"
-for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so Part.so PartGui.so Sketcher.so SketcherGui.so PartDesign.so PartDesignGui.so; do
+for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so; do
     grep -Fx "lib/arm64-v8a/$needed" "$OUT/apk-files.txt"
 done
 echo "PASS: injected ${#names[@]} deferred ARM64 libraries; retained $skipped Qt/OCCT entries."

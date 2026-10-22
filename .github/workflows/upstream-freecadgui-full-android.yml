@@ -251,8 +251,10 @@ jobs:
           done < <(find "$libdir" -maxdepth 1 -type f -name '*.so' -print0 | sort -z)
           # Original FreeCAD modules live in build/Mod/<workbench>/ rather than build/lib/.
           builddir="$GITHUB_WORKSPACE/.build/freecad-upstream-real-gui-arm64"
-          for module in Part PartGui Sketcher SketcherGui PartDesign PartDesignGui; do
-            src="$builddir/Mod/${module%Gui}/$module.so"
+          for module in Part PartGui Sketcher SketcherGui _PartDesign PartDesignGui; do
+            workbench="${module%Gui}"
+            [[ "$module" != _PartDesign ]] || workbench=PartDesign
+            src="$builddir/Mod/$workbench/$module.so"
             if [[ -s "$src" ]]; then
               readelf -h "$src" | grep -q 'Machine:.*AArch64'
               readelf -h "$src" | grep -q 'Type:.*DYN'
@@ -265,7 +267,7 @@ jobs:
             fi
           done
           if [[ "${{ steps.build.outcome }}" == success ]]; then
-            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Part.so PartGui.so Sketcher.so SketcherGui.so PartDesign.so PartDesignGui.so; do
+            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so; do
               test -s "$stage/$required" || {
                 echo "::error::Missing real upstream $required after successful build"
                 exit 1
