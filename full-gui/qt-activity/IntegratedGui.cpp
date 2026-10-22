@@ -570,9 +570,18 @@ finally:
             state.setValue(key, name + QStringLiteral(":activate"));
             state.sync();
             DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate begin").arg(name));
-            invoke(QStringLiteral("Gui.activateWorkbench('%1')").arg(name), label);
-            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate returned").arg(name));
-            state.remove(key);
+            const QString command = QStringLiteral("Gui.activateWorkbench('%1')").arg(name);
+            QString activationError;
+            const bool activated = runOriginalFreeCADPython(command, activationError);
+            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate returned success=%2 error=%3")
+                                       .arg(name).arg(activated ? 1 : 0, 0).arg(activationError));
+            if (activated) {
+                state.remove(key);
+            } else {
+                state.setValue(QStringLiteral("nativeProbe/workbenchLastError"),
+                               name + QStringLiteral(": ") + activationError);
+                state.remove(key); // A returned Python exception is not a native crash.
+            }
             state.sync();
         });
     }
