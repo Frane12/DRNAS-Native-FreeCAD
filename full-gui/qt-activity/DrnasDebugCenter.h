@@ -11,6 +11,9 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QEvent>
+#include <QFile>
+#include <QFileInfo>
+#include <QSet>
 #include <QFont>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -59,6 +62,44 @@ class DrnasDebugCenter final : public QObject {
             .arg(f.renderableType() == QSurfaceFormat::OpenGLES)
             .arg(f.depthBufferSize()).arg(f.stencilBufferSize())
             .arg(f.samples()).arg(int(f.swapBehavior()));
+    }
+    static QString nativeProcessState() {
+        // Read-only /proc/self introspection: no dlopen, glGetString,
+        // eglInitialize or GL context creation while diagnosing a live viewport.
+        QString report;
+        QFile stat(QStringLiteral("/proc/self/status"));
+        if (stat.open(QIODevice::ReadOnly)) {
+            const QList<QByteArray> wanted{"VmRSS:", "VmPeak:", "VmHWM:", "Threads:"};
+            while (!stat.atEnd()) {
+                const QByteArray line = stat.readLine().trimmed();
+                for (const QByteArray& key : wanted) {
+                    if (line.startsWith(key)) {
+                        report += QStringLiteral("\\nProcess ") + QString::fromLatin1(line);
+                        break;
+                    }
+                }
+            }
+        }
+        QFile maps(QStringLiteral("/proc/self/maps"));
+        QSet<QString> found;
+        if (maps.open(QIODevice::ReadOnly)) {
+            while (!maps.atEnd()) {
+                const QByteArray line = maps.readLine();
+                if (line.contains("libEGL") || line.contains("libGLES") ||
+                    line.contains("libGL.so") || line.contains("libGLU") ||
+                    line.contains("libCoin") || line.contains("libFreeCAD") ||
+                    line.contains("vulkan")) {
+                    const QByteArray path = line.mid(line.lastIndexOf(' ') + 1).trimmed();
+                    if (!path.isEmpty())
+                        found.insert(QFileInfo(QString::fromLocal8Bit(path)).fileName());
+                }
+            }
+        }
+        QStringList mapped = found.values();
+        mapped.sort();
+        report += QStringLiteral("\\nMapped GPU/FreeCAD modules: ")
+                + (mapped.isEmpty() ? QStringLiteral("(none accessible)") : mapped.join(QStringLiteral(", ")));
+        return report;
     }
     static QString widget(const QWidget* w) {
         if (!w) return QStringLiteral("(none)");
@@ -227,6 +268,7 @@ class DrnasDebugCenter final : public QObject {
         s += QStringLiteral("\nCurrent-thread GL context=%1")
             .arg(current && current->isValid());
         if (current) s += QStringLiteral(" ") + format(current->format());
+        s += nativeProcessState();
         const auto windows = QGuiApplication::topLevelWindows();
         s += QStringLiteral("\nNative Qt top-level QWindows=%1").arg(windows.size());
         for (QWindow* w : windows) {
