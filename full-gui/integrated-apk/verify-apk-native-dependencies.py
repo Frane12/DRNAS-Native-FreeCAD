@@ -41,6 +41,8 @@ def inspect(apk):
             "libFreeCADBase.so", "libQt6Network_arm64-v8a.so",
             "libQt6PrintSupport_arm64-v8a.so", "libQt6Xml_arm64-v8a.so",
         }
+        if os.environ.get("DRNAS_PARTIAL_GUI_LAB") == "1":
+            required.difference_update({"_PartDesign.so", "PartDesignGui.so"})
         for name in sorted(required - libs.keys()):
             missing.append(("APK", name))
         with tempfile.TemporaryDirectory(prefix="drnas-apk-abi-") as tmp:

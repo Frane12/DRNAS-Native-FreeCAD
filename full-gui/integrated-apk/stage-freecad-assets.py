@@ -3,6 +3,7 @@
 from pathlib import Path
 import shutil
 import sys
+import os
 
 REQUIRED = {
     "Mod/Part/InitGui.py", "Mod/Sketcher/InitGui.py",
@@ -31,8 +32,11 @@ def main():
     # Android's native library extractor can ignore Python extension ELF names
     # such as Part.so (no "lib" prefix). Ship the exact relocated binaries in
     # app-private FreeCAD/lib as a reliable CPython and module-loader fallback.
-    for module in ("Part", "PartGui", "Sketcher", "SketcherGui",
-                   "_PartDesign", "PartDesignGui"):
+    # Explicitly labeled prebuilt LAB: previous archive predates _PartDesign.so staging.
+    extensions = ["Part", "PartGui", "Sketcher", "SketcherGui"]
+    if os.environ.get("DRNAS_PARTIAL_GUI_LAB") != "1":
+        extensions.extend(["_PartDesign", "PartDesignGui"])
+    for module in extensions:
         name = module + ".so"
         library = native / name
         if not library.is_file() or library.stat().st_size < 8192:

@@ -160,7 +160,14 @@ apk="$OUT/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
 "$SDK_BUILDTOOLS/apksigner" verify --verbose "$apk"
 "$SDK_BUILDTOOLS/zipalign" -c -P 16 4 "$apk"
 unzip -Z1 "$apk" > "$OUT/apk-files.txt"
-for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so; do
+# Standard FULL APK always requires _PartDesign and PartDesignGui.
+# Prebuilt LAB is strictly separate and marked experimental.
+workbench_ext=(_PartDesign.so PartDesignGui.so)
+if [[ "${DRNAS_PARTIAL_GUI_LAB:-0}" == 1 ]]; then
+    workbench_ext=()
+    echo 'LAB ONLY: Part+Sketcher experimental APK; PartDesign unavailable.'
+fi
+for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so libGL.so libGLU.so Part.so PartGui.so Sketcher.so SketcherGui.so "${workbench_ext[@]}"; do
     grep -Fx "lib/arm64-v8a/$needed" "$OUT/apk-files.txt"
 done
 echo "PASS: injected ${#names[@]} deferred ARM64 libraries; retained $skipped Qt/OCCT entries."

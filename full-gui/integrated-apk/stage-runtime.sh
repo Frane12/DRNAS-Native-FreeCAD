@@ -51,6 +51,12 @@ copy_sos "$ROOT/out/full-deps/icu/lib"
 copy_sos "$ROOT/out/full-deps/python/lib"
 copy_sos "$ROOT/out/full-deps/xerces-c/lib"
 copy_sos "$ROOT/out/full-deps/yaml-cpp/lib"
+if [[ "${DRNAS_PARTIAL_GUI_LAB:-0}" == 1 ]]; then
+    # PartDesignGui directly depends on absent _PartDesign.so; remove both.
+    # Only for prebuilt GUI+Part+Sketcher experiment, never full APK.
+    rm -f "$STAGE/_PartDesign.so" "$STAGE/PartDesignGui.so"
+    echo "LAB: original PartDesign not included; no library stubs."
+fi
 
 # Safely rewrite GL4ES and private ICU dependencies in-place. patchelf
 # previously caused invalid PT_LOAD alignment (see device's libCoin TIPx
