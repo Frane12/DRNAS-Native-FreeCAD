@@ -1,4 +1,7 @@
+// Full FreeCAD GUI must not allocate a competing QOpenGLWidget/EGL surface.
+#ifndef DRNAS_FREECAD_FULL_INTEGRATION
 #include "NativeOcctViewport.h"
+#endif
 #include <algorithm>
 #include <utility>
 #include <QApplication>
@@ -535,9 +538,8 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         QWidget* oldCentral = shell->takeCentralWidget();
         if (oldCentral) {
             oldCentral->hide();
-            // Keep the prior OCCT QOpenGLWidget alive (but hidden) for this
-            // transition. Destroying it mid-start can tear down Qt's shared
-            // Android EGL backing surface while FreeCAD initializes.
+            // Keep bootstrap widgets alive: startup diagnostics still refer to
+            // them. In the full GUI build, they contain no OpenGL preview.
             oldCentral->setParent(shell);
         }
         if (shell->menuBar()) shell->menuBar()->hide();
@@ -609,7 +611,11 @@ void recordOriginalGuiStage(const char* stageName)
 class DrnasQtCADShell final : public QMainWindow {
 public:
     DrnasQtCADShell() {
+#ifdef DRNAS_FREECAD_FULL_INTEGRATION
+        setWindowTitle(QStringLiteral("DRNAS FreeCAD Full GUI - NO PREVIEW"));
+#else
         setWindowTitle(QStringLiteral("DRNAS FreeCAD - Qt Native CAD View"));
+#endif
         auto* central=new QWidget(this);
         auto* outer=new QVBoxLayout(central);
         outer->setContentsMargins(3,3,3,3);
@@ -625,6 +631,7 @@ public:
             "QTabBar::tab{background:#1d3959;color:white;padding:7px 15px;}"
             "QTabBar::tab:selected{background:#246d9c;}"));
 
+#ifndef DRNAS_FREECAD_FULL_INTEGRATION
         auto* selectorRow=new QHBoxLayout;
         auto* brand=new QLabel(QStringLiteral("DRNAS / FreeCAD"));
         QFont font=brand->font();
@@ -638,6 +645,16 @@ public:
         selector_->setMinimumWidth(136);
         selectorRow->addWidget(selector_);
         outer->addLayout(selectorRow);
+#else
+        // No OCCT, shaders or OpenGL bootstrap. FreeCADGui owns the graphics.
+        auto* startupInfo = new QLabel(
+            QStringLiteral("FULL GUI / NO PREVIEW - Qt Widgets only. "
+                           "No startup OpenGL surface has been created."),
+            central);
+        startupInfo->setWordWrap(true);
+        startupInfo->setObjectName(QStringLiteral("drnasNoPreviewMarker"));
+        outer->addWidget(startupInfo);
+#endif
         // Crash-resistant SAFE MODE: never attempt native FreeCAD dlopen
         // until the user explicitly presses the test button. Android native
         // linker crashes cannot be caught with a C++ try/catch.
@@ -842,6 +859,15 @@ public:
             runProbe->setEnabled(true);
             launchOriginal->setEnabled(true);
         });
+#ifdef DRNAS_FREECAD_FULL_INTEGRATION
+        auto* plainStatus = new QLabel(
+            QStringLiteral("NO PREVIEW - original FreeCAD owns the CAD graphics surface."),
+            central);
+        plainStatus->setWordWrap(true);
+        plainStatus->setObjectName(QStringLiteral("drnasNoGLStatus"));
+        outer->addWidget(plainStatus);
+        outer->addStretch(1);
+#else
         auto* integrationState = new QLabel(
             QStringLiteral("QtActivity stable-mode OCCT viewer / native FreeCAD "
                            "load test is manual; original workbenches pending."),
@@ -898,8 +924,10 @@ public:
         tabs->addTab(info_,QStringLiteral("PROPERTIES"));
         tabs->setMaximumHeight(144);
         outer->addWidget(tabs);
+#endif
 
         setCentralWidget(central);
+#ifndef DRNAS_FREECAD_FULL_INTEGRATION
         auto* fileMenu=menuBar()->addMenu(QStringLiteral("File"));
         auto* save=fileMenu->addAction(QStringLiteral("Save FCStd (integration pending)"));
         save->setEnabled(false);
@@ -912,14 +940,24 @@ public:
         connect(selector_,QOverload<int>::of(&QComboBox::currentIndexChanged),
                 this,[this](int shape){selectShape(shape);});
         updateModel(0);
+#else
+        menuBar()->setNativeMenuBar(false);
+        menuBar()->hide();
+#endif
         statusBar()->setStyleSheet(QStringLiteral(
                 "QStatusBar{background:#142b46;color:#b3d7f5;}"));
+#ifdef DRNAS_FREECAD_FULL_INTEGRATION
+        statusBar()->showMessage(QStringLiteral(
+            "NO PREVIEW / Qt Widgets only - original FreeCAD GL starts on OPEN GUI"));
+#else
         statusBar()->showMessage(QStringLiteral(
              "Real native OCCT 3D viewport  •  FreeCADGui documents: next stage"));
+#endif
         const QRect available=QGuiApplication::primaryScreen()->availableGeometry();
         resize(std::min(available.width(),950),std::min(available.height(),1400));
     }
 private:
+#ifndef DRNAS_FREECAD_FULL_INTEGRATION
     void selectShape(int kind) {
         if(!viewport_->setShape(kind)) {
             statusBar()->showMessage(QStringLiteral("Native OpenCASCADE shape failed"));
@@ -957,6 +995,7 @@ private:
     QTreeWidget* tree_{nullptr};
     QLabel* info_{nullptr};
     bool grid_{true},edges_{false};
+#endif
 };
 
 extern "C" __attribute__((visibility("default")))
