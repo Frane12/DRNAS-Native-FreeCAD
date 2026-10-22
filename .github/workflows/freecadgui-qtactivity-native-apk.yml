@@ -1,8 +1,15 @@
 name: DRNAS FreeCADGui QtActivity APK Integration
-# Don't package against an older artifact on every GUI glue push.
-# The main-branch workflow_run controller automatically dispatches this
-# workflow with the exact successful upstream run ID AFTER assets are staged.
+# Repackage the already-compiled native FreeCAD artifact when Android-only
+# integration changes. No full FreeCAD C++ rebuild is triggered on these paths.
+# The main-branch workflow_run controller still dispatches packaging after a
+# genuinely new successful native GUI build.
 on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - 'full-gui/qt-activity/**'
+      - 'full-gui/integrated-apk/**'
+      - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
   workflow_dispatch:
     inputs:
       upstream_run_id:
