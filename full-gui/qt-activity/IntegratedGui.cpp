@@ -570,7 +570,20 @@ finally:
             state.setValue(key, name + QStringLiteral(":activate"));
             state.sync();
             DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate begin").arg(name));
-            const QString command = QStringLiteral("Gui.activateWorkbench('%1')").arg(name);
+            // Resolve the workbench registry before invoking the native activation
+            // bridge. An absent workbench raises KeyError and must not be treated
+            // as a fatal native crash on Android.
+            const QString command = QStringLiteral(
+                "import FreeCADGui as Gui, traceback\\n"
+                "_drnas_wbs = Gui.listWorkbenches()\\n"
+                "print('DRNAS registered workbenches:', sorted(_drnas_wbs.keys()))\\n"
+                "if '%1' not in _drnas_wbs:\\n"
+                "    print('DRNAS workbench missing: %1; skipping activation')\\n"
+                "else:\\n"
+                "    try:\\n"
+                "        Gui.activateWorkbench('%1')\\n"
+                "    except Exception:\\n"
+                "        traceback.print_exc()\\n").arg(name);
             QString activationError;
             const bool activated = runOriginalFreeCADPython(command, activationError);
             DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate returned success=%2 error=%3")
