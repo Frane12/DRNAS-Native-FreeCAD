@@ -80,3 +80,49 @@ and the new integration have different Android package identifiers.
 - [Pack native FreeCADGui QtActivity APK](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/workflows/freecadgui-qtactivity-native-apk.yml)
 - [Full build AI auto-fixer](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/workflows/freecad-instant-autofix.yml)
 - [Native APK AI auto-fixer](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/workflows/freecad-apk-instant-autofix.yml)
+
+## Live DRNAS DBG control center (Android QtActivity)
+
+The **DBG** button is fixed at the **bottom-left** of the QtActivity host,
+including **safe mode before loading libFreeCADGui.so** and after the original
+FreeCAD main window has been embedded. It is a **child widget**, not another
+Android native window or an extra OpenGL context. The existing **LAB** button
+remains at bottom-right for measuring/editing touch toolbar dimensions.
+
+- **Fullscreen:** switches the host QtActivity window between full-screen
+  and normal modes. The preference is restored next launch.
+- **Immersive:** optionally hides the Android status/navigation system bars
+  using Android UI-thread native calls. On gesture-navigation devices a system
+  swipe can temporarily reveal the bars. Off restores their visibility.
+- **Qt window size:** Auto/available, 640x480, 800x600, 960x540 or 1280x720
+  (clamped to the available screen). This only requests a *logical Qt window
+  geometry* in windowed mode. Android may force an actual different size;
+  read it under **SNAPSHOT**. It **does not change the device display resolution
+  or the actual Coin3D/OpenGL render framebuffer resolution**.
+- **Qt application font scale:** 70%, 85%, 100% or 115%. Upstream FreeCAD
+  widgets that specify hard-coded font styles may not follow this setting.
+- **Detailed events:** selectively logs Qt host/top-level QWindow/widget
+  show, hide, geometry, activation and platform-surface transitions. It does
+  not consume or synthesize input.
+- **SNAPSHOT:** records logical/physical screen metrics, density, Qt window
+  geometries, top-level native Qt surfaces, focus/active targets, QOpenGLWidget
+  context validity and the FreeCAD startup marker. Capturing a native OpenGL
+  vendor string without a *current* GL context is deliberately skipped.
+- **COPY FULL LOG:** copies that snapshot plus the last 64 KiB of the current
+  and previous app launch logs. These survive a native process crash.
+
+Important checkpoints automatically record snapshots immediately before
+original Gui::MainWindow startup, during early Android embedding, and on
+return from that startup. The **TEST FREECAD LIBRARIES** button remains
+explicit/manual: a failed native `dlopen` must not prevent access to DBG.
+
+**Recommended phone repro:**
+1. Open DBG in safe mode and press SNAPSHOT; copy full log.
+2. Test FreeCAD libraries, then launch original FreeCAD. If it closes, reopen.
+3. In the restarted app, press DBG > COPY FULL LOG; preserve the **previous**
+   section and the exact last stage.
+4. For a screen/focus problem, toggle detailed events, reproduce one press
+   and export the log. For native SIGSEGV/SIGABRT backtraces, also collect
+   Android `adb logcat -b crash -d`; Qt's in-process logs cannot capture
+   tombstones after an abrupt native abort.
+
