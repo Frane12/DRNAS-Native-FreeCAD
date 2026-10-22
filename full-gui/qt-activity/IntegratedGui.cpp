@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QDir>
+#include <QDockWidget>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -25,6 +26,7 @@
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -263,8 +265,51 @@ bool configureBundledPython(QString& error)
 // startup. Native aborts (OpenGL/GL4ES/Python) cannot be caught in C++.
 namespace {
 QLabel* currentFreeCADStartupStatus = nullptr;
+
+// FreeCAD's desktop startup can change the qss: prefix while it creates
+// OverlayManager / ReportView. Reassert the Android-extracted assets before
+// EVERY stage (particularly before MainWindow and StartupPostProcess), not
+// just after it is already too late for icon initialization.
+void restoreOriginalFreeCADIconPaths()
+{
+    const QString iconRoot = QStandardPaths::writableLocation(
+        QStandardPaths::AppDataLocation)
+        + QStringLiteral("/drnas-freecad-home/data/Gui/Stylesheets");
+    if (!QFileInfo(iconRoot).isDir()) {
+        return;
+    }
+    QStringList paths = QDir::searchPaths(QStringLiteral("qss"));
+    paths.removeAll(iconRoot);
+    paths.prepend(iconRoot);
+    QDir::setSearchPaths(QStringLiteral("qss"), paths);
+}
+
+void shrinkOriginalFreeCADReport(QWidget* shell)
+{
+    for (QWidget* candidate : QApplication::topLevelWidgets()) {
+        auto* window = qobject_cast<QMainWindow*>(candidate);
+        if (!window || window == shell || !window->isVisible()) {
+            continue;
+        }
+        for (auto* dock : window->findChildren<QDockWidget*>()) {
+            if (dock->objectName() != QStringLiteral("Report view") &&
+                dock->windowTitle() != QStringLiteral("Report View") &&
+                dock->windowTitle() != QStringLiteral("Pregled izvješća")) {
+                continue;
+            }
+            if (dock->isFloating() || !dock->isVisible()) {
+                continue;
+            }
+            const int desired = std::max(90, window->height() / 6);
+            window->resizeDocks({dock}, {desired}, Qt::Vertical);
+            return; // One-time initial sizing: user can resize thereafter.
+        }
+    }
+}
+
 void recordOriginalGuiStage(const char* stageName)
 {
+    restoreOriginalFreeCADIconPaths();
     const QString stage = QString::fromUtf8(stageName ? stageName : "unknown");
     const QString message = QStringLiteral("ORIGINAL FreeCAD GUI: %1").arg(stage);
     QSettings settings;
@@ -396,16 +441,8 @@ public:
             currentFreeCADStartupStatus = nativeStatus;
             recordOriginalGuiStage("Calling real Gui::MainWindow startup");
             const int result = start(&recordOriginalGuiStage);
-            // Upstream style initialization can replace qss: search paths.
-            // Keep Android's extracted overlay icons available afterwards.
-            const QString iconRoot = QStandardPaths::writableLocation(
-                QStandardPaths::AppDataLocation)
-                + QStringLiteral("/drnas-freecad-home/data/Gui/Stylesheets");
-            QStringList qssPaths = QDir::searchPaths(QStringLiteral("qss"));
-            if (!qssPaths.contains(iconRoot)) {
-                qssPaths.prepend(iconRoot);
-                QDir::setSearchPaths(QStringLiteral("qss"), qssPaths);
-            }
+            // Keep the Android qss: icon root valid after startup too.
+            restoreOriginalFreeCADIconPaths();
             QSettings settings;
             settings.setValue(QStringLiteral("nativeProbe/pending"), false);
             if (result != 0) {
@@ -423,6 +460,12 @@ public:
                 settings.setValue(QStringLiteral("nativeProbe/result"), success);
                 nativeStatus->setText(success);
                 this->hide(); // The upstream FreeCAD QMainWindow is now shown.
+                // Apply after the native QMainWindow is laid out. Do not
+                // collapse the report or disable its normal dock resizing.
+                QTimer::singleShot(0, this, [this] {
+                    restoreOriginalFreeCADIconPaths();
+                    shrinkOriginalFreeCADReport(this);
+                });
             }
             settings.sync();
         });
