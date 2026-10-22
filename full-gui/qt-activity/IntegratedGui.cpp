@@ -344,6 +344,26 @@ void normalizeAndroidFreeCADDocks(QMainWindow* window)
     }
 }
 
+// An embedded FreeCAD menu bar uses a second row on small Android screens.
+// Keep the original menus and real workbench toolbars alive, but expose menus
+// through the touch-friendly DRNAS dropdown instead of duplicating the row.
+// Never forcibly show workbench toolbars: NoneWorkbench legitimately has none.
+void compactOriginalAndroidFreeCADChrome(QMainWindow* window)
+{
+    if (!window) return;
+    if (QMenuBar* menu = window->menuBar()) {
+        menu->setNativeMenuBar(false);
+        menu->hide();
+    }
+    for (QToolBar* bar : window->findChildren<QToolBar*>()) {
+        bar->setIconSize(QSize(18, 18));
+        bar->setMovable(false);
+        if (bar->isFloating()) window->addToolBar(Qt::TopToolBarArea, bar);
+        bar->setFloatable(false);
+    }
+    normalizeAndroidFreeCADDocks(window);
+}
+
 // The stock FreeCAD startup bridge intentionally requests NoneWorkbench.
 // Upstream NoneWorkbench contains no CAD toolbar and only Quit/Preferences/
 // Workbench/Help menu entries. On Android the embedded desktop menu bar may be
@@ -395,11 +415,11 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     // text commands with no icons, so force their captions to render.
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     toolbar->setStyleSheet(QStringLiteral(
-        "QToolBar{background:#182d42;border:0px;spacing:4px;padding:3px;}"
+        "QToolBar{background:#182d42;border:0px;spacing:3px;padding:2px;}"
         "QToolButton{color:white;background:#315775;border:1px solid #52718d;"
-        "border-radius:4px;min-height:32px;padding:2px 8px;font-size:13px;}"
+        "border-radius:4px;min-height:30px;padding:2px 6px;font-size:12px;}"
         "QToolButton:pressed{background:#4383a9;}"
-        "QLabel{color:#eaf2f8;font-size:12px;padding:2px;}"));
+        "QLabel{color:#eaf2f8;font-size:11px;padding:2px;}"));
     shell->addToolBar(Qt::TopToolBarArea, toolbar);
 
     auto* resultLabel = new QLabel(QStringLiteral("Choose Part to begin"), toolbar);
@@ -417,10 +437,18 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     };
     // These are actual embedded FreeCAD/FreeCADGui Python entrypoints.
     // No mock modeling, and no second desktop QApplication or native window.
-    auto invoke = [report](const QString& code, const QString& label) {
+    auto invoke = [report, upstream](const QString& code, const QString& label) {
         QString error;
         if (runOriginalFreeCADPython(code, error)) {
             report(label + QStringLiteral(" OK"));
+            // A workbench switch rebuilds the original menus and toolbars.
+            // Recompact them only after the upstream command finishes.
+            if (upstream) {
+                compactOriginalAndroidFreeCADChrome(upstream.data());
+                QTimer::singleShot(0, upstream.data(), [upstream] {
+                    if (upstream) compactOriginalAndroidFreeCADChrome(upstream.data());
+                });
+            }
         } else {
             report(label + QStringLiteral(": ") + error);
         }
@@ -448,36 +476,34 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     }
     toolbar->addSeparator();
 
-    // Use FreeCAD's live QMenus, not a hard-coded set of fake menu items.
-    // MenuManager::setup() can replace the menus after workbench activation;
-    // therefore resolve the existing QMenu on every touch, not at startup.
-    for (const char* section : {"File", "Edit", "View", "Tools", "Window", "Help"}) {
-        const QString key = QString::fromLatin1(section);
-        auto* button = new QToolButton(toolbar);
-        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        button->setText(key);
-        button->setToolTip(QStringLiteral("Open original FreeCAD %1 menu").arg(key));
-        toolbar->addWidget(button);
-        QPointer<QToolButton> safeButton(button);
-        QObject::connect(button, &QToolButton::clicked, shell,
-                         [upstream, safeButton, key, report] {
-            if (!upstream || !safeButton || !upstream->menuBar()) return;
+    // One compact menu button replaces six oversized desktop menu buttons.
+    // Reuse the *live upstream QMenus* (including translated titles and all
+    // native FreeCAD actions), rebuilt every time the button opens because
+    // activating a workbench can replace MenuManager's menu objects.
+    auto* menuButton = new QToolButton(toolbar);
+    menuButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    menuButton->setText(QStringLiteral("Menu"));
+    menuButton->setToolTip(QStringLiteral("Original FreeCAD menus"));
+    menuButton->setPopupMode(QToolButton::InstantPopup);
+    auto* touchMenu = new QMenu(menuButton);
+    QObject::connect(touchMenu, &QMenu::aboutToShow, shell,
+                     [upstream, touchMenu] {
+        touchMenu->clear();
+        if (upstream && upstream->menuBar()) {
             for (QAction* action : upstream->menuBar()->actions()) {
-                if (!action || !action->menu()) continue;
-                QString raw = action->objectName();
-                raw.remove(QLatin1Char('&'));
-                if (raw.compare(key, Qt::CaseInsensitive) != 0) {
-                    raw = action->text();
-                    raw.remove(QLatin1Char('&'));
-                    if (raw.compare(key, Qt::CaseInsensitive) != 0) continue;
+                if (action && action->menu()) {
+                    touchMenu->addMenu(action->menu());
                 }
-                action->menu()->popup(
-                    safeButton->mapToGlobal(QPoint(0, safeButton->height())));
-                return;
             }
-            report(QStringLiteral("%1 menu not available in active workbench").arg(key));
-        });
-    }
+        }
+        if (touchMenu->actions().isEmpty()) {
+            auto* unavailable = touchMenu->addAction(
+                QStringLiteral("FreeCAD menus not ready"));
+            unavailable->setEnabled(false);
+        }
+    });
+    menuButton->setMenu(touchMenu);
+    toolbar->addWidget(menuButton);
     toolbar->addSeparator();
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
@@ -514,13 +540,9 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         for (QToolBar* toolbar : window->findChildren<QToolBar*>()) {
             toolbar->setIconSize(QSize(18, 18));
         }
-        // The QtAndroid native menu integration does not show the desktop
-        // FreeCAD menu row reliably; render it as a regular QWidget instead.
-        if (window->menuBar()) {
-            window->menuBar()->setNativeMenuBar(false);
-            window->menuBar()->show();
-        }
-        normalizeAndroidFreeCADDocks(window);
+        // Original menus remain alive for the Android Menu dropdown; don't
+        // spend a second full-width row on the embedded desktop menu bar.
+        compactOriginalAndroidFreeCADChrome(window);
         // CRITICAL: run from the native "Showing original FreeCAD MainWindow"
         // stage callback BEFORE QMainWindow::show() allocates a separate
         // Android surface / OpenGL backing store. Qt 6.4+ destroys and
@@ -773,7 +795,7 @@ public:
                     }
                     if (embedded) {
                         auto* freecadWindow = qobject_cast<QMainWindow*>(centralWidget());
-                        normalizeAndroidFreeCADDocks(freecadWindow);
+                        compactOriginalAndroidFreeCADChrome(freecadWindow);
                         auto* commandBar = findChild<QToolBar*>(
                             QStringLiteral("drnasAndroidFreeCADCommands"));
                         QSettings checks;
@@ -792,16 +814,13 @@ public:
                                 << "visible=" << (commandBar && commandBar->isVisible())
                                 << "native top-level="
                                 << (freecadWindow && freecadWindow->isWindow());
-                        if (freecadWindow && freecadWindow->menuBar()) {
-                            freecadWindow->menuBar()->setNativeMenuBar(false);
-                            freecadWindow->menuBar()->setVisible(true);
-                            freecadWindow->menuBar()->raise();
-                        }
+                        // Do not resurrect the duplicate desktop menu row.
+                        compactOriginalAndroidFreeCADChrome(freecadWindow);
                         // FreeCAD's deferred restoreState() can run later.
                         // Re-apply after it without touching the EGLSurface.
                         QPointer<QMainWindow> guarded(freecadWindow);
                         QTimer::singleShot(250, this, [guarded] {
-                            if (guarded) normalizeAndroidFreeCADDocks(guarded.data());
+                            if (guarded) compactOriginalAndroidFreeCADChrome(guarded.data());
                         });
                     } else {
                         QSettings fallback;
