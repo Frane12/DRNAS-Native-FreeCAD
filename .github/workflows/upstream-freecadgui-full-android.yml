@@ -241,6 +241,7 @@ jobs:
             }
           cat out/upstream-freecad-gui/native-python-bindings-audit.txt
           echo "Native ELF validation is informational; --strict will be enabled only after real binding build and APK staging."
+          echo "Native binding inventory recorded; missing bindings remain a known blocker for GUI Python commands."
 
 
       - name: Preserve any validated native FreeCADGui/Base/App .so on FAILURE
