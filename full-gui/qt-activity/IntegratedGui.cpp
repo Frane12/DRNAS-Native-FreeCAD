@@ -548,6 +548,18 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (!beforeFirstShow) {
             window->show();
         }
+        // Show a recognizable version in the genuine FreeCAD status bar,
+        // which is visible even when Android incorrectly overlays the menus.
+        if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
+                QStringLiteral("drnasAndroidBridgeMarker"))) {
+            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05"), window->statusBar());
+            marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
+            marker->setStyleSheet(QStringLiteral(
+                "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
+                "border-radius:3px;font-size:11px;}"));
+            window->statusBar()->addPermanentWidget(marker);
+            marker->show();
+        }
         // QtActivity shell is already shown; don't showMaximized/raise it
         // during GL startup because that may recreate Android's EGLSurface.
         return true;
@@ -559,10 +571,25 @@ void recordOriginalGuiStage(const char* stageName)
 {
     restoreOriginalFreeCADIconPaths();
     const QString stage = QString::fromUtf8(stageName ? stageName : "unknown");
-    if (stage == QStringLiteral("Showing original FreeCAD MainWindow") &&
-        currentFreeCADAndroidShell) {
+    // Upstream StartupPostProcess::activateWorkbench() invokes
+    // Gui::MainWindow::loadWindowSettings() -> show()/showMaximized().
+    // The former "Showing original FreeCAD MainWindow" callback ran AFTER
+    // that transition. By then FreeCAD already owns its own Android QWindow,
+    // obscuring every toolbar hosted by QtActivity. Reparent just before
+    // StartupPostProcess::execute(), while MainWindow is still hidden and
+    // before Qt allocates FreeCAD's GL/EGL surface.
+    if (stage == QStringLiteral("Original Gui::StartupPostProcess") &&
+        currentFreeCADAndroidShell && !originalFreeCADEmbeddedBeforeShow) {
         originalFreeCADEmbeddedBeforeShow =
             embedOriginalFreeCADWindow(currentFreeCADAndroidShell, true);
+        qInfo() << "DRNAS early QtActivity embedding:"
+                << originalFreeCADEmbeddedBeforeShow;
+    }
+    // Late path is diagnostics/fallback only, not safe to claim pre-show.
+    if (stage == QStringLiteral("Showing original FreeCAD MainWindow") &&
+        currentFreeCADAndroidShell && !originalFreeCADEmbeddedBeforeShow) {
+        qWarning() << "DRNAS: early embedding unavailable; FreeCAD may have"
+                      " created an independent Android Qt platform window";
     }
     const QString message = QStringLiteral("ORIGINAL FreeCAD GUI: %1").arg(stage);
     QSettings settings;
@@ -730,6 +757,24 @@ public:
                     if (embedded) {
                         auto* freecadWindow = qobject_cast<QMainWindow*>(centralWidget());
                         normalizeAndroidFreeCADDocks(freecadWindow);
+                        auto* commandBar = findChild<QToolBar*>(
+                            QStringLiteral("drnasAndroidFreeCADCommands"));
+                        QSettings checks;
+                        checks.setValue(QStringLiteral("nativeProbe/earlyEmbed"),
+                                        embeddedBeforeShow);
+                        checks.setValue(QStringLiteral("nativeProbe/hostBarExists"),
+                                        commandBar != nullptr);
+                        checks.setValue(QStringLiteral("nativeProbe/hostBarVisible"),
+                                        commandBar && commandBar->isVisible());
+                        checks.setValue(QStringLiteral("nativeProbe/upstreamIsWindow"),
+                                        freecadWindow && freecadWindow->isWindow());
+                        checks.sync();
+                        qInfo() << "DRNAS Android GUI embedding diagnostics"
+                                << "early=" << embeddedBeforeShow
+                                << "toolbar=" << commandBar
+                                << "visible=" << (commandBar && commandBar->isVisible())
+                                << "native top-level="
+                                << (freecadWindow && freecadWindow->isWindow());
                         if (freecadWindow && freecadWindow->menuBar()) {
                             freecadWindow->menuBar()->setNativeMenuBar(false);
                             freecadWindow->menuBar()->setVisible(true);
