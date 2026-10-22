@@ -267,6 +267,8 @@ bool configureBundledPython(QString& error)
 // startup. Native aborts (OpenGL/GL4ES/Python) cannot be caught in C++.
 namespace {
 QLabel* currentFreeCADStartupStatus = nullptr;
+QMainWindow* currentFreeCADAndroidShell = nullptr;
+bool originalFreeCADEmbeddedBeforeShow = false;
 
 // FreeCAD's desktop startup can change the qss: prefix while it creates
 // OverlayManager / ReportView. Reassert the Android-extracted assets before
@@ -286,28 +288,20 @@ void restoreOriginalFreeCADIconPaths()
     QDir::setSearchPaths(QStringLiteral("qss"), paths);
 }
 
-void shrinkOriginalFreeCADReport(QWidget* shell)
+void shrinkOriginalFreeCADReport(QMainWindow* window)
 {
-    for (QWidget* candidate : QApplication::topLevelWidgets()) {
-        auto* window = qobject_cast<QMainWindow*>(candidate);
-        if (!window || window == shell || !window->isVisible()) {
+    if (!window) return;
+    for (auto* dock : window->findChildren<QDockWidget*>()) {
+        if (dock->objectName() != QStringLiteral("Report view") &&
+            dock->windowTitle() != QStringLiteral("Report View") &&
+            dock->windowTitle() != QStringLiteral("Pregled izvješća")) {
             continue;
         }
-        for (auto* dock : window->findChildren<QDockWidget*>()) {
-            if (dock->objectName() != QStringLiteral("Report view") &&
-                dock->windowTitle() != QStringLiteral("Report View") &&
-                dock->windowTitle() != QStringLiteral("Pregled izvješća")) {
-                continue;
-            }
-            if (dock->isFloating() || !dock->isVisible()) {
-                continue;
-            }
-            // The desktop Report View consumes most of the short Android
-            // landscape layout. Users can re-enable it via View > Panels.
-            // Keep error reporting available in QSettings and the shell.
-            dock->hide();
-            return;
-        }
+        if (dock->isFloating()) continue;
+        // Keep the error report available from View > Panels while exposing
+        // enough room for the real 3D viewport on a phone.
+        dock->hide();
+        return;
     }
 }
 
@@ -316,12 +310,17 @@ void shrinkOriginalFreeCADReport(QWidget* shell)
 // with its File/View menus offscreen. Host the GENUINE upstream MainWindow as
 // a child of the already-visible QtActivity shell. This is not a mock CAD UI;
 // it retains FreeCAD's original menus, toolbars, docks, status bar and viewport.
-bool embedOriginalFreeCADWindow(QMainWindow* shell)
+bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
 {
     if (!shell) return false;
     for (QWidget* candidate : QApplication::topLevelWidgets()) {
         auto* window = qobject_cast<QMainWindow*>(candidate);
-        if (!window || window == shell || !window->isVisible()) {
+        if (!window || window == shell || (!beforeFirstShow && !window->isVisible())) {
+            continue;
+        }
+        // Before first show the real FreeCAD QMainWindow is still hidden.
+        // Identify it by its actual dock (avoid grabbing unrelated dialogs).
+        if (!window->findChild<QDockWidget*>(QStringLiteral("Report view"))) {
             continue;
         }
 
@@ -342,11 +341,14 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell)
             window->menuBar()->setNativeMenuBar(false);
             window->menuBar()->show();
         }
-        shrinkOriginalFreeCADReport(shell);
-
-        // Move the actual upstream MainWindow into the QtActivity surface.
-        // Never create a second QApplication or rebuild FreeCAD's binaries.
-        window->hide();
+        // CRITICAL: run from the native "Showing original FreeCAD MainWindow"
+        // stage callback BEFORE QMainWindow::show() allocates a separate
+        // Android surface / OpenGL backing store. Qt 6.4+ destroys and
+        // recreates GL contexts when an initialized QOpenGLWidget switches
+        // its top-level window. That caused QRhiGles2/no EGLSurface errors.
+        if (!beforeFirstShow) {
+            window->hide(); // Best-effort fallback; can recreate EGLSurface.
+        }
         window->setParent(shell, Qt::Widget);
         window->setWindowFlags(Qt::Widget);
         window->setMinimumSize(0, 0);
@@ -356,16 +358,20 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell)
         QWidget* oldCentral = shell->takeCentralWidget();
         if (oldCentral) {
             oldCentral->hide();
-            oldCentral->deleteLater();
+            // Keep the prior OCCT QOpenGLWidget alive (but hidden) for this
+            // transition. Destroying it mid-start can tear down Qt's shared
+            // Android EGL backing surface while FreeCAD initializes.
+            oldCentral->setParent(shell);
         }
         if (shell->menuBar()) shell->menuBar()->hide();
         if (shell->statusBar()) shell->statusBar()->hide();
         shell->setCentralWidget(window);
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
-        window->show();
-        shell->showMaximized();
-        shell->raise();
-        shell->activateWindow();
+        if (!beforeFirstShow) {
+            window->show();
+        }
+        // QtActivity shell is already shown; don't showMaximized/raise it
+        // during GL startup because that may recreate Android's EGLSurface.
         return true;
     }
     return false;
@@ -375,6 +381,11 @@ void recordOriginalGuiStage(const char* stageName)
 {
     restoreOriginalFreeCADIconPaths();
     const QString stage = QString::fromUtf8(stageName ? stageName : "unknown");
+    if (stage == QStringLiteral("Showing original FreeCAD MainWindow") &&
+        currentFreeCADAndroidShell) {
+        originalFreeCADEmbeddedBeforeShow =
+            embedOriginalFreeCADWindow(currentFreeCADAndroidShell, true);
+    }
     const QString message = QStringLiteral("ORIGINAL FreeCAD GUI: %1").arg(stage);
     QSettings settings;
     settings.setValue(QStringLiteral("nativeProbe/current"), message);
@@ -503,8 +514,12 @@ public:
                 return;
             }
             currentFreeCADStartupStatus = nativeStatus;
+            currentFreeCADAndroidShell = this;
+            originalFreeCADEmbeddedBeforeShow = false;
             recordOriginalGuiStage("Calling real Gui::MainWindow startup");
             const int result = start(&recordOriginalGuiStage);
+            currentFreeCADAndroidShell = nullptr;
+            currentFreeCADStartupStatus = nullptr;
             // Keep the Android qss: icon root valid after startup too.
             restoreOriginalFreeCADIconPaths();
             QSettings settings;
@@ -523,11 +538,21 @@ public:
                     "Part/Sketcher/PartDesign runtime not yet verified.");
                 settings.setValue(QStringLiteral("nativeProbe/result"), success);
                 nativeStatus->setText(success);
-                // Embed FreeCAD inside the ONE Android QtActivity window;
-                // do not hide the host or launch an offscreen second window.
-                QTimer::singleShot(0, this, [this] {
+                // Avoid the old show->hide->reparent sequence: EGLSurface
+                // must not be recreated after Qt initialized the OpenGL FBO.
+                // The native stage callback embeds before first show.
+                const bool embeddedBeforeShow = originalFreeCADEmbeddedBeforeShow;
+                QTimer::singleShot(0, this, [this, embeddedBeforeShow] {
                     restoreOriginalFreeCADIconPaths();
-                    if (!embedOriginalFreeCADWindow(this)) {
+                    bool embedded = embeddedBeforeShow;
+                    if (!embedded) {
+                        // Legacy fallback if upstream skipped the stage hook.
+                        embedded = embedOriginalFreeCADWindow(this, false);
+                    }
+                    if (embedded) {
+                        shrinkOriginalFreeCADReport(
+                            qobject_cast<QMainWindow*>(centralWidget()));
+                    } else {
                         QSettings fallback;
                         fallback.setValue(QStringLiteral("nativeProbe/result"),
                             QStringLiteral("FreeCAD started but original MainWindow embedding failed"));
