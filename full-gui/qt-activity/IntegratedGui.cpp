@@ -394,9 +394,13 @@ bool runOriginalFreeCADPython(const QString& script, QString& error)
     }
     DrnasDiagnostics::note(QStringLiteral("FreeCAD Python command: ") + script.left(500));
     const QByteArray command = script.toUtf8();
+    DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: acquire GIL"));
     const int state = acquire();
+    DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: execute begin"));
     const int result = execute(command.constData(), nullptr);
+    DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: execute returned=%1").arg(result));
     release(state);
+    DrnasDiagnostics::note(QStringLiteral("PYTHON checkpoint: GIL released"));
     if (result != 0) {
         error = QStringLiteral("Original FreeCAD Python command failed (see Android log)");
         DrnasDiagnostics::note(error);
@@ -477,9 +481,28 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
         QObject::connect(action, &QAction::triggered, shell,
                          [invoke, label, name] {
             DrnasDiagnostics::note(QStringLiteral("TOUCH workbench ") + label);
-            invoke(QStringLiteral("import FreeCADGui as Gui\n"
-                                  "Gui.activateWorkbench('%1')").arg(name),
-                   label);
+            // Persist the phase before invoking native FreeCAD: an abort or
+            // SIGSEGV bypasses C++/Python exception handlers.
+            QSettings state;
+            const QString key = QStringLiteral("nativeProbe/workbenchPending");
+            state.setValue(key, name + QStringLiteral(":import"));
+            state.sync();
+            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: import FreeCADGui begin").arg(name));
+            QString error;
+            if (!runOriginalFreeCADPython(QStringLiteral("import FreeCADGui as Gui"), error)) {
+                state.remove(key);
+                state.sync();
+                DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: import FAILED: %2").arg(name, error));
+                return;
+            }
+            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: import succeeded").arg(name));
+            state.setValue(key, name + QStringLiteral(":activate"));
+            state.sync();
+            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate begin").arg(name));
+            invoke(QStringLiteral("Gui.activateWorkbench('%1')").arg(name), label);
+            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate returned").arg(name));
+            state.remove(key);
+            state.sync();
         });
     }
     toolbar->addSeparator();
