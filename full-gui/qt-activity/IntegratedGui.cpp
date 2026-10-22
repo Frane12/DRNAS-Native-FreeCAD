@@ -586,11 +586,11 @@ finally:
                 return ok;
             };
             if (!phase(QStringLiteral("02-listWorkbenches"),
-                       QStringLiteral("import FreeCADGui as Gui\\n_drnas_wbs = Gui.listWorkbenches()"))) return;
+                       QStringLiteral("import FreeCADGui as Gui\n_drnas_wbs = Gui.listWorkbenches()"))) return;
             if (!phase(QStringLiteral("03-checkRegistered"),
                        QStringLiteral("assert '%1' in _drnas_wbs, 'Workbench not registered: %1'").arg(name))) return;
             if (!phase(QStringLiteral("04-activate"),
-                       QStringLiteral("import FreeCADGui as Gui\\nGui.activateWorkbench('%1')").arg(name))) return;
+                       QStringLiteral("import FreeCADGui as Gui\nGui.activateWorkbench('%1')").arg(name))) return;
             DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 complete").arg(name));
             state.remove(key);
             state.sync();
