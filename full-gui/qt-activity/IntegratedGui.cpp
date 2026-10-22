@@ -477,7 +477,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
              std::pair<const char*, const char*>{"TEST 1 Part", "import Part"},
              {"TEST 2 PartGui", "import PartGui"},
              {"TEST 3 Activate", R"DRNAS(
-import os, sys, faulthandler, FreeCADGui as Gui
+import os, sys, faulthandler, traceback, FreeCADGui as Gui
 _drnas_path = os.environ.get('DRNAS_WB_LOG_PATH', '')
 _drnas_fd = os.open(_drnas_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600) if _drnas_path else -1
 _drnas_count = 0
@@ -498,6 +498,12 @@ sys.settrace(_drnas_trace)
 try:
     Gui.activateWorkbench('PartWorkbench')
     _drnas_mark('TEST 3: activateWorkbench returned OK')
+except BaseException:
+    sys.settrace(None)
+    _drnas_mark('TEST 3: PYTHON EXCEPTION BEGIN')
+    for _drnas_line in traceback.format_exc().splitlines():
+        _drnas_mark(_drnas_line)
+    _drnas_mark('TEST 3: PYTHON EXCEPTION END')
 finally:
     sys.settrace(None)
     _drnas_mark('TEST 3: trace disabled')
