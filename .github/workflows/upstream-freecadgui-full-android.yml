@@ -227,6 +227,14 @@ jobs:
             .build/freecad-upstream-real-gui-arm64 \
             out/upstream-freecad-gui/resources
 
+      - name: Audit packaged Python GUI bindings without masking missing dependencies
+        if: ${{ steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          python3 full-gui/upstream/audit-python-bindings.py out/upstream-freecad-gui/resources \
+            | tee out/upstream-freecad-gui/python-bindings-audit.txt
+          echo "Python binding audit is informational until actual Android ARM64 builds are integrated."
+
       - name: Preserve any validated native FreeCADGui/Base/App .so on FAILURE
         if: ${{ always() && steps.build.outcome != 'skipped' }}
         run: |
