@@ -6,6 +6,7 @@
 #include <utility>
 #include <QApplication>
 #include "StartupDiagnostics.h"
+#include "DrnasDebugCenter.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -633,6 +634,11 @@ void recordOriginalGuiStage(const char* stageName)
 {
     restoreOriginalFreeCADIconPaths();
     const QString stage = QString::fromUtf8(stageName ? stageName : "unknown");
+    if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
+        stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
+        stage.contains(QStringLiteral("OpenGL"), Qt::CaseInsensitive)) {
+        DrnasDebugCenter::recordSnapshot(stage);
+    }
     // Upstream StartupPostProcess::activateWorkbench() invokes
     // Gui::MainWindow::loadWindowSettings() -> show()/showMaximized().
     // The former "Showing original FreeCAD MainWindow" callback ran AFTER
@@ -644,6 +650,8 @@ void recordOriginalGuiStage(const char* stageName)
         currentFreeCADAndroidShell && !originalFreeCADEmbeddedBeforeShow) {
         originalFreeCADEmbeddedBeforeShow =
             embedOriginalFreeCADWindow(currentFreeCADAndroidShell, true);
+        DrnasDebugCenter::recordSnapshot(
+            QStringLiteral("after real MainWindow early embedding"));
         qInfo() << "DRNAS early QtActivity embedding:"
                 << originalFreeCADEmbeddedBeforeShow;
     }
@@ -867,6 +875,8 @@ public:
             currentFreeCADStartupStatus = nativeStatus;
             currentFreeCADAndroidShell = this;
             originalFreeCADEmbeddedBeforeShow = false;
+            DrnasDebugCenter::recordSnapshot(
+                QStringLiteral("before risky original FreeCADGui startup"));
             recordOriginalGuiStage("Calling real Gui::MainWindow startup");
             const int result = start(&recordOriginalGuiStage);
             currentFreeCADAndroidShell = nullptr;
@@ -875,6 +885,8 @@ public:
             restoreOriginalFreeCADIconPaths();
             QSettings settings;
             settings.setValue(QStringLiteral("nativeProbe/pending"), false);
+            DrnasDebugCenter::recordSnapshot(
+                QStringLiteral("returned from original FreeCADGui startup"));
             DrnasDiagnostics::note(QStringLiteral("Original FreeCAD startup result code: %1")
                                        .arg(result));
             if (result != 0) {
