@@ -23,6 +23,7 @@
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QPointer>
 #include <QScreen>
 #include <QScrollArea>
 #include <QStatusBar>
@@ -288,20 +289,51 @@ void restoreOriginalFreeCADIconPaths()
     QDir::setSearchPaths(QStringLiteral("qss"), paths);
 }
 
-void shrinkOriginalFreeCADReport(QMainWindow* window)
+// Qt for Android maps floating QDockWidgets to independent native platform
+// windows. FreeCAD's desktop layout restoration can float "Report view", and
+// Android then dispatches touches to already-destroyed window IDs.
+// Normalize *all* desktop docks to child widgets, before first show and after
+// the upstream layout/overlay restoration. Do not resize the whole desktop.
+void normalizeAndroidFreeCADDocks(QMainWindow* window)
 {
     if (!window) return;
-    for (auto* dock : window->findChildren<QDockWidget*>()) {
-        if (dock->objectName() != QStringLiteral("Report view") &&
-            dock->windowTitle() != QStringLiteral("Report View") &&
-            dock->windowTitle() != QStringLiteral("Pregled izvješća")) {
-            continue;
+    for (QDockWidget* dock : window->findChildren<QDockWidget*>()) {
+        if (!dock) continue;
+        const bool report = dock->objectName() == QStringLiteral("Report view")
+            || dock->windowTitle() == QStringLiteral("Report View")
+            || dock->windowTitle() == QStringLiteral("Pregled izvješća");
+
+        // Disable dragging a dock into a separate Android QWindow. A dock
+        // remains available through FreeCAD's View > Panels menu.
+        dock->setFeatures(dock->features() & ~QDockWidget::DockWidgetFloatable);
+        if (dock->isFloating()) {
+            const bool shouldShow = dock->isVisible() && !report;
+            dock->hide();
+            if (window->dockWidgetArea(dock) == Qt::NoDockWidgetArea) {
+                window->addDockWidget(report ? Qt::BottomDockWidgetArea
+                                              : Qt::LeftDockWidgetArea, dock);
+            }
+            dock->setFloating(false);
+            if (shouldShow) dock->show();
         }
-        if (dock->isFloating()) continue;
-        // Keep the error report available from View > Panels while exposing
-        // enough room for the real 3D viewport on a phone.
-        dock->hide();
-        return;
+        if (report) {
+            // Report view is an optional debug panel and must not obstruct
+            // the actual FreeCAD 3D workspace at phone dimensions.
+            dock->hide();
+        }
+        if (!dock->property("drnasAndroidDockGuard").toBool()) {
+            dock->setProperty("drnasAndroidDockGuard", true);
+            QPointer<QMainWindow> safeWindow(window);
+            QObject::connect(dock, &QDockWidget::topLevelChanged, window,
+                             [safeWindow](bool floating) {
+                if (!floating || !safeWindow) return;
+                // Window-state restore may run AFTER GUI startup. Defer until
+                // Qt finishes the transition, then remove floating windows.
+                QTimer::singleShot(0, safeWindow.data(), [safeWindow] {
+                    if (safeWindow) normalizeAndroidFreeCADDocks(safeWindow.data());
+                });
+            });
+        }
     }
 }
 
@@ -341,6 +373,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
             window->menuBar()->setNativeMenuBar(false);
             window->menuBar()->show();
         }
+        normalizeAndroidFreeCADDocks(window);
         // CRITICAL: run from the native "Showing original FreeCAD MainWindow"
         // stage callback BEFORE QMainWindow::show() allocates a separate
         // Android surface / OpenGL backing store. Qt 6.4+ destroys and
@@ -550,8 +583,19 @@ public:
                         embedded = embedOriginalFreeCADWindow(this, false);
                     }
                     if (embedded) {
-                        shrinkOriginalFreeCADReport(
-                            qobject_cast<QMainWindow*>(centralWidget()));
+                        auto* freecadWindow = qobject_cast<QMainWindow*>(centralWidget());
+                        normalizeAndroidFreeCADDocks(freecadWindow);
+                        if (freecadWindow && freecadWindow->menuBar()) {
+                            freecadWindow->menuBar()->setNativeMenuBar(false);
+                            freecadWindow->menuBar()->setVisible(true);
+                            freecadWindow->menuBar()->raise();
+                        }
+                        // FreeCAD's deferred restoreState() can run later.
+                        // Re-apply after it without touching the EGLSurface.
+                        QPointer<QMainWindow> guarded(freecadWindow);
+                        QTimer::singleShot(250, this, [guarded] {
+                            if (guarded) normalizeAndroidFreeCADDocks(guarded.data());
+                        });
                     } else {
                         QSettings fallback;
                         fallback.setValue(QStringLiteral("nativeProbe/result"),
