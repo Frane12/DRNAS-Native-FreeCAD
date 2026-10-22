@@ -470,6 +470,35 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
         invoke(QStringLiteral("import FreeCAD\nFreeCAD.newDocument()"),
                QStringLiteral("New document"));
     });
+    // DRNAS crash isolation: opt-in tests in the SAME original GUI, without
+    // automatic workbench activation or an additional Qt/OpenGL window.
+    // The existing Android Python bridge acquires/releases the GIL.
+    for (const auto& probe : {
+             std::pair<const char*, const char*>{"TEST 1 Part", "import Part"},
+             {"TEST 2 PartGui", "import PartGui"},
+             {"TEST 3 Activate", "import FreeCADGui as Gui\nGui.activateWorkbench('PartWorkbench')"}}) {
+        const QString caption = QString::fromLatin1(probe.first);
+        const QString command = QString::fromLatin1(probe.second);
+        QAction* test = toolbar->addAction(caption);
+        test->setToolTip(QStringLiteral("Isolated Part crash checkpoint; inspect DRNAS log if app exits"));
+        QObject::connect(test, &QAction::triggered, shell,
+                         [invoke, caption, command, report] {
+            QSettings settings;
+            const QString pending = QStringLiteral("nativeProbe/partStagePending");
+            settings.setValue(pending, caption);
+            settings.sync();
+            DrnasDiagnostics::note(QStringLiteral("PART PROBE BEGIN: ") + caption);
+            QString error;
+            const bool ok = runOriginalFreeCADPython(command, error);
+            DrnasDiagnostics::note(QStringLiteral("PART PROBE RETURN: %1 result=%2 error=%3")
+                .arg(caption).arg(ok).arg(error));
+            settings.remove(pending);
+            settings.sync();
+            report(caption + (ok ? QStringLiteral(" PASS")
+                                  : QStringLiteral(" FAIL: ") + error));
+        });
+    }
+    toolbar->addSeparator();
     toolbar->addSeparator();
     for (const auto& workbench : {
              std::pair<const char*, const char*>{"Part", "PartWorkbench"},
