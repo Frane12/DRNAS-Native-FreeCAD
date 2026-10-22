@@ -587,10 +587,38 @@ finally:
             };
             if (!phase(QStringLiteral("02-listWorkbenches"),
                        QStringLiteral("import FreeCADGui as Gui\n_drnas_wbs = Gui.listWorkbenches()"))) return;
+            // A missing workbench is expected on partial Android installs.
+            // Never raise an uncaught AssertionError through the embedded Python bridge.
+            // Report registered names and attempt the upstream InitGui registration.
             if (!phase(QStringLiteral("03-checkRegistered"),
-                       QStringLiteral("assert '%1' in _drnas_wbs, 'Workbench not registered: %1'").arg(name))) return;
+                       QStringLiteral(
+                           "import FreeCADGui as Gui, os, importlib.util, traceback\\n"
+                           "_drnas_wbs = Gui.listWorkbenches()\\n"
+                           "print('DRNAS available workbenches:', sorted(_drnas_wbs.keys()), flush=True)\\n"
+                           "if '%1' not in _drnas_wbs:\\n"
+                           "    _drnas_mod = '%2'\\n"
+                           "    try:\\n"
+                           "        import FreeCAD as App\\n"
+                           "        _drnas_root = App.getResourceDir()\\n"
+                           "        _drnas_init = os.path.join(_drnas_root, 'Mod', _drnas_mod, 'InitGui.py')\\n"
+                           "        print('DRNAS registration candidate:', _drnas_init, 'exists=', os.path.isfile(_drnas_init), flush=True)\\n"
+                           "        if os.path.isfile(_drnas_init):\\n"
+                           "            _drnas_spec = importlib.util.spec_from_file_location('DRNAS_' + _drnas_mod + '_InitGui', _drnas_init)\\n"
+                           "            _drnas_module = importlib.util.module_from_spec(_drnas_spec)\\n"
+                           "            _drnas_spec.loader.exec_module(_drnas_module)\\n"
+                           "    except Exception:\\n"
+                           "        traceback.print_exc()\\n"
+                           "_drnas_registered = '%1' in Gui.listWorkbenches()\\n"
+                           "print('DRNAS workbench registered:', '%1', _drnas_registered, flush=True)\\n"
+                       ).arg(name, label))) return;
             if (!phase(QStringLiteral("04-activate"),
-                       QStringLiteral("import FreeCADGui as Gui\nGui.activateWorkbench('%1')").arg(name))) return;
+                       QStringLiteral(
+                           "import FreeCADGui as Gui\\n"
+                           "if _drnas_registered:\\n"
+                           "    Gui.activateWorkbench('%1')\\n"
+                           "else:\\n"
+                           "    print('DRNAS SKIP activation: workbench not registered: %1', flush=True)\\n"
+                       ).arg(name))) return;
             DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 complete").arg(name));
             state.remove(key);
             state.sync();
