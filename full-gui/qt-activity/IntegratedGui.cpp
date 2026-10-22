@@ -311,30 +311,21 @@ void shrinkOriginalFreeCADReport(QWidget* shell)
     }
 }
 
-// Compact the *original* upstream MainWindow on Android, not the Qt shell.
-// Changing the QtActivity layer avoids rebuilding the massive FreeCAD core.
-// Keep it user-resizable: never set a restrictive maximum size.
-void compactOriginalFreeCADWindow(QWidget* shell)
+// Android QtActivity has one usable content surface. A second desktop-style
+// top-level QMainWindow can end up partially covered by the Android action bar,
+// with its File/View menus offscreen. Host the GENUINE upstream MainWindow as
+// a child of the already-visible QtActivity shell. This is not a mock CAD UI;
+// it retains FreeCAD's original menus, toolbars, docks, status bar and viewport.
+bool embedOriginalFreeCADWindow(QMainWindow* shell)
 {
+    if (!shell) return false;
     for (QWidget* candidate : QApplication::topLevelWidgets()) {
         auto* window = qobject_cast<QMainWindow*>(candidate);
         if (!window || window == shell || !window->isVisible()) {
             continue;
         }
-        QScreen* screen = window->screen();
-        if (!screen) {
-            screen = QGuiApplication::primaryScreen();
-        }
-        if (!screen) {
-            continue;
-        }
-        const QRect available = screen->availableGeometry();
-        if (available.width() < 120 || available.height() < 120) {
-            continue;
-        }
 
-        // FreeCAD restores desktop toolbar and text sizes at startup;
-        // reduce both before calculating the small Android window geometry.
+        // Reduce oversized desktop UI furniture before Android measures it.
         QFont compactFont = window->font();
         if (compactFont.pointSizeF() > 0) {
             compactFont.setPointSizeF(std::max(7.0, compactFont.pointSizeF() * 0.80));
@@ -345,34 +336,39 @@ void compactOriginalFreeCADWindow(QWidget* shell)
         for (QToolBar* toolbar : window->findChildren<QToolBar*>()) {
             toolbar->setIconSize(QSize(18, 18));
         }
-
-        // Android's native activity header can cover the top of a second
-        // QMainWindow. In landscape this is especially noticeable: the real
-        // FreeCAD menus end up behind the large title/action area.
-        // Reserve top space and fit the compact window BELOW that area.
-        // Screen dimensions here are Qt logical coordinates, not raw pixels.
-        const bool landscape = available.width() > available.height();
-        const int topReserve = landscape ? available.height() * 27 / 100
-                                         : available.height() * 12 / 100;
-        const int safeHeight = std::max(120, available.height() - topReserve - 8);
-        const int targetWidth = std::min(available.width(),
-                                         std::max(120, available.width() * 74 / 100));
-        const int targetHeight = std::min(safeHeight,
-                                          std::max(120, available.height() * 70 / 100));
-        const int targetX = available.x() + (available.width() - targetWidth) / 2;
-        const int targetY = available.y() + topReserve +
-                            (safeHeight - targetHeight) / 2;
-
-        window->setMinimumSize(0, 0);
-        if (window->isMaximized() || window->isFullScreen()) {
-            window->showNormal();
+        // The QtAndroid native menu integration does not show the desktop
+        // FreeCAD menu row reliably; render it as a regular QWidget instead.
+        if (window->menuBar()) {
+            window->menuBar()->setNativeMenuBar(false);
+            window->menuBar()->show();
         }
-        // One geometry operation rather than resize() plus move(): avoids
-        // extra Qt/Android top-level surface transitions during startup.
-        window->setGeometry(targetX, targetY, targetWidth, targetHeight);
         shrinkOriginalFreeCADReport(shell);
-        break;
+
+        // Move the actual upstream MainWindow into the QtActivity surface.
+        // Never create a second QApplication or rebuild FreeCAD's binaries.
+        window->hide();
+        window->setParent(shell, Qt::Widget);
+        window->setWindowFlags(Qt::Widget);
+        window->setMinimumSize(0, 0);
+        window->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        window->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+        QWidget* oldCentral = shell->takeCentralWidget();
+        if (oldCentral) {
+            oldCentral->hide();
+            oldCentral->deleteLater();
+        }
+        if (shell->menuBar()) shell->menuBar()->hide();
+        if (shell->statusBar()) shell->statusBar()->hide();
+        shell->setCentralWidget(window);
+        shell->setWindowTitle(QStringLiteral("FreeCAD"));
+        window->show();
+        shell->showMaximized();
+        shell->raise();
+        shell->activateWindow();
+        return true;
     }
+    return false;
 }
 
 void recordOriginalGuiStage(const char* stageName)
@@ -527,12 +523,16 @@ public:
                     "Part/Sketcher/PartDesign runtime not yet verified.");
                 settings.setValue(QStringLiteral("nativeProbe/result"), success);
                 nativeStatus->setText(success);
-                this->hide(); // The upstream FreeCAD QMainWindow is now shown.
-                // Apply after the native QMainWindow is laid out. Do not
-                // collapse the report or disable its normal dock resizing.
+                // Embed FreeCAD inside the ONE Android QtActivity window;
+                // do not hide the host or launch an offscreen second window.
                 QTimer::singleShot(0, this, [this] {
                     restoreOriginalFreeCADIconPaths();
-                    compactOriginalFreeCADWindow(this);
+                    if (!embedOriginalFreeCADWindow(this)) {
+                        QSettings fallback;
+                        fallback.setValue(QStringLiteral("nativeProbe/result"),
+                            QStringLiteral("FreeCAD started but original MainWindow embedding failed"));
+                        fallback.sync();
+                    }
                 });
             }
             settings.sync();
