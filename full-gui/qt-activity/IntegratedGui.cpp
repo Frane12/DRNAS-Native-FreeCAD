@@ -29,6 +29,9 @@
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QToolBar>
+#include <QToolButton>
+#include <QMenu>
+#include <QMenuBar>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -337,6 +340,142 @@ void normalizeAndroidFreeCADDocks(QMainWindow* window)
     }
 }
 
+// The stock FreeCAD startup bridge intentionally requests NoneWorkbench.
+// Upstream NoneWorkbench contains no CAD toolbar and only Quit/Preferences/
+// Workbench/Help menu entries. On Android the embedded desktop menu bar may be
+// hidden by the QtActivity/native window policy, leaving a completely grey UI.
+// Expose REAL upstream commands through a plain QWidget toolbar hosted by the
+// one stable QtActivity QMainWindow. This does NOT replace FreeCAD's viewport.
+bool runOriginalFreeCADPython(const QString& script, QString& error)
+{
+    using IsInitialized = int (*)();
+    using AcquireGIL = int (*)();
+    using ReleaseGIL = void (*)(int);
+    using RunPython = int (*)(const char*, void*);
+    auto isInitialized = reinterpret_cast<IsInitialized>(
+        dlsym(RTLD_DEFAULT, "Py_IsInitialized"));
+    auto acquire = reinterpret_cast<AcquireGIL>(
+        dlsym(RTLD_DEFAULT, "PyGILState_Ensure"));
+    auto release = reinterpret_cast<ReleaseGIL>(
+        dlsym(RTLD_DEFAULT, "PyGILState_Release"));
+    auto execute = reinterpret_cast<RunPython>(
+        dlsym(RTLD_DEFAULT, "PyRun_SimpleStringFlags"));
+    if (!isInitialized || !acquire || !release || !execute || !isInitialized()) {
+        error = QStringLiteral("Embedded FreeCAD Python runtime unavailable");
+        return false;
+    }
+    const QByteArray command = script.toUtf8();
+    const int state = acquire();
+    const int result = execute(command.constData(), nullptr);
+    release(state);
+    if (result != 0) {
+        error = QStringLiteral("Original FreeCAD Python command failed (see Android log)");
+        return false;
+    }
+    return true;
+}
+
+void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freecad)
+{
+    if (!shell || !freecad || shell->findChild<QToolBar*>(
+            QStringLiteral("drnasAndroidFreeCADCommands"))) return;
+
+    QPointer<QMainWindow> upstream(freecad);
+    auto* toolbar = new QToolBar(QStringLiteral("FreeCAD Android commands"), shell);
+    toolbar->setObjectName(QStringLiteral("drnasAndroidFreeCADCommands"));
+    toolbar->setMovable(false);
+    toolbar->setFloatable(false);
+    toolbar->setAllowedAreas(Qt::TopToolBarArea);
+    toolbar->setIconSize(QSize(21, 21));
+    toolbar->setStyleSheet(QStringLiteral(
+        "QToolBar{background:#182d42;border:0px;spacing:4px;padding:3px;}"
+        "QToolButton{color:white;background:#315775;border:1px solid #52718d;"
+        "border-radius:4px;min-height:32px;padding:2px 8px;font-size:13px;}"
+        "QToolButton:pressed{background:#4383a9;}"
+        "QLabel{color:#eaf2f8;font-size:12px;padding:2px;}"));
+    shell->addToolBar(Qt::TopToolBarArea, toolbar);
+
+    auto* resultLabel = new QLabel(QStringLiteral("Choose Part to begin"), toolbar);
+    resultLabel->setObjectName(QStringLiteral("drnasAndroidCommandResult"));
+    resultLabel->setMinimumWidth(75);
+    auto report = [resultLabel, upstream](const QString& message) {
+        resultLabel->setText(message);
+        resultLabel->setToolTip(message);
+        if (upstream && upstream->statusBar())
+            upstream->statusBar()->showMessage(message, 7000);
+        QSettings settings;
+        settings.setValue(QStringLiteral("nativeProbe/lastTouchCommand"), message);
+        settings.sync();
+        qInfo().noquote() << "DRNAS FREECAD ANDROID:" << message;
+    };
+    // These are actual embedded FreeCAD/FreeCADGui Python entrypoints.
+    // No mock modeling, and no second desktop QApplication or native window.
+    auto invoke = [report](const QString& code, const QString& label) {
+        QString error;
+        if (runOriginalFreeCADPython(code, error)) {
+            report(label + QStringLiteral(" OK"));
+        } else {
+            report(label + QStringLiteral(": ") + error);
+        }
+    };
+    auto* newDoc = toolbar->addAction(QStringLiteral("New"));
+    newDoc->setToolTip(QStringLiteral("FreeCAD.newDocument()"));
+    QObject::connect(newDoc, &QAction::triggered, shell, [invoke] {
+        invoke(QStringLiteral("import FreeCAD\nFreeCAD.newDocument()"),
+               QStringLiteral("New document"));
+    });
+    toolbar->addSeparator();
+    for (const auto& workbench : {
+             std::pair<const char*, const char*>{"Part", "PartWorkbench"},
+             {"Sketcher", "SketcherWorkbench"},
+             {"PartDesign", "PartDesignWorkbench"}}) {
+        const QString label = QString::fromLatin1(workbench.first);
+        const QString name = QString::fromLatin1(workbench.second);
+        QAction* action = toolbar->addAction(label);
+        QObject::connect(action, &QAction::triggered, shell,
+                         [invoke, label, name] {
+            invoke(QStringLiteral("import FreeCADGui as Gui\n"
+                                  "Gui.activateWorkbench('%1')").arg(name),
+                   label);
+        });
+    }
+    toolbar->addSeparator();
+
+    // Use FreeCAD's live QMenus, not a hard-coded set of fake menu items.
+    // MenuManager::setup() can replace the menus after workbench activation;
+    // therefore resolve the existing QMenu on every touch, not at startup.
+    for (const char* section : {"File", "Edit", "View", "Tools", "Window", "Help"}) {
+        const QString key = QString::fromLatin1(section);
+        auto* button = new QToolButton(toolbar);
+        button->setText(key);
+        button->setToolTip(QStringLiteral("Open original FreeCAD %1 menu").arg(key));
+        toolbar->addWidget(button);
+        QPointer<QToolButton> safeButton(button);
+        QObject::connect(button, &QToolButton::clicked, shell,
+                         [upstream, safeButton, key, report] {
+            if (!upstream || !safeButton || !upstream->menuBar()) return;
+            for (QAction* action : upstream->menuBar()->actions()) {
+                if (!action || !action->menu()) continue;
+                QString raw = action->objectName();
+                raw.remove(QLatin1Char('&'));
+                if (raw.compare(key, Qt::CaseInsensitive) != 0) {
+                    raw = action->text();
+                    raw.remove(QLatin1Char('&'));
+                    if (raw.compare(key, Qt::CaseInsensitive) != 0) continue;
+                }
+                action->menu()->popup(
+                    safeButton->mapToGlobal(QPoint(0, safeButton->height())));
+                return;
+            }
+            report(QStringLiteral("%1 menu not available in active workbench").arg(key));
+        });
+    }
+    toolbar->addSeparator();
+    toolbar->addWidget(resultLabel);
+    toolbar->setVisible(true);
+    toolbar->raise();
+}
+
 // Android QtActivity has one usable content surface. A second desktop-style
 // top-level QMainWindow can end up partially covered by the Android action bar,
 // with its File/View menus offscreen. Host the GENUINE upstream MainWindow as
@@ -400,6 +539,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (shell->statusBar()) shell->statusBar()->hide();
         shell->setCentralWidget(window);
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
+        installOriginalFreeCADTouchControls(shell, window);
         if (!beforeFirstShow) {
             window->show();
         }
