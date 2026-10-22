@@ -12,6 +12,8 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QMouseEvent>
+#include <QTouchEvent>
 #include <QDir>
 #include <QDockWidget>
 #include <QFile>
@@ -665,11 +667,79 @@ void recordOriginalGuiStage(const char* stageName)
 }
 }
 
+
+// Android/Qt input instrumentation. This reports the actual Qt event target,
+// not merely toolbar visibility or focus flags. No events are consumed:
+// FreeCAD keeps its native mouse, touch, keyboard and OpenGL handling.
+class DrnasInputTrace final : public QObject {
+public:
+    explicit DrnasInputTrace(QObject* parent) : QObject(parent) {}
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (!watched || !event) return false;
+        const QEvent::Type type = event->type();
+        if (type != QEvent::MouseButtonPress &&
+            type != QEvent::MouseButtonRelease &&
+            type != QEvent::TouchBegin &&
+            type != QEvent::FocusIn &&
+            type != QEvent::FocusOut &&
+            type != QEvent::WindowActivate &&
+            type != QEvent::WindowDeactivate) return false;
+
+        auto* widget = qobject_cast<QWidget*>(watched);
+        if (!widget) return false;
+        const QString klass = QString::fromLatin1(widget->metaObject()->className());
+        const QString target = QStringLiteral("%1 object=%2 visible=%3 enabled=%4")
+            .arg(klass, widget->objectName())
+            .arg(widget->isVisible()).arg(widget->isEnabled());
+        const bool input = type == QEvent::MouseButtonPress ||
+                           type == QEvent::MouseButtonRelease ||
+                           type == QEvent::TouchBegin;
+        if (!input) {
+            // Focus transitions are useful for identifying unexpected
+            // top-level Qt windows, but skip noisy child focus churn.
+            if (!widget->isWindow() &&
+                widget->objectName() != QStringLiteral("drnasAndroidFreeCADCommands"))
+                return false;
+            DrnasDiagnostics::note(QStringLiteral("INPUT focus/window event=%1 %2")
+                .arg(int(type)).arg(target));
+            return false;
+        }
+        QPoint global;
+        if (type == QEvent::TouchBegin) {
+            auto* touch = static_cast<QTouchEvent*>(event);
+            if (touch->points().isEmpty()) return false;
+            global = touch->points().first().globalPosition().toPoint();
+        } else {
+            global = static_cast<QMouseEvent*>(event)->globalPosition().toPoint();
+        }
+        QWidget* hit = QApplication::widgetAt(global);
+        QWidget* active = QApplication::activeWindow();
+        QWidget* focus = QApplication::focusWidget();
+        DrnasDiagnostics::note(
+            QStringLiteral("INPUT event=%1 global=(%2,%3) receiver=[%4] "
+                           "hit=[%5/%6] active=[%7] focus=[%8]")
+                .arg(int(type)).arg(global.x()).arg(global.y()).arg(target)
+                .arg(hit ? QString::fromLatin1(hit->metaObject()->className())
+                         : QStringLiteral("null"))
+                .arg(hit ? hit->objectName() : QStringLiteral("null"))
+                .arg(active ? QString::fromLatin1(active->metaObject()->className())
+                            : QStringLiteral("null"))
+                .arg(focus ? QString::fromLatin1(focus->metaObject()->className())
+                           : QStringLiteral("null")));
+        return false;
+    }
+};
+
 // REAL QtActivity + Qt6/C++ OpenCASCADE viewport, still NOT upstream
 // FreeCADGui or App::Document/ViewProvider/Coin3D.
 class DrnasQtCADShell final : public QMainWindow {
 public:
     DrnasQtCADShell() {
+        // Install once on the existing QApplication, before FreeCAD startup.
+        // Observes presses without grabbing focus or changing rendering.
+        qApp->installEventFilter(new DrnasInputTrace(qApp));
+        DrnasDiagnostics::note(QStringLiteral("Installed non-consuming Qt input trace"));
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
         setWindowTitle(QStringLiteral("DRNAS FreeCAD Full GUI - NO PREVIEW"));
 #else
