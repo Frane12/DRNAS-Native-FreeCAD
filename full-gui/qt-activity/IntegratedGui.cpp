@@ -1,5 +1,6 @@
 #include "NativeOcctViewport.h"
 #include <algorithm>
+#include <utility>
 #include <QApplication>
 #include <QFont>
 #include <QSizePolicy>
@@ -387,6 +388,9 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     toolbar->setFloatable(false);
     toolbar->setAllowedAreas(Qt::TopToolBarArea);
     toolbar->setIconSize(QSize(21, 21));
+    // Qt Android defaults QToolBar buttons to icon-only. These are explicit
+    // text commands with no icons, so force their captions to render.
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     toolbar->setStyleSheet(QStringLiteral(
         "QToolBar{background:#182d42;border:0px;spacing:4px;padding:3px;}"
         "QToolButton{color:white;background:#315775;border:1px solid #52718d;"
@@ -447,6 +451,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     for (const char* section : {"File", "Edit", "View", "Tools", "Window", "Help"}) {
         const QString key = QString::fromLatin1(section);
         auto* button = new QToolButton(toolbar);
+        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
         button->setText(key);
         button->setToolTip(QStringLiteral("Open original FreeCAD %1 menu").arg(key));
         toolbar->addWidget(button);
