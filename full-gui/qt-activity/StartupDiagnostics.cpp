@@ -141,8 +141,8 @@ QString DrnasDiagnostics::report()
 {
     QMutexLocker lock(&logMutex);
     return QStringLiteral("DRNAS FreeCAD - diagnostic report\n"
-                          "PREVIOUS LAUNCH (last 64 KiB)\n")
-        + tailOf(previousLog, 64 * 1024)
-        + QStringLiteral("\nCURRENT LAUNCH (last 64 KiB)\n")
-        + tailOf(currentLog, 64 * 1024);
+                          "PREVIOUS LAUNCH (last 256 KiB)\n")
+        + tailOf(previousLog, 256 * 1024)
+        + QStringLiteral("\nCURRENT LAUNCH (last 256 KiB)\n")
+        + tailOf(currentLog, 256 * 1024);
 }

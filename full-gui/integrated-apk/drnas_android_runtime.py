@@ -1,0 +1,121 @@
+"""Android integration diagnostics; never substitute FreeCAD commands or Qt bindings."""
+import os
+import sys
+import tempfile
+import traceback
+import importlib
+import importlib.util
+import faulthandler
+import FreeCAD as App
+
+
+def _drnas_mark(message):
+    path = os.environ.get('DRNAS_WB_LOG_PATH')
+    if path:
+        with open(path, 'a', encoding='utf-8') as stream:
+            stream.write('[ANDROID_RUNTIME] ' + str(message) + '\n')
+            stream.flush()
+
+
+class _DrnasTee:
+    def __init__(self, original, label):
+        self.original, self.label = original, label
+
+    def write(self, text):
+        if text.strip():
+            _drnas_mark(self.label + ' ' + text.rstrip())
+        if self.original is not None:
+            self.original.write(text)
+        return len(text)
+
+    def flush(self):
+        if self.original is not None:
+            self.original.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.original, name)
+
+
+def _drnas_storage_test():
+    # Exercise the actual cache selected by FreeCAD, not just Android's default.
+    for label, path in [('cache', App.getUserCachePath()),
+                        ('temp', App.getTempPath())]:
+        _drnas_mark('STORAGE BEGIN ' + label + '=' + repr(path))
+        try:
+            os.makedirs(path, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix='DRNAS-probe-', dir=path) as directory:
+                first = os.path.join(directory, 'probe.bin')
+                renamed = os.path.join(directory, 'renamed.bin')
+                with open(first, 'xb') as stream:
+                    stream.write(b'DRNAS storage probe\n')
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.rename(first, renamed)
+                with open(renamed, 'rb') as stream:
+                    assert stream.read() == b'DRNAS storage probe\n'
+                os.unlink(renamed)
+            _drnas_mark('STORAGE PASS ' + label + ' mkdir/write/fsync/rename/read/remove')
+        except Exception:
+            _drnas_mark('STORAGE FAIL ' + label + '\n' + traceback.format_exc())
+            raise
+
+
+def _drnas_part_commands():
+    import FreeCADGui as Gui
+    # These are the original imports from the pinned Part/InitGui.py. Its
+    # Initialize catches failures internally, so capture each traceback here.
+    for name in ('BasicShapes.CommandShapes', 'CompoundTools._CommandCompoundFilter',
+                 'CompoundTools._CommandExplodeCompound', 'BOPTools'):
+        _drnas_mark('COMMAND IMPORT BEGIN ' + name)
+        try:
+            module = importlib.import_module(name)
+            if name == 'BOPTools':
+                module.importAll()
+                module.addCommands()
+                import PartGui
+                PartGui.BOPTools = module
+            _drnas_mark('COMMAND IMPORT PASS ' + name + ' file=' + str(module.__file__))
+        except Exception:
+            _drnas_mark('COMMAND IMPORT FAIL ' + name + '\n' + traceback.format_exc())
+    commands = set(Gui.listCommands())
+    expected = ('Part_ToleranceSet', 'Part_CompoundFilter', 'Part_ExplodeCompound',
+                'Part_XOR', 'Part_Slice', 'Part_SliceApart', 'Part_BooleanFragments',
+                'Part_JoinCutout', 'Part_JoinEmbed', 'Part_JoinConnect', 'Part_Tube',
+                'Std_MassProperties')
+    _drnas_mark('COMMANDS missing=' + repr([name for name in expected if name not in commands]))
+    _drnas_mark('ACTIVE WORKBENCH ' + Gui.activeWorkbench().name())
+
+
+if not getattr(App, '__drnas_runtime_installed__', False):
+    # Keep FreeCAD's original console delivery, while journaling swallowed
+    # InitGui import errors that otherwise only reach the notification popup.
+    def _drnas_console_tee(original, label):
+        def emit(message):
+            _drnas_mark(label + ' ' + str(message))
+            return original(message)
+        return emit
+    for _drnas_console_name in ('PrintError', 'PrintWarning'):
+        setattr(App.Console, _drnas_console_name,
+                _drnas_console_tee(getattr(App.Console, _drnas_console_name), _drnas_console_name))
+    sys.stdout = _DrnasTee(sys.stdout, 'stdout')
+    sys.stderr = _DrnasTee(sys.stderr, 'stderr')
+    _drnas_root = os.environ['DRNAS_FREECAD_HOME'].rstrip('/')
+    # Legacy InitGui imports BasicShapes/BOPTools as top-level packages;
+    # adding only Mod cannot resolve packages inside Mod/Part.
+    for _drnas_relative in ('Mod', 'Mod/Part', 'Mod/Sketcher', 'Mod/PartDesign'):
+        _drnas_directory = os.path.join(_drnas_root, _drnas_relative)
+        if os.path.isdir(_drnas_directory) and _drnas_directory not in sys.path:
+            sys.path.append(_drnas_directory)
+    importlib.invalidate_caches()
+    _drnas_mark('sys.path=' + repr(sys.path))
+    _drnas_mark('APP INIT ERROR=' + str(getattr(App, '__DRNAS_AndroidInitError__', 'none recorded')))
+    for _drnas_binding in ('PySide', 'PySide6', 'shiboken6', 'pivy'):
+        try:
+            _drnas_spec = importlib.util.find_spec(_drnas_binding)
+            _drnas_mark('BINDING ' + _drnas_binding + '=' + repr(_drnas_spec))
+        except Exception:
+            _drnas_mark('BINDING ERROR ' + _drnas_binding + '\n' + traceback.format_exc())
+    _drnas_fault_file = open(os.environ['DRNAS_WB_LOG_PATH'], 'a')
+    faulthandler.enable(file=_drnas_fault_file, all_threads=True)
+    App.__drnas_runtime_installed__ = True
+    _drnas_storage_test()

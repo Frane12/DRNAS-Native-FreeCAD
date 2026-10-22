@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import sys
 import os
+import hashlib
 
 REQUIRED = {
     "Mod/Part/InitGui.py", "Mod/Sketcher/InitGui.py",
@@ -45,6 +46,19 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(library, target)
         names.append("lib/" + name)
+    runtime = bundle / "freecad" / "lib" / "drnas_android_runtime.py"
+    shutil.copyfile(Path(__file__).with_name("drnas_android_runtime.py"), runtime)
+    names.append("lib/drnas_android_runtime.py")
+    # Include payload hashes in a bundled asset so a same-name binary/script
+    # update changes the manifest identity and invalidates on-device extraction.
+    hashes = "\n".join(
+        hashlib.sha256((bundle / "freecad" / name).read_bytes()).hexdigest() + "  " + name
+        for name in sorted(names)
+    ) + "\n"
+    digest = hashlib.sha256(hashes.encode()).hexdigest()
+    identity = "bundle-" + digest + ".sha256"
+    (bundle / "freecad" / identity).write_text(hashes, encoding="utf-8")
+    names.append(identity)
     if len(names) < 25 or not REQUIRED.issubset(names):
         raise SystemExit(f"FreeCAD GUI assets incomplete: {REQUIRED - set(names)}")
     (bundle / "freecad-manifest.txt").write_text(

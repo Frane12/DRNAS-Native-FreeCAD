@@ -153,6 +153,27 @@ bool configureBundledFreeCADHome(QString& error)
             return false;
         }
     }
+    // Use existing Android app-private directories before FreeCAD initializes
+    // std::filesystem paths. New creates a transient directory in this cache.
+    const QString userRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/freecad-user");
+    const QString tempRoot = userRoot + QStringLiteral("/temp");
+    for (const QString& directory : {userRoot, tempRoot}) {
+        if (!QDir().mkpath(directory)) {
+            error = QStringLiteral("Cannot create FreeCAD private directory: ") + directory;
+            return false;
+        }
+    }
+    for (const auto& entry : {std::pair<const char*, QString>{"FREECAD_USER_HOME", userRoot},
+                             {"FREECAD_USER_DATA", userRoot},
+                             {"FREECAD_USER_TEMP", tempRoot}, {"TMPDIR", tempRoot}}) {
+        if (!qputenv(entry.first, entry.second.toUtf8())) {
+            error = QStringLiteral("Cannot configure FreeCAD private paths");
+            return false;
+        }
+        DrnasDiagnostics::note(QStringLiteral("STORAGE CONFIG %1=%2")
+            .arg(QString::fromLatin1(entry.first), entry.second));
+    }
     const QByteArray home = (root + QLatin1Char('/')).toUtf8();
     if (setenv("DRNAS_FREECAD_HOME", home.constData(), 1) != 0) {
         error = QStringLiteral("Failed to set original FreeCAD home path");
@@ -527,13 +548,28 @@ except BaseException:
     _drnas_new_mark('NERR PYTHON EXCEPTION ' + traceback.format_exc())
     raise
 finally:
-    # faulthandler owns the fd while enabled; disable before closing.
+    # Restore the process-wide fault journal before closing the scoped fd.
     if _drnas_fault_fd is not None:
-        faulthandler.disable()
+        faulthandler.enable(file=_drnas_fault_file, all_threads=True)
         os.close(_drnas_fault_fd)
 )DRNAS"),
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
+    });
+    auto* storageTest = toolbar->addAction(QStringLiteral("Storage"));
+    QObject::connect(storageTest, &QAction::triggered, shell, [invoke] {
+        invoke(QStringLiteral("_drnas_storage_test()"), QStringLiteral("Storage probe"));
+    });
+    auto* coreTest = toolbar->addAction(QStringLiteral("New no view"));
+    QObject::connect(coreTest, &QAction::triggered, shell, [invoke] {
+        invoke(QStringLiteral(
+            "import FreeCAD as App\n"
+            "_drnas_storage_test()\n"
+            "_drnas_mark('CORE NEW BEGIN hidden=True')\n"
+            "_drnas_core_doc = App.newDocument('DRNAS_CoreProbe', hidden=True)\n"
+            "_drnas_mark('CORE NEW RETURN transient=' + repr(_drnas_core_doc.TransientDir))\n"
+            "App.closeDocument(_drnas_core_doc.Name)\n"
+            "_drnas_mark('CORE NEW CLOSED')\n"), QStringLiteral("Core document probe"));
     });
     // DRNAS crash isolation: opt-in tests in the SAME original GUI, without
     // automatic workbench activation or an additional Qt/OpenGL window.
@@ -680,6 +716,8 @@ finally:
                            "Gui.activateWorkbench('%1')\n"
                            "print('DRNAS ACTIVATE RETURNED: %1', flush=True)\n"
                        ).arg(name))) return;
+            if (label == QStringLiteral("Part"))
+                phase(QStringLiteral("05-command-audit"), QStringLiteral("_drnas_part_commands()"));
             DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 complete").arg(name));
             state.remove(key);
             state.sync();
@@ -837,6 +875,20 @@ void recordOriginalGuiStage(const char* stageName)
 {
     restoreOriginalFreeCADIconPaths();
     const QString stage = QString::fromUtf8(stageName ? stageName : "unknown");
+    if (stage == QStringLiteral("Gui::Application::initApplication")) {
+        // App/Python exists, but GUI InitGui scripts have not run yet.
+        QString runtimeError;
+        if (!runOriginalFreeCADPython(QStringLiteral(
+                "import os, sys\n"
+                "sys.path.insert(0, os.path.join(os.environ['DRNAS_FREECAD_HOME'], 'lib'))\n"
+                "import drnas_android_runtime as _drnas_runtime\n"
+                "_drnas_mark = _drnas_runtime._drnas_mark\n"
+                "_drnas_storage_test = _drnas_runtime._drnas_storage_test\n"
+                "_drnas_part_commands = _drnas_runtime._drnas_part_commands\n"
+                "_drnas_fault_file = _drnas_runtime._drnas_fault_file\n"), runtimeError)) {
+            DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
+        }
+    }
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
         stage.contains(QStringLiteral("OpenGL"), Qt::CaseInsensitive)) {
@@ -923,6 +975,12 @@ protected:
             global = touch->points().first().globalPosition().toPoint();
         } else {
             global = static_cast<QMouseEvent*>(event)->globalPosition().toPoint();
+        }
+        if (auto* button = qobject_cast<QToolButton*>(widget)) {
+            if (auto* action = button->defaultAction()) {
+                DrnasDiagnostics::note(QStringLiteral("ACTION INPUT event=%1 name=%2 text=%3 tip=%4")
+                    .arg(int(type)).arg(action->objectName(), action->text(), action->toolTip()));
+            }
         }
         QWidget* hit = QApplication::widgetAt(global);
         QWidget* active = QApplication::activeWindow();
