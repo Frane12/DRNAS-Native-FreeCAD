@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QSettings>
 #include "StartupDiagnostics.h"
+#include "DrnasDebugCenter.h"
 #include "LiveGuiLab.h"
 
 // Safe Android native bootstrap. Do NOT dlopen FreeCADGui/Coin3D here.
@@ -24,6 +25,9 @@ int main(int argc, char** argv)
     auto* window = static_cast<QMainWindow*>(
         drnas_create_qt_gui_shell_after_qt_android_bootstrap());
     window->show();
+    // Always available in Safe Mode, before any risky native FreeCAD dlopen.
+    // A child widget overlay only: never creates another Android surface.
+    new DrnasDebugCenter(window);
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
     new DrnasLiveGuiLab(window);
 #endif
