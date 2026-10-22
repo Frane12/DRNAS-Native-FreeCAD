@@ -35,7 +35,7 @@ def main():
     # Explicitly labeled prebuilt LAB: previous archive predates _PartDesign.so staging.
     extensions = ["Part", "PartGui", "Sketcher", "SketcherGui"]
     if os.environ.get("DRNAS_PARTIAL_GUI_LAB") != "1":
-        extensions.extend(["_PartDesign", "PartDesignGui"])
+        extensions.extend(["Materials", "MatGui", "_PartDesign", "PartDesignGui"])
     for module in extensions:
         name = module + ".so"
         library = native / name

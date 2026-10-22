@@ -162,7 +162,7 @@ apk="$OUT/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
 unzip -Z1 "$apk" > "$OUT/apk-files.txt"
 # Standard FULL APK always requires _PartDesign and PartDesignGui.
 # Prebuilt LAB is strictly separate and marked experimental.
-workbench_ext=(_PartDesign.so PartDesignGui.so)
+workbench_ext=(Materials.so MatGui.so _PartDesign.so PartDesignGui.so)
 if [[ "${DRNAS_PARTIAL_GUI_LAB:-0}" == 1 ]]; then
     workbench_ext=()
     echo 'LAB ONLY: Part+Sketcher experimental APK; PartDesign unavailable.'

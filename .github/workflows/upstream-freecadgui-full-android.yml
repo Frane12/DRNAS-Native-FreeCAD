@@ -251,23 +251,31 @@ jobs:
           done < <(find "$libdir" -maxdepth 1 -type f -name '*.so' -print0 | sort -z)
           # Original FreeCAD modules live in build/Mod/<workbench>/ rather than build/lib/.
           builddir="$GITHUB_WORKSPACE/.build/freecad-upstream-real-gui-arm64"
-          for module in Part PartGui Sketcher SketcherGui _PartDesign PartDesignGui; do
-            workbench="${module%Gui}"
-            [[ "$module" != _PartDesign ]] || workbench=PartDesign
-            src="$builddir/Mod/$workbench/$module.so"
-            if [[ -s "$src" ]]; then
-              readelf -h "$src" | grep -q 'Machine:.*AArch64'
-              readelf -h "$src" | grep -q 'Type:.*DYN'
-              if readelf -d "$src" | grep -Eq 'libc\.so\.6|ld-linux|libstdc\+\+\.so\.6'; then
-                echo "::error::Rejecting host Linux workbench module: $src"
-                exit 1
-              fi
-              cp -L "$src" "$stage/$module.so"
-              ( cd "$stage" && sha256sum "$module.so" >> SHA256SUMS )
+          # Stage ALL genuine upstream workbench ELFs, not just the
+          # six explicit Part/Sketcher/PartDesign Python modules. Part and
+          # Sketcher require original Materials.so and MatGui.so at runtime.
+          # The previous 2731-target build succeeded but omitted both from
+          # the artifact; save the transitive ELF dependency closure now.
+          while IFS= read -r -d '' src; do
+            base="$(basename "$src")"
+            readelf -h "$src" | grep -q 'Machine:.*AArch64'
+            readelf -h "$src" | grep -q 'Type:.*DYN'
+            if readelf -d "$src" | grep -Eq 'libc\\.so\\.6|ld-linux|libstdc\\+\\+\\.so\\.6'; then
+              echo "::error::Rejecting host Linux workbench module: $src"
+              exit 1
             fi
-          done
+            if [[ -e "$stage/$base" ]]; then
+              cmp -s "$src" "$stage/$base" || {
+                echo "::error::Workbench library name collision: $base"
+                exit 1
+              }
+            else
+              cp -L "$src" "$stage/$base"
+              ( cd "$stage" && sha256sum "$base" >> SHA256SUMS )
+            fi
+          done < <(find "$builddir/Mod" -type f -name '*.so' -print0 | sort -z)
           if [[ "${{ steps.build.outcome }}" == success ]]; then
-            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so; do
+            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Materials.so MatGui.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so; do
               test -s "$stage/$required" || {
                 echo "::error::Missing real upstream $required after successful build"
                 exit 1
