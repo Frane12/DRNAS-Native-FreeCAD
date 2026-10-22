@@ -21,6 +21,7 @@ def patch(root):
 #include <cxxabi.h>
 #include <cstdlib>
 #include <cstdio>
+#include <unistd.h>
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
@@ -33,6 +34,17 @@ void drnasWorkbenchPhase(const char* phase, const char* event)
 {
     std::fprintf(stderr, "DRNAS_WB_PHASE %s %s\n", phase, event);
     std::fflush(stderr);
+    // Append directly to the same current-launch.log used by Copy Log.
+    // Flush and fsync so the last phase survives SIGABRT/SIGSEGV.
+    const char* path = std::getenv("DRNAS_WB_LOG_PATH");
+    if (path && *path) {
+        if (FILE* file = std::fopen(path, "a")) {
+            std::fprintf(file, "[NATIVE] DRNAS_WB_PHASE %s %s\\n", phase, event);
+            std::fflush(file);
+            ::fsync(::fileno(file));
+            std::fclose(file);
+        }
+    }
 #ifdef __ANDROID__
     __android_log_print(ANDROID_LOG_ERROR, "DRNAS_FreeCAD", "DRNAS_WB_PHASE %s %s", phase, event);
 #endif
