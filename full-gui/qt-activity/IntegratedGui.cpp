@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <utility>
 #include <QApplication>
+#include "StartupDiagnostics.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -388,12 +389,14 @@ bool runOriginalFreeCADPython(const QString& script, QString& error)
         error = QStringLiteral("Embedded FreeCAD Python runtime unavailable");
         return false;
     }
+    DrnasDiagnostics::note(QStringLiteral("FreeCAD Python command: ") + script.left(500));
     const QByteArray command = script.toUtf8();
     const int state = acquire();
     const int result = execute(command.constData(), nullptr);
     release(state);
     if (result != 0) {
         error = QStringLiteral("Original FreeCAD Python command failed (see Android log)");
+        DrnasDiagnostics::note(error);
         return false;
     }
     return true;
@@ -456,6 +459,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     auto* newDoc = toolbar->addAction(QStringLiteral("New"));
     newDoc->setToolTip(QStringLiteral("FreeCAD.newDocument()"));
     QObject::connect(newDoc, &QAction::triggered, shell, [invoke] {
+        DrnasDiagnostics::note(QStringLiteral("TOUCH New document"));
         invoke(QStringLiteral("import FreeCAD\nFreeCAD.newDocument()"),
                QStringLiteral("New document"));
     });
@@ -469,6 +473,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
         QAction* action = toolbar->addAction(label);
         QObject::connect(action, &QAction::triggered, shell,
                          [invoke, label, name] {
+            DrnasDiagnostics::note(QStringLiteral("TOUCH workbench ") + label);
             invoke(QStringLiteral("import FreeCADGui as Gui\n"
                                   "Gui.activateWorkbench('%1')").arg(name),
                    label);
@@ -488,6 +493,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     auto* touchMenu = new QMenu(menuButton);
     QObject::connect(touchMenu, &QMenu::aboutToShow, shell,
                      [upstream, touchMenu] {
+        DrnasDiagnostics::note(QStringLiteral("TOUCH original FreeCAD Menu"));
         touchMenu->clear();
         if (upstream && upstream->menuBar()) {
             for (QAction* action : upstream->menuBar()->actions()) {
@@ -504,6 +510,13 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     });
     menuButton->setMenu(touchMenu);
     toolbar->addWidget(menuButton);
+    auto* copyLog = toolbar->addAction(QStringLiteral("Log"));
+    copyLog->setToolTip(QStringLiteral("Copy current and previous FreeCAD startup logs"));
+    QObject::connect(copyLog, &QAction::triggered, shell, [report] {
+        DrnasDiagnostics::note(QStringLiteral("TOUCH Copy Log (toolbar)"));
+        QGuiApplication::clipboard()->setText(DrnasDiagnostics::report());
+        report(QStringLiteral("Log copied to clipboard"));
+    });
     toolbar->addSeparator();
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
@@ -639,6 +652,7 @@ void recordOriginalGuiStage(const char* stageName)
                       " created an independent Android Qt platform window";
     }
     const QString message = QStringLiteral("ORIGINAL FreeCAD GUI: %1").arg(stage);
+    DrnasDiagnostics::note(message);
     QSettings settings;
     settings.setValue(QStringLiteral("nativeProbe/current"), message);
     settings.setValue(QStringLiteral("nativeProbe/pending"), true);
@@ -728,7 +742,7 @@ public:
         nativeStatus->setText(lastStatus);
         auto* diagnosisRow=new QHBoxLayout;
         auto* runProbe=new QPushButton(QStringLiteral("TEST FREECAD LIBRARIES"));
-        auto* copyDiagnostic=new QPushButton(QStringLiteral("COPY ERROR"));
+        auto* copyDiagnostic=new QPushButton(QStringLiteral("COPY LOG"));
         runProbe->setMinimumHeight(36);
         copyDiagnostic->setMinimumHeight(36);
         diagnosisRow->addWidget(runProbe, 3);
@@ -791,6 +805,8 @@ public:
             restoreOriginalFreeCADIconPaths();
             QSettings settings;
             settings.setValue(QStringLiteral("nativeProbe/pending"), false);
+            DrnasDiagnostics::note(QStringLiteral("Original FreeCAD startup result code: %1")
+                                       .arg(result));
             if (result != 0) {
                 const char* error = lastError();
                 const QString reason=QString::fromUtf8(error ? error : "unknown");
@@ -837,6 +853,12 @@ public:
                                 << "visible=" << (commandBar && commandBar->isVisible())
                                 << "native top-level="
                                 << (freecadWindow && freecadWindow->isWindow());
+                        DrnasDiagnostics::note(QStringLiteral(
+                            "Embedded FreeCAD GUI: early=%1 toolbar=%2 visible=%3 topLevel=%4")
+                            .arg(embeddedBeforeShow)
+                            .arg(commandBar != nullptr)
+                            .arg(commandBar && commandBar->isVisible())
+                            .arg(freecadWindow && freecadWindow->isWindow()));
                         // Do not resurrect the duplicate desktop menu row.
                         compactOriginalAndroidFreeCADChrome(freecadWindow);
                         // FreeCAD's deferred restoreState() can run later.
@@ -856,7 +878,10 @@ public:
             settings.sync();
         });
         connect(copyDiagnostic, &QPushButton::clicked, this, [nativeStatus] {
-            QGuiApplication::clipboard()->setText(nativeStatus->text());
+            DrnasDiagnostics::note(QStringLiteral("TOUCH Copy Log (safe mode)"));
+            QGuiApplication::clipboard()->setText(DrnasDiagnostics::report());
+            nativeStatus->setText(QStringLiteral(
+                "Copied previous and current startup logs. Paste into ChatGPT."));
         });
         connect(runProbe, &QPushButton::clicked, this, [nativeStatus, runProbe, launchOriginal] {
             // Save a durable breadcrumb for the next launch *before* each
@@ -871,6 +896,7 @@ public:
             for (const char* library : libraries) {
                 const QString libName=QString::fromLatin1(library);
                 const QString progress=QStringLiteral("Loading %1 ...").arg(libName);
+                DrnasDiagnostics::note(progress);
                 nativeStatus->setText(progress);
                 diag.setValue(QStringLiteral("nativeProbe/current"), libName);
                 diag.setValue(QStringLiteral("nativeProbe/pending"), true);
@@ -883,6 +909,7 @@ public:
                     const QString detail=QStringLiteral("dlopen FAILED for %1: %2")
                         .arg(libName)
                         .arg(QString::fromLocal8Bit(error ? error : "unknown error"));
+                    DrnasDiagnostics::note(detail);
                     diag.setValue(QStringLiteral("nativeProbe/result"), detail);
                     diag.setValue(QStringLiteral("nativeProbe/pending"), false);
                     diag.sync();
@@ -891,6 +918,7 @@ public:
                     return;
                 }
             }
+            DrnasDiagnostics::note(QStringLiteral("All FreeCAD libraries loaded successfully"));
             const QString success=QStringLiteral(
                 "PASS: genuine FreeCADBase, FreeCADApp, FreeCADGui, Coin3D, "
                 "GL4ES/GLU loaded. Original FreeCAD desktop GUI NOT yet running.");
