@@ -234,6 +234,14 @@ jobs:
           python3 full-gui/upstream/audit-python-bindings.py out/upstream-freecad-gui/resources \
             | tee out/upstream-freecad-gui/python-bindings-audit.txt
           echo "Python binding audit is informational until actual Android ARM64 builds are integrated."
+          python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui/resources \
+            > out/upstream-freecad-gui/native-python-bindings-audit.txt 2>&1 || {
+              cat out/upstream-freecad-gui/native-python-bindings-audit.txt
+              exit 1
+            }
+          cat out/upstream-freecad-gui/native-python-bindings-audit.txt
+          echo "Native ELF validation is informational; --strict will be enabled only after real binding build and APK staging."
+
 
       - name: Preserve any validated native FreeCADGui/Base/App .so on FAILURE
         if: ${{ always() && steps.build.outcome != 'skipped' }}
