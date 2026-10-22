@@ -1,10 +1,9 @@
 name: DRNAS FreeCAD QtActivity GUI LAB APK - Android arm64
+# This is a standalone OCCT GUI smoke LAB, not the real full FreeCAD APK.
+# Keep it manually callable, but don't rebuild a second app on every change
+# to IntegratedGui.cpp. The real integrated GUI packaging workflow already
+# uses the verified upstream native FreeCAD artifact.
 on:
-  push:
-    branches: [feature/full-freecad-android]
-    paths:
-      - 'full-gui/qt-activity/**'
-      - '.github/workflows/full-freecad-qt-activity-apk.yml'
   workflow_dispatch:
 
 permissions:
