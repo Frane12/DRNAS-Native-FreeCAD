@@ -20,11 +20,23 @@ def patch(root):
 #include <CXX/Objects.hxx>
 #include <cxxabi.h>
 #include <cstdlib>
+#include <cstdio>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include <exception>
 #include <string>
 #include <typeinfo>
 
 namespace {
+void drnasWorkbenchPhase(const char* phase, const char* event)
+{
+    std::fprintf(stderr, "DRNAS_WB_PHASE %s %s\n", phase, event);
+    std::fflush(stderr);
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_ERROR, "DRNAS_FreeCAD", "DRNAS_WB_PHASE %s %s", phase, event);
+#endif
+}
 std::string drnasCurrentException()
 {
     try { throw; }
@@ -105,7 +117,9 @@ std::string drnasCurrentException()
         ("setupCustomShortcuts();", "setupCustomShortcuts"),
     ]
     for statement, phase in phases:
-        body = replace_once(body, statement, f'phase = "{phase}";\n    {statement}')
+        body = replace_once(body, statement,
+            f'phase = "{phase}";\\n    drnasWorkbenchPhase(phase, "BEGIN");\\n'
+            f'    {statement}\\n    drnasWorkbenchPhase(phase, "END");')
     new = '''bool Workbench::activate()
 {
     const char* phase = "begin";
