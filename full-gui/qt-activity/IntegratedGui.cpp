@@ -525,11 +525,31 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
                 return;
             }
             DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: import succeeded").arg(name));
-            state.setValue(key, name + QStringLiteral(":activate"));
-            state.sync();
-            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate begin").arg(name));
-            invoke(QStringLiteral("Gui.activateWorkbench('%1')").arg(name), label);
-            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activate returned").arg(name));
+            // Separate native Python calls: each phase persists before entry,
+            // so a fatal signal identifies the exact unfinished operation.
+            auto phase = [&](const QString& id, const QString& code) -> bool {
+                state.setValue(key, name + QStringLiteral(":") + id);
+                state.sync();
+                DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 %2 ENTER").arg(name, id));
+                QString phaseError;
+                const bool ok = runOriginalFreeCADPython(code, phaseError);
+                DrnasDiagnostics::note(QStringLiteral("WB ISOLATE %1 %2 EXIT ok=%3 error=%4")
+                    .arg(name, id).arg(ok).arg(phaseError));
+                if (!ok) {
+                    state.setValue(key, name + QStringLiteral(":") + id + QStringLiteral(":FAILED"));
+                    state.sync();
+                }
+                return ok;
+            };
+            if (!phase(QStringLiteral("02-listWorkbenches"),
+                       QStringLiteral("import FreeCADGui as Gui\n_drnas_wbs = Gui.listWorkbenches()"))) return;
+            if (!phase(QStringLiteral("03-checkPartDesign"),
+                       QStringLiteral("import FreeCADGui as Gui\n"
+                                      "assert '%1' in _drnas_wbs, 'Workbench not registered: %1'").arg(name))) return;
+            if (!phase(QStringLiteral("04-activate"),
+                       QStringLiteral("import FreeCADGui as Gui\nGui.activateWorkbench('%1')").arg(name))) return;
+            DrnasDiagnostics::note(QStringLiteral("WB checkpoint %1: activation returned").arg(name));
+            compactOriginalAndroidFreeCADChrome(upstream.data());
             state.remove(key);
             state.sync();
         });
