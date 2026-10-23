@@ -181,6 +181,9 @@ private:
         ('glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);', 'RS03 GL clear buffers'),
         ('glEnable(GL_DEPTH_TEST);', 'RS04 GL depth test'),
         ('this->renderGLActionScene(col, this->getSoRenderManager()->getGLRenderAction());', 'RS05 background and main Coin actions'),
+        ('this->drawAxisCross();', 'RS05A axis cross'),
+        ('printDimension();', 'RS05B dimension overlay'),
+        ('it->paintGL();', 'RS05C graphics item'),
         ('renderRubberbandOverlay();', 'RS06 rubberband overlay'),
     ], max_calls=2)
     annotate(root, "src/Gui/View3DInventorViewer.cpp", "void View3DInventorViewer::renderGLActionScene(", [
@@ -279,6 +282,40 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
     # This intentionally leaves the 3D viewport blank while isolating P03.
     quarter_path = root / "src/Gui/Quarter/QuarterWidget.cpp"
     quarter_source = quarter_path.read_text()
+    # Both variants use the same native library and genuine render path.
+    # A leaves the desktop resize/DPR calculations unchanged. B derives Coin's
+    # viewport from the actual QOpenGLWidget just before actualRedraw(), after
+    # makeCurrent(), so outer QGraphicsView geometry cannot be mistaken for it.
+    quarter_source = once(quarter_source,
+        '    PRIVATE(this)->timesincelastframe.restart();', r'''#ifdef __ANDROID__
+    const char* abMode = std::getenv("DRNAS_VIEWPORT_AB");
+    const bool syncViewport = abMode && abMode[0] == 'B';
+    const SbVec2s beforeSize = getSoRenderManager()->getViewportRegion().getViewportSizePixels();
+    const qreal actualDpr = w->devicePixelRatioF();
+    const int actualWidth = qRound(w->width() * actualDpr);
+    const int actualHeight = qRound(w->height() * actualDpr);
+    if (syncViewport && actualWidth > 0 && actualHeight > 0) {
+        const SbViewportRegion actualViewport(actualWidth, actualHeight);
+        if (int(beforeSize[0]) != actualWidth || int(beforeSize[1]) != actualHeight)
+            PRIVATE(this)->sorendermanager->setViewportRegion(actualViewport);
+        const SbVec2s eventSize = PRIVATE(this)->soeventmanager->getViewportRegion().getViewportSizePixels();
+        if (int(eventSize[0]) != actualWidth || int(eventSize[1]) != actualHeight)
+            PRIVATE(this)->soeventmanager->setViewportRegion(actualViewport);
+    }
+    static const void* lastWidget = nullptr;
+    static int lastWidth = -1, lastHeight = -1, lastMode = -1;
+    if (lastWidget != w || lastWidth != actualWidth || lastHeight != actualHeight || lastMode != int(syncViewport)) {
+        char line[512];
+        std::snprintf(line, sizeof(line),
+            "VIEWPORT_AB mode=%c widget=%p outer=%dx%d glLogical=%dx%d dpr=%.4f expected=%dx%d coinBefore=%dx%d",
+            syncViewport ? 'B' : 'A', static_cast<void*>(w), this->width(), this->height(),
+            w->width(), w->height(), double(actualDpr), actualWidth, actualHeight,
+            int(beforeSize[0]), int(beforeSize[1]));
+        ::drnasDocumentPhase(line, "PRE_REDRAW");
+        lastWidget = w; lastWidth = actualWidth; lastHeight = actualHeight; lastMode = int(syncViewport);
+    }
+#endif
+    PRIVATE(this)->timesincelastframe.restart();''')
     # Opt-in experiment: retain the known-good blank-viewport fallback by default.
     # Set DRNAS_ENABLE_COIN_REDRAW=1 in the Android process before GUI startup
     # to test genuine Coin rendering; durable P03 markers bracket the attempt.
@@ -294,8 +331,62 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
     }''')
     quarter_path.write_text(quarter_source)
 
+    # Read native GLES and GL4ES at the SAME render boundary. The older GPU02
+    # sample precedes renderScene/glViewport and can contain a previous viewport.
+    viewer_source = viewer_path.read_text()
+    ab_probe = r'''
+#ifdef __ANDROID__
+extern "C" __attribute__((visibility("default")))
+int drnas_viewport_ab_version() { return 1; }
+
+static void drnasViewportAbSnapshot(const char* phase, QOpenGLWidget* widget,
+                                   int coinWidth, int coinHeight)
+{
+    if (!widget) return;
+    QOpenGLContext* context = QOpenGLContext::currentContext();
+    if (!context || context != widget->context() || !context->isValid()) {
+        ::drnasDocumentPhase("VIEWPORT_AB context unavailable", phase);
+        return;
+    }
+    using Query = void (*)(unsigned int, int*);
+    static void* nativeGles = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
+    static Query nativeQuery = nativeGles ? reinterpret_cast<Query>(dlsym(nativeGles, "glGetIntegerv")) : nullptr;
+    int nativeVp[4] = {-1,-1,-1,-1}, nativeFbo = -1;
+    if (nativeQuery) {
+        nativeQuery(GL_VIEWPORT, nativeVp);
+        nativeQuery(GL_FRAMEBUFFER_BINDING, &nativeFbo);
+    }
+    int wrappedVp[4] = {}, wrappedFbo = -1;
+    glGetIntegerv(GL_VIEWPORT, wrappedVp);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &wrappedFbo);
+    const char* mode = std::getenv("DRNAS_VIEWPORT_AB");
+    char line[768];
+    std::snprintf(line, sizeof(line),
+        "VIEWPORT_AB mode=%c widget=%p coin=%dx%d glLogical=%dx%d dpr=%.4f QtFBO=%u nativeFBO=%d wrappedFBO=%d nativeVP=%d,%d,%d,%d wrappedVP=%d,%d,%d,%d",
+        mode && mode[0]=='B' ? 'B' : 'A', static_cast<void*>(widget), coinWidth, coinHeight,
+        widget->width(), widget->height(), double(widget->devicePixelRatioF()), widget->defaultFramebufferObject(),
+        nativeFbo, wrappedFbo, nativeVp[0], nativeVp[1], nativeVp[2], nativeVp[3],
+        wrappedVp[0], wrappedVp[1], wrappedVp[2], wrappedVp[3]);
+    ::drnasDocumentPhase(line, phase);
+}
+#endif
+'''
+    # Insert after gpu_probe, whose declarations/includes this helper uses.
+    viewer_source = once(viewer_source, gpu_probe, gpu_probe + ab_probe)
+    viewport_call = '    glViewport(origin[0], origin[1], size[0], size[1]);'
+    viewer_source = once(viewer_source, viewport_call, r'''#ifdef __ANDROID__
+    static unsigned int abFrames = 0;
+    const bool traceViewport = abFrames++ < 32;
+    auto* abWidget = qobject_cast<QOpenGLWidget*>(this->viewport());
+    if (traceViewport) drnasViewportAbSnapshot("BEFORE_GL_VIEWPORT", abWidget, size[0], size[1]);
+#endif
+''' + viewport_call + r'''
+#ifdef __ANDROID__
+    if (traceViewport) drnasViewportAbSnapshot("AFTER_GL_VIEWPORT", abWidget, size[0], size[1]);
+#endif''')
+    viewer_path.write_text(viewer_source)
+
 
 if __name__ == "__main__":
     patch(Path(sys.argv[1]))
-    print("Render trace v3: virtual viewer dispatch, GL providers/context/FBO, background and main Coin traversals")
-
+    print("Render trace v4: A/B viewport sizing, simultaneous native/wrapped GL snapshots, post-scene checkpoints")

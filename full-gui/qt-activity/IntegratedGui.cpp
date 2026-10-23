@@ -727,6 +727,41 @@ finally:
                 QStringLiteral("Coin redraw probe"));
         }
     });
+    // Choose before New in a fresh launch. Never compare A/B by switching
+    // already-mutated Coin/GL state within an existing document.
+    auto* abStatus = new QLabel(QStringLiteral("A/B: A"), toolbar);
+    const bool abAvailable = dlsym(RTLD_DEFAULT, "drnas_viewport_ab_version") != nullptr;
+    for (const char mode : {'A', 'B'}) {
+        auto* action = toolbar->addAction(QStringLiteral("TEST %1").arg(QChar(mode)));
+        action->setObjectName(QStringLiteral("drnasViewportTest%1").arg(QChar(mode)));
+        action->setEnabled(abAvailable);
+        action->setToolTip(mode == 'A'
+            ? QStringLiteral("A: original Coin viewport. Select before New after restarting app.")
+            : QStringLiteral("B: sync Coin to actual GL viewport. Select before New after restarting app."));
+        QObject::connect(action, &QAction::triggered, shell,
+            [upstream, report, coinRender, abStatus, mode] {
+                if (!upstream) return;
+                for (auto* area : upstream->findChildren<QMdiArea*>()) {
+                    if (!area->subWindowList().isEmpty()) {
+                        report(QStringLiteral("A/B: restart app and choose TEST A or TEST B before New"));
+                        return;
+                    }
+                }
+                qputenv("DRNAS_ENABLE_COIN_REDRAW", QByteArray("0"));
+                coinRender->setChecked(false);
+                qputenv("DRNAS_VIEWPORT_AB", QByteArray(1, mode));
+                abStatus->setText(QStringLiteral("A/B: %1").arg(QChar(mode)));
+                DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB SELECT mode=%1; fresh document required; render remains off")
+                    .arg(QChar(mode)));
+                report(QStringLiteral("TEST %1 selected. New, then TEST Coin render; keep the same startup scale and rotation sequence.")
+                    .arg(QChar(mode)));
+            });
+    }
+    toolbar->addWidget(abStatus);
+    if (!abAvailable) {
+        abStatus->setText(QStringLiteral("A/B: awaiting native build"));
+        DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB unavailable in bundled native library; test buttons disabled"));
+    }
     auto* storageTest = toolbar->addAction(QStringLiteral("Storage"));
     QObject::connect(storageTest, &QAction::triggered, shell, [invoke] {
         invoke(QStringLiteral("_drnas_storage_test()"), QStringLiteral("Storage probe"));
