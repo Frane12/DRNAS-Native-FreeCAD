@@ -1,0 +1,48 @@
+name: DRNAS ARM64 Python Bindings Source Build
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: drnas-arm64-python-bindings
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      QT_VERSION: '6.8.3'
+      NDK_VERSION: '27.2.12479018'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Android cross-build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build clang binutils swig git pkg-config
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - name: Restore verified Qt SDK
+        id: qt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt-gui-6.8.3-arm64-v1-${{ hashFiles('full-gui/bootstrap-qt-gui-android.sh', 'full-port/bootstrap-qt.sh', 'full-port/verify-qt-android.sh') }}
+      - name: Restore Android Python SDK
+        id: python
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Restore Coin3D from real FreeCAD native artifact
+        run: |
+          set -euo pipefail
+          echo '::notice::Coin3D is supplied by the upstream FreeCADGui native artifact; this workflow requires a verified source/headers SDK before Pivy can build.'
+      - name: Prepare pinned source trees and audit toolchain
+        run: bash full-gui/python-bindings/prepare-android-bindings.sh
+      - name: Publish cross-build diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DRNAS-ARM64-Python-Bindings-Diagnostics-${{ github.run_id }}
+          path: out/python-bindings-build/
+          if-no-files-found: warn
