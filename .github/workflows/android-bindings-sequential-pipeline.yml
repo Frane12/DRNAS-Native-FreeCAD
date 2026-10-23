@@ -42,11 +42,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check 'shiboken6-generator==6.8.3'
-          tools_config="$(find "$(python -c 'import site; print(site.getsitepackages()[0])')" -type f -name Shiboken6ToolsConfig.cmake -print -quit)"
-          test -n "$tools_config" || { echo "::error::Shiboken6ToolsConfig.cmake absent in pinned host generator"; exit 1; }
+          # The PyPI generator wheel does not ship Shiboken6ToolsConfig.cmake.
+          # Build matching Linux host tools separately; never mix host ELF with Android libs.
+          host_qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
+          prefix="$GITHUB_WORKSPACE/out/bindings/shiboken-host"
+          test -f "$host_qt/lib/cmake/Qt6/Qt6Config.cmake"
+          cmake -S .build/pyside-setup/sources/shiboken6 -B .build/shiboken-host -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$prefix" \
+            -DCMAKE_PREFIX_PATH="$host_qt" \
+            -DSHIBOKEN_BUILD_TOOLS=ON -DSHIBOKEN_BUILD_LIBS=ON \
+            -DBUILD_TESTS=OFF \
+            2>&1 | tee shiboken-host-configure.log
+          cmake --build .build/shiboken-host --parallel 4 2>&1 | tee shiboken-host-build.log
+          cmake --install .build/shiboken-host
+          tools_config="$(find "$prefix" -type f -name Shiboken6ToolsConfig.cmake -print -quit)"
+          test -n "$tools_config" || { echo "::error::Host source build did not install Shiboken6ToolsConfig.cmake"; exit 1; }
           echo "SHIBOKEN_HOST_TOOLS_DIR=$(dirname "$tools_config")" >> "$GITHUB_ENV"
-          echo "Validated Linux host Shiboken6Tools package: $tools_config"
+          echo "SHIBOKEN_HOST_PREFIX=$prefix" >> "$GITHUB_ENV"
+          echo "Validated host tools CMake package: $tools_config"
       - name: Cross-compile Shiboken6
         run: |
           set -euo pipefail
@@ -59,6 +73,7 @@ jobs:
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
             -DCMAKE_PREFIX_PATH="$qt" -DQT_HOST_PATH="$host" \
             -DShiboken6Tools_DIR="$SHIBOKEN_HOST_TOOLS_DIR" \
+            -DQFP_SHIBOKEN_HOST_PATH="$SHIBOKEN_HOST_PREFIX" \
             -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
             -DPython_LIBRARY="$py/lib/libpython3.14.so" -DBUILD_TESTS=OFF \
             2>&1 | tee shiboken-configure.log
