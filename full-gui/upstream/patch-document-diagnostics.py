@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Trace the original document/viewport path without replacing CAD commands."""
 from pathlib import Path
+import re
 import sys
 
 
@@ -10,18 +11,26 @@ def once(source, old, new):
     return source.replace(old, new, 1)
 
 
-def annotate(root, path, signature, phases):
+def annotate(root, path, signature, phases, max_calls=None):
     target = root / path
     source = target.read_text()
     start = source.index(signature)
-    opening = source.index("\n{", start) + 2
-    closing = source.index("\n}", opening)
+    brace = re.search(r"\n([ \t]*)\{", source[start:])
+    if brace is None:
+        raise RuntimeError(f"Missing function body: {signature}")
+    opening = start + brace.end()
+    closing = source.index("\n" + brace.group(1) + "}", opening)
     body = source[opening:closing]
     for statement, phase in phases:
         body = once(body, statement,
-                    f'::drnasDocumentPhase("{phase}", "BEGIN");\n    '
-                    + statement + f'\n    ::drnasDocumentPhase("{phase}", "END");')
-    body = '\n    ::DrnasDocumentTraceScope _drnasDocumentTrace("' + signature.split("(")[0] + '");' + body
+                    f'if (_drnasTraceEnabled) ::drnasDocumentPhase("{phase}", "BEGIN");\n    '
+                    + statement + f'\n    if (_drnasTraceEnabled) ::drnasDocumentPhase("{phase}", "END");')
+    prefix = '\n    const bool _drnasTraceEnabled = true;'
+    if max_calls is not None:
+        prefix = (f'\n    static unsigned int _drnasTraceCalls = 0;'
+                  f'\n    const bool _drnasTraceEnabled = _drnasTraceCalls < {max_calls};'
+                  '\n    if (_drnasTraceEnabled) ++_drnasTraceCalls;')
+    body = prefix + '\n    ::DrnasDocumentTraceScope _drnasDocumentTrace("' + signature.split("(")[0] + '", _drnasTraceEnabled);' + body
     source = source[:opening] + body + source[closing:]
     include = '#include <Base/AndroidDocumentDiagnostics.h>\n'
     if include not in source:
@@ -56,18 +65,19 @@ inline void drnasDocumentPhase(const char* phase, const char* event)
 class DrnasDocumentTraceScope
 {
 public:
-    explicit DrnasDocumentTraceScope(const char* name)
-        : phase(name), exceptions(std::uncaught_exceptions())
+    explicit DrnasDocumentTraceScope(const char* name, bool shouldTrace = true)
+        : phase(name), exceptions(std::uncaught_exceptions()), enabled(shouldTrace)
     {
-        drnasDocumentPhase(phase, "ENTER");
+        if (enabled) drnasDocumentPhase(phase, "ENTER");
     }
     ~DrnasDocumentTraceScope()
     {
-        drnasDocumentPhase(phase, std::uncaught_exceptions() > exceptions ? "UNWIND" : "EXIT");
+        if (enabled) drnasDocumentPhase(phase, std::uncaught_exceptions() > exceptions ? "UNWIND" : "EXIT");
     }
 private:
     const char* phase;
     int exceptions;
+    bool enabled;
 };
 ''')
     annotate(root, "src/Gui/CommandDoc.cpp", "void StdCmdNew::activated(int iMsg)", [
@@ -111,8 +121,54 @@ private:
         ('PRIVATE(this)->headlight = new SoDirectionalLight;', 'Q05 Coin headlight'),
         ('PRIVATE(this)->sorendermanager->activate();', 'Q06 activate render manager'),
     ])
+    # The physical-device trace reaches V02 BEGIN and crashes before V02 END.
+    # Keep real MDI behavior; split the failing call and synchronous callbacks.
+    annotate(root, "src/Gui/MainWindow.cpp", "void MainWindow::addWindow(MDIView* view)", [
+        ('bool isempty = d->mdiArea->subWindowList().isEmpty();', 'M01 inspect MDI area'),
+        ('auto child = qobject_cast<QMdiSubWindow*>(view->parentWidget());', 'M02 inspect view parent'),
+        ('child = new QMdiSubWindow(d->mdiArea->viewport());', 'M03 create subwindow'),
+        ('child->setAttribute(Qt::WA_DeleteOnClose);', 'M04 set close attribute'),
+        ('child->setWidget(view);', 'M05 reparent view into subwindow'),
+        ('child->setWindowIcon(view->windowIcon());', 'M06 set subwindow icon'),
+        ('QMenu* menu = child->systemMenu();', 'M07 obtain system menu'),
+        ('QList<QAction*> acts = menu->actions();', 'M08 read system menu actions'),
+        ('QAction* action = menu->addAction(tr("Close All"));', 'M09 add close action'),
+        ('d->mdiArea->addSubWindow(child);', 'M10 add subwindow to MDI area'),
+        ('view->installEventFilter(this);', 'M11 install view event filter'),
+        ('view->showMaximized();', 'M12 show first view maximized'),
+        ('view->show();', 'M13 show subsequent view'),
+    ])
+    annotate(root, "src/Gui/MainWindow.cpp", "void MainWindow::onWindowActivated(QMdiSubWindow* mdi)", [
+        ('auto view = dynamic_cast<MDIView*>(mdi->widget());', 'W01 resolve activated view'),
+        ('setActiveWindow(view);', 'W02 activate MDI view'),
+    ])
+    annotate(root, "src/Gui/MainWindow.cpp", "void MainWindow::setActiveWindow(MDIView* view)", [
+        ('view->setFocus();', 'S01 focus view'),
+        ('d->mdiArea->setActiveSubWindow(subwindow);', 'S02 activate Qt subwindow'),
+        ('Application::Instance->viewActivated(view);', 'S03 notify FreeCAD active view'),
+        ('updateActions();', 'S04 refresh command availability'),
+    ])
+    annotate(root, "src/Gui/Application.cpp", "void Application::viewActivated(MDIView* pcView)", [
+        ('signalActivateView(pcView);', 'C01 notify active view observers'),
+        ('getMainWindow()->setWindowTitle(pcView->buildWindowTitle());', 'C02 update window title'),
+        ('getMainWindow()->setWindowModified(document->isModified());', 'C03 update modified state'),
+        ('setActiveDocument(pcView->getGuiDocument());', 'C04 activate GUI document'),
+    ])
+    # Paint paths can run continuously. Only journal their first two calls.
+    annotate(root, "src/Gui/Quarter/QuarterWidget.cpp", "void initializeGL() override", [
+        ('connect(this, &CustomGLWidget::resized, this, &CustomGLWidget::slotResized);', 'GL01 initialize GL widget'),
+    ], max_calls=2)
+    annotate(root, "src/Gui/Quarter/QuarterWidget.cpp", "void paintGL() override", [
+        ('qw->redraw();', 'GL02 GL widget redraw'),
+    ], max_calls=2)
+    annotate(root, "src/Gui/Quarter/QuarterWidget.cpp", "QuarterWidget::paintEvent(QPaintEvent* event)", [
+        ('this->getSoRenderManager()->reinitialize();', 'P01 reinitialize Coin render manager'),
+        ('getSoRenderManager()->activate();', 'P02 activate Coin for paint'),
+        ('this->actualRedraw();', 'P03 render Coin scene'),
+        ('inherited::paintEvent(event);', 'P04 paint graphics view'),
+    ], max_calls=2)
 
 
 if __name__ == "__main__":
     patch(Path(sys.argv[1]))
-    print("Original Std_New, App/GUI observers and Quarter/Coin viewport now have durable native checkpoints")
+    print("MDI trace v2: original Std_New, MDI attachment/activation and first GL paints have durable native checkpoints")
