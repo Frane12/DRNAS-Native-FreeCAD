@@ -1,0 +1,64 @@
+name: DRNAS FreeCAD APK - verified packaging launcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_run_id:
+        description: 'Successful upstream FreeCADGui build run ID; leave empty to use latest successful run'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: drnas-freecad-apk-launcher
+  cancel-in-progress: false
+
+jobs:
+  preflight-and-launch:
+    name: Verify native GUI build and launch APK packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Verify successful upstream build and artifact before APK packaging
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          branch="feature/full-freecad-android"
+          if [[ -n "$INPUT_RUN_ID" ]]; then
+            [[ "$INPUT_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::Run ID must be numeric"; exit 1; }
+            run_id="$INPUT_RUN_ID"
+          else
+            run_id="$(gh api "repos/$repo/actions/workflows/upstream-freecadgui-full-android.yml/runs" -f branch="$branch" -f status=success -f per_page=1 --jq '.workflow_runs[0].id' 2>/dev/null || true)"
+          fi
+          [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::No successful upstream FreeCADGui build found. Run upstream-freecadgui-full-android.yml first."; exit 1; }
+          info="$(gh api "repos/$repo/actions/runs/$run_id")"
+          [[ "$(jq -r '.conclusion' <<<"$info")" == success ]] || { echo "::error::Upstream build $run_id has not succeeded"; exit 1; }
+          [[ "$(jq -r '.head_branch' <<<"$info")" == "$branch" ]] || { echo "::error::Upstream build is from wrong branch"; exit 1; }
+          [[ "$(jq -r '.name' <<<"$info")" == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" ]] || { echo "::error::Wrong upstream workflow"; exit 1; }
+          [[ "$(jq -r '.head_repository.full_name' <<<"$info")" == "$repo" ]] || { echo "::error::Wrong source repository"; exit 1; }
+          attempt="$(jq -r '.run_attempt' <<<"$info")"
+          artifact="DRNAS-Actual-Upstream-FreeCADGui-ARM64-$run_id-$attempt"
+          found="$(gh api --paginate "repos/$repo/actions/runs/$run_id/artifacts?per_page=100" --jq ".artifacts[] | select(.name == \"$artifact\" and .expired == false) | .id" | head -1)"
+          [[ -n "$found" ]] || { echo "::error::Missing or expired native FreeCADGui artifact: $artifact"; exit 1; }
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "PASS: upstream run $run_id; artifact $artifact"
+      - name: Launch existing APK integration on feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.verify.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/freecadgui-qtactivity-native-apk.yml/dispatches" \
+            -f ref=feature/full-freecad-android \
+            -f "inputs[upstream_run_id]=$RUN_ID"
+          echo "### APK integration dispatched" >> "$GITHUB_STEP_SUMMARY"
+          echo "Upstream run: $RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          echo "Follow the DRNAS FreeCADGui QtActivity APK Integration workflow on feature/full-freecad-android." >> "$GITHUB_STEP_SUMMARY"
