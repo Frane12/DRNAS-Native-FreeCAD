@@ -172,9 +172,19 @@ private:
     # This intentionally leaves the 3D viewport blank while isolating P03.
     quarter_path = root / "src/Gui/Quarter/QuarterWidget.cpp"
     quarter_source = quarter_path.read_text()
+    # Opt-in experiment: retain the known-good blank-viewport fallback by default.
+    # Set DRNAS_ENABLE_COIN_REDRAW=1 in the Android process before GUI startup
+    # to test genuine Coin rendering; durable P03 markers bracket the attempt.
     quarter_source = once(quarter_source,
                           'this->actualRedraw();',
-                          '::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");')
+                          '''if (const char* enable = std::getenv("DRNAS_ENABLE_COIN_REDRAW");
+        enable && enable[0] == '1' && enable[1] == '\\0') {
+        ::drnasDocumentPhase("P03 Coin scene render", "REAL_REDRAW_BEGIN");
+        this->actualRedraw();
+        ::drnasDocumentPhase("P03 Coin scene render", "REAL_REDRAW_END");
+    } else {
+        ::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");
+    }''')
     quarter_path.write_text(quarter_source)
 
 
