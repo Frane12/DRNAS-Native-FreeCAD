@@ -56,10 +56,13 @@ jobs:
           host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
           py="$GITHUB_WORKSPACE/out/full-deps/python"
           ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          test -f "$qt/lib/cmake/Qt6Core/Qt6CoreConfig.cmake"
-          test -f "$host/bin/qmake6"
-          test -f "$py/include/python3.14/Python.h"
-          test -f "$py/lib/libpython3.14.so"
+          for required in "$qt/lib/cmake/Qt6Core/Qt6CoreConfig.cmake" "$host/bin/qmake6" "$py/include/python3.14/Python.h" "$py/lib/libpython3.14.so"; do
+            if [[ ! -f "$required" ]]; then
+              echo "::error::Missing prerequisite: $required"
+              ls -la "$(dirname "$required")" || true
+              exit 1
+            fi
+          done
           cmake -S .build/pyside-setup/sources/shiboken6 -B .build/shiboken-android -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
