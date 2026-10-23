@@ -36,6 +36,7 @@
 #include <QScreen>
 #include <QOpenGLContext>
 #include <QOpenGLWidget>
+#include <QWindow>
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -531,6 +532,16 @@ void recordNativeGlesViewport(QMainWindow* freecad)
     }
     if (!widget) {
         DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE: no visible document viewport; create a document first"));
+        return;
+    }
+    // A valid widget can outlive its Android EGLSurface during rotation or
+    // the first raster-to-OpenGL window transition. Diagnostics must not
+    // force makeCurrent() against an unexposed/destroyed native window.
+    QWindow* nativeWindow = widget->window()->windowHandle();
+    if (!nativeWindow || !nativeWindow->isExposed() ||
+        !widget->updatesEnabled() ||
+        QGuiApplication::applicationState() != Qt::ApplicationActive) {
+        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE deferred: native surface not ready"));
         return;
     }
     QOpenGLContext* previous = QOpenGLContext::currentContext();

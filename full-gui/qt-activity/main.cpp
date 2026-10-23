@@ -5,6 +5,7 @@
 #include "StartupDiagnostics.h"
 #include "DrnasDebugCenter.h"
 #include "LiveGuiLab.h"
+#include "DrnasRenderSurfaceGuard.h"
 
 // Safe Android native bootstrap. Do NOT dlopen FreeCADGui/Coin3D here.
 // Loading untested native DSOs on the startup thread can abort before the
@@ -24,6 +25,10 @@ int main(int argc, char** argv)
     // The next launch can display the exact native library being tested.
     auto* window = static_cast<QMainWindow*>(
         drnas_create_qt_gui_shell_after_qt_android_bootstrap());
+    // Install before first show and before any document introduces OpenGL.
+#ifdef DRNAS_FREECAD_FULL_INTEGRATION
+    new DrnasRenderSurfaceGuard(window);
+#endif
     window->show();
     // Always available in Safe Mode, before any risky native FreeCAD dlopen.
     // A child widget overlay only: never creates another Android surface.
