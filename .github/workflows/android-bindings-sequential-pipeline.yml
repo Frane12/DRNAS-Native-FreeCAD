@@ -209,6 +209,19 @@ jobs:
       - name: Prepare and preflight Pivy SWIG standard-header parsing
         run: |
           set -euo pipefail
+          # Match Pivy to the exact submodule of our FreeCAD source.
+          git -C .build/pivy fetch --depth 1 https://github.com/FreeCAD/pivy.git 515f038d32f163a976acd8a8cd9e8d26e1d0b884
+          git -C .build/pivy checkout --detach --force FETCH_HEAD
+          test "$(git -C .build/pivy rev-parse HEAD)" = 515f038d32f163a976acd8a8cd9e8d26e1d0b884
+          git -C .build/pivy rev-parse HEAD > out/bindings/logs/pivy-source.txt
+          # Use the standalone target name expected by our existing stage helper.
+          # This changes CMake target identifiers only, not generated module names.
+          python3 - <<'PY_PIVY_TARGET'
+          from pathlib import Path
+          for name in ('CMakeLists.txt', 'interfaces/CMakeLists.txt'):
+              path = Path('.build/pivy') / name
+              path.write_text(path.read_text().replace('pivy_coin', 'coin'))
+          PY_PIVY_TARGET
           ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
           cxx_headers="$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
           for header in climits new; do
@@ -223,13 +236,15 @@ jobs:
           swig -c++ -python -includeall -I"$GITHUB_WORKSPACE/.build/pivy/fake_headers" -E "$probe.i" > "$probe-preprocessed.txt"
           printf '#include <climits>\n#include <new>\nstatic_assert(INT_MAX > 0);\n' > "$probe.cpp"
           "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android$ANDROID_API-clang++" -std=c++17 -fsyntax-only "$probe.cpp"
-          echo 'PASS: SWIG parses standard includes and Android compiler resolves genuine libc++ headers'
+          python3 .build/pivy/install_helpers.py "$GITHUB_WORKSPACE/.build/pivy" "$GITHUB_WORKSPACE/out/bindings/target/include"
+          swig -c++ -python -includeall -D__PIVY__ -I"$GITHUB_WORKSPACE/.build/pivy" -I"$GITHUB_WORKSPACE/.build/pivy/fake_headers" -I"$GITHUB_WORKSPACE/out/bindings/target/include" -E .build/pivy/interfaces/coin.i > out/bindings/logs/pivy-swig-preprocessed.txt
+          echo 'PASS: complete Pivy interface preprocesses; Android compiler resolves genuine libc++ headers'
       - name: Restore completed pivy SDK checkpoint
         id: pivy
         uses: actions/cache/restore@v4
         with:
           path: out/bindings/pivy-sdk.tar.gz
-          key: bindings-pivy-arm64-qt683-py314-ndk27-freecad50e37-v3-${{ hashFiles('full-port/build-bindings-stage.sh') }}
+          key: bindings-pivy-arm64-qt683-py314-ndk27-freecad50e37-pivy515f-v4-${{ hashFiles('full-port/build-bindings-stage.sh') }}
       - name: Build or verify cached pivy Android ARM64 SDK
         run: |
           set -euo pipefail
@@ -264,6 +279,7 @@ jobs:
               'ndk': os.environ['NDK_VERSION'], 'run_id': os.environ['GITHUB_RUN_ID'],
               'commit': os.environ['GITHUB_SHA'],
               'coin': '50e37f04e7027661ea2318d0425b7836ac819568',
+              'pivy': '515f038d32f163a976acd8a8cd9e8d26e1d0b884',
           }, indent=2)+'\n')
           PY_INFO
           tar czf out/bindings/android-python-bindings-arm64.tar.gz -C out/bindings/runtime .
