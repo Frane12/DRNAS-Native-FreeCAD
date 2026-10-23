@@ -70,19 +70,83 @@ jobs:
           set -euo pipefail
           find out/bindings/shiboken -type f -name '*.so*' -print -quit | grep -q .
           find out/bindings/shiboken -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-      - name: PySide6 cross-build gate
+      - name: Install Android PySide build prerequisites
         run: |
-          echo "::error::PySide6 cross-build requires a host Shiboken generator and matching Android Shiboken CMake package; not yet implemented."
-          exit 1
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libclang-dev llvm-dev
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          bash full-port/bootstrap-qt.sh
+          bash full-port/bootstrap-python-android.sh
+          git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
+          python -m pip install --upgrade pip
+          python -m pip install 'shiboken6==6.8.3' 'shiboken6-generator==6.8.3'
+      - name: Attempt PySide6 Android ARM64 CMake build
+        shell: bash
+        run: |
+          set -euo pipefail
+          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
+          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
+          py="$GITHUB_WORKSPACE/out/full-deps/python"
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          cmake -S .build/pyside-setup/sources/pyside6 -B .build/pyside6-arm64 -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
+            -DCMAKE_PREFIX_PATH="$qt;$GITHUB_WORKSPACE/out/bindings/shiboken" \
+            -DQT_HOST_PATH="$host" \
+            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
+            -DPython_LIBRARY="$py/lib/libpython3.14.so" -DBUILD_TESTS=OFF \
+            2>&1 | tee pyside6-configure.log
+          cmake --build .build/pyside6-arm64 --parallel 4 2>&1 | tee pyside6-build.log
+          mkdir -p out/bindings/pyside6
+          find .build/pyside6-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/pyside6/ \;
+          test -n "$(find out/bindings/pyside6 -type f -name '*.so*' -print -quit)"
+          for so in out/bindings/pyside6/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pyside6-stage
+          path: |
+            pyside6-configure.log
+            pyside6-build.log
+            out/bindings/pyside6/
+          if-no-files-found: warn
   coin3d:
     needs: pyside6
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Coin3D cross-build gate
+      - name: Prepare Coin3D Android toolchain
         run: |
-          echo "::error::Coin3D ARM64 cross-build not yet implemented; do not publish a placeholder library."
-          exit 1
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          git clone --depth 1 https://github.com/coin3d/coin.git .build/coin
+      - name: Cross-compile Coin3D ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          cmake -S .build/coin -B .build/coin-arm64 -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
+            -DCMAKE_BUILD_TYPE=Release -DCOIN_BUILD_TESTS=OFF \
+            2>&1 | tee coin-configure.log
+          cmake --build .build/coin-arm64 --parallel 4 2>&1 | tee coin-build.log
+          mkdir -p out/bindings/coin
+          find .build/coin-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/coin/ \;
+          test -n "$(find out/bindings/coin -type f -name '*.so*' -print -quit)"
+          for so in out/bindings/coin/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coin3d-stage
+          path: |
+            coin-configure.log
+            coin-build.log
+            out/bindings/coin/
+          if-no-files-found: warn
   pivy:
     needs: coin3d
     runs-on: ubuntu-24.04
