@@ -134,7 +134,12 @@ python3 "$ROOT/full-gui/integrated-apk/stage-freecad-assets.py" \
 # Never substitute host wheels, dummy modules or a pure-Python Pivy stub.
 bindings="$ARTIFACT/python-bindings"
 compat="$ROOT/full-gui/upstream/python-compat/PySide"
-python3 "$ROOT/full-gui/upstream/verify-native-python-bindings.py" "$ARTIFACT" --strict
+# Validate a merged staging root without modifying the upstream artifact.
+verify_stage="$work/binding-verification"
+mkdir -p "$verify_stage/python-compat"
+ln -s "$bindings" "$verify_stage/python-bindings"
+ln -s "$compat" "$verify_stage/python-compat/PySide"
+python3 "$ROOT/full-gui/upstream/verify-native-python-bindings.py" "$verify_stage" --strict
 test -s "$compat/__init__.py"
 mkdir -p "$work/bundle/assets/drnas/freecad/Mod/PySide"
 cp -a "$compat/." "$work/bundle/assets/drnas/freecad/Mod/PySide/"
@@ -156,13 +161,19 @@ import sys
 root = Path(sys.argv[1])
 base = root / "freecad"
 manifest = root / "freecad-manifest.txt"
-existing = [line for line in manifest.read_text().splitlines() if line]
+previous = [line for line in manifest.read_text().splitlines() if line]
+# Remove stale identity: native extraction keys off bundle-<sha>.sha256.
+previous = [name for name in previous if not (name.startswith("bundle-") and name.endswith(".sha256"))]
 for package in ("PySide", "PySide6", "shiboken6", "pivy"):
     for path in sorted((base / "Mod" / package).rglob("*")):
         if path.is_file() and not path.is_symlink():
-            existing.append(path.relative_to(base).as_posix())
-manifest.write_text("\\n".join(dict.fromkeys(existing)) + "\\n")
-print("PASS: registered binding assets in FreeCAD extraction manifest")
+            previous.append(path.relative_to(base).as_posix())
+names = sorted(set(previous))
+hashes = "\n".join(hashlib.sha256((base / name).read_bytes()).hexdigest() + "  " + name for name in names) + "\n"
+identity = "bundle-" + hashlib.sha256(hashes.encode()).hexdigest() + ".sha256"
+(base / identity).write_text(hashes, encoding="utf-8")
+manifest.write_text("\n".join(names + [identity]) + "\n")
+print("PASS: native binding files included in hashed FreeCAD extraction manifest")
 PY_BINDING_MANIFEST
 echo 'PASS: real ARM64 Python bindings and legacy PySide facade staged as extractable assets.'
 
