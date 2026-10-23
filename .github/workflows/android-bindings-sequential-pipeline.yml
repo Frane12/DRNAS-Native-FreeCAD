@@ -170,12 +170,19 @@ jobs:
         with:
           path: out/upstream-freecad-gui/opengl-compat
           key: ${{ steps.gl.outputs.cache-primary-key }}
+      - name: Preflight Coin source ABI against the pinned FreeCAD native GUI
+        run: |
+          set -euo pipefail
+          git -C .build/coin fetch --depth 1 https://github.com/FreeCAD/coin.git 50e37f04e7027661ea2318d0425b7836ac819568
+          git -C .build/coin checkout --detach --force FETCH_HEAD
+          test "$(git -C .build/coin rev-parse HEAD)" = 50e37f04e7027661ea2318d0425b7836ac819568
+          git -C .build/coin rev-parse HEAD > out/bindings/logs/coin-source.txt
       - name: Restore completed coin3d SDK checkpoint
         id: coin3d
         uses: actions/cache/restore@v4
         with:
           path: out/bindings/coin3d-sdk.tar.gz
-          key: bindings-coin3d-arm64-qt683-py314-ndk27-v2-${{ hashFiles('full-port/build-bindings-stage.sh') }}
+          key: bindings-coin3d-arm64-qt683-py314-ndk27-freecad50e37-v3-${{ hashFiles('full-port/build-bindings-stage.sh') }}
       - name: Build or verify cached coin3d Android ARM64 SDK
         run: |
           set -euo pipefail
@@ -204,7 +211,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: out/bindings/pivy-sdk.tar.gz
-          key: bindings-pivy-arm64-qt683-py314-ndk27-v2-${{ hashFiles('full-port/build-bindings-stage.sh') }}
+          key: bindings-pivy-arm64-qt683-py314-ndk27-freecad50e37-v3-${{ hashFiles('full-port/build-bindings-stage.sh') }}
       - name: Build or verify cached pivy Android ARM64 SDK
         run: |
           set -euo pipefail
@@ -238,7 +245,7 @@ jobs:
               'qt': '6.8.3', 'python': '3.14.8', 'abi': 'arm64-v8a',
               'ndk': os.environ['NDK_VERSION'], 'run_id': os.environ['GITHUB_RUN_ID'],
               'commit': os.environ['GITHUB_SHA'],
-              'coin': '1235c1cae0bd4f48127e5529ce15a10e893eff4d',
+              'coin': '50e37f04e7027661ea2318d0425b7836ac819568',
           }, indent=2)+'\n')
           PY_INFO
           tar czf out/bindings/android-python-bindings-arm64.tar.gz -C out/bindings/runtime .
