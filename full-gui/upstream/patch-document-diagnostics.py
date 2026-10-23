@@ -154,15 +154,6 @@ private:
         ('getMainWindow()->setWindowModified(document->isModified());', 'C03 update modified state'),
         ('setActiveDocument(pcView->getGuiDocument());', 'C04 activate GUI document'),
     ])
-    # Diagnostic APK: skip the crashing Coin3D draw, not document creation.
-    # This intentionally leaves the 3D viewport blank while isolating P03.
-    quarter_path = root / "src/Gui/Quarter/QuarterWidget.cpp"
-    quarter_source = quarter_path.read_text()
-    quarter_source = once(quarter_source,
-                          'this->actualRedraw();',
-                          '::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");')
-    quarter_path.write_text(quarter_source)
-
     # Paint paths can run continuously. Only journal their first two calls.
     annotate(root, "src/Gui/Quarter/QuarterWidget.cpp", "void initializeGL() override", [
         ('connect(this, &CustomGLWidget::resized, this, &CustomGLWidget::slotResized);', 'GL01 initialize GL widget'),
@@ -176,6 +167,15 @@ private:
         ('this->actualRedraw();', 'P03 render Coin scene'),
         ('inherited::paintEvent(event);', 'P04 paint graphics view'),
     ], max_calls=2)
+
+    # Diagnostic APK: skip the crashing Coin3D draw, not document creation.
+    # This intentionally leaves the 3D viewport blank while isolating P03.
+    quarter_path = root / "src/Gui/Quarter/QuarterWidget.cpp"
+    quarter_source = quarter_path.read_text()
+    quarter_source = once(quarter_source,
+                          'this->actualRedraw();',
+                          '::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");')
+    quarter_path.write_text(quarter_source)
 
 
 if __name__ == "__main__":
