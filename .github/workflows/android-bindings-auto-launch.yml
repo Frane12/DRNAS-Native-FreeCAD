@@ -1,0 +1,38 @@
+name: DRNAS Auto Compile Python GUI Dependencies
+on:
+  workflow_run:
+    workflows: ['DRNAS FreeCADGui QtActivity APK Integration']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: drnas-auto-python-bindings
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    name: Dispatch sequential ARM64 bindings build on experimental branch
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'feature/full-freecad-android')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify experimental workflow exists on target branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/android-bindings-sequential-pipeline.yml?ref=feature/arm64-python-bindings-gates" --jq '.sha' | grep -Eq '^[0-9a-f]{40}$'
+      - name: Dispatch experimental sequential dependency pipeline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/android-bindings-sequential-pipeline.yml/dispatches" \
+            -f ref=feature/arm64-python-bindings-gates
+          echo "### ARM64 bindings pipeline dispatched" >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: feature/arm64-python-bindings-gates" >> "$GITHUB_STEP_SUMMARY"
+          echo "Sequence: Shiboken6 -> PySide6 -> Coin3D -> Pivy." >> "$GITHUB_STEP_SUMMARY"
+          echo "Warning: Pivy stage currently has an intentional failing gate; this is an experimental build, not an APK release." >> "$GITHUB_STEP_SUMMARY"
