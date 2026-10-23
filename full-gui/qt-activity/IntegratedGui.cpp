@@ -556,6 +556,26 @@ finally:
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
+    // Session-only opt-in. A crash restarts with the blank viewport fallback.
+    auto* coinRender = toolbar->addAction(QStringLiteral("TEST Coin render"));
+    coinRender->setObjectName(QStringLiteral("drnasTestCoinRender"));
+    coinRender->setCheckable(true);
+    coinRender->setChecked(qgetenv("DRNAS_ENABLE_COIN_REDRAW") == QByteArray("1"));
+    coinRender->setToolTip(QStringLiteral("Enable genuine Coin rendering with GPU/context diagnostics; may crash. Copy Log after restart."));
+    QObject::connect(coinRender, &QAction::triggered, shell,
+                     [invoke, report](bool enabled) {
+        qputenv("DRNAS_ENABLE_COIN_REDRAW", enabled ? QByteArray("1") : QByteArray("0"));
+        DrnasDiagnostics::note(QStringLiteral("RENDER PROBE: genuine Coin redraw enabled=%1; session only").arg(enabled));
+        report(enabled ? QStringLiteral("Coin render test enabled; create a document or redraw")
+                       : QStringLiteral("Coin render test disabled; blank viewport fallback"));
+        if (enabled) {
+            invoke(QStringLiteral(
+                "import FreeCADGui as Gui\n"
+                "if Gui.activeDocument() is not None:\n"
+                "    Gui.activeDocument().activeView().redraw()\n"),
+                QStringLiteral("Coin redraw probe"));
+        }
+    });
     auto* storageTest = toolbar->addAction(QStringLiteral("Storage"));
     QObject::connect(storageTest, &QAction::triggered, shell, [invoke] {
         invoke(QStringLiteral("_drnas_storage_test()"), QStringLiteral("Storage probe"));

@@ -168,6 +168,113 @@ private:
         ('inherited::paintEvent(event);', 'P04 paint graphics view'),
     ], max_calls=2)
 
+    # P03 dispatches virtually into View3DInventorViewer, not directly into
+    # QuarterWidget::actualRedraw. Trace background Coin traversal separately.
+    annotate(root, "src/Gui/View3DInventorViewer.cpp", "void View3DInventorViewer::actualRedraw()", [
+        ('renderScene();', 'RV01 native renderScene'),
+        ('renderFramebuffer();', 'RV02 framebuffer render'),
+        ('renderGLImage();', 'RV03 image render'),
+    ], max_calls=2)
+    annotate(root, "src/Gui/View3DInventorViewer.cpp", "void View3DInventorViewer::renderScene()", [
+        ('glViewport(origin[0], origin[1], size[0], size[1]);', 'RS01 GL viewport'),
+        ('glClearColor(float(col.redF()), float(col.greenF()), float(col.blueF()), 0.0F);', 'RS02 GL clear color'),
+        ('glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);', 'RS03 GL clear buffers'),
+        ('glEnable(GL_DEPTH_TEST);', 'RS04 GL depth test'),
+        ('this->renderGLActionScene(col, this->getSoRenderManager()->getGLRenderAction());', 'RS05 background and main Coin actions'),
+        ('renderRubberbandOverlay();', 'RS06 rubberband overlay'),
+    ], max_calls=2)
+    annotate(root, "src/Gui/View3DInventorViewer.cpp", "void View3DInventorViewer::renderGLActionScene(", [
+        ('SoState* state = glra->getState();', 'RA01 obtain Coin action state'),
+        ('SoDevicePixelRatioElement::set(state, devicePixelRatio());', 'RA02 device pixel ratio'),
+        ('SoGLWidgetElement::set(state, qobject_cast<QOpenGLWidget*>(this->getGLWidget()));', 'RA03 GL widget element'),
+        ('SoGLRenderActionElement::set(state, glra);', 'RA04 GL action element'),
+        ('SoGLVBOActivatedElement::set(state, this->vboEnabled);', 'RA05 VBO element'),
+        ('drawSingleBackground(backgroundColor);', 'RA06 solid background overlay'),
+        ('glra->apply(this->backgroundroot);', 'RA07 background scene traversal'),
+        ('inherited::actualRedraw();', 'RA08 main scene render manager'),
+        ('renderDelayedAnnotations(glra);', 'RA09 delayed annotations'),
+        ('glra->apply(this->foregroundroot);', 'RA10 foreground traversal'),
+        ('glra->apply(this->decorationroot);', 'RA11 decoration traversal'),
+    ], max_calls=2)
+    annotate(root, "src/Gui/View3DInventorViewer.cpp", "void applyOverlay(", [
+        ('SoGLRenderAction action(SbViewportRegion(viewportWidth, viewportHeight));', 'OV01 create overlay action'),
+        ('setOverlayCacheContext(action, viewer);', 'OV02 set overlay cache context'),
+        ('action.setTransparencyType(SoGLRenderAction::BLEND);', 'OV03 overlay transparency'),
+        ('action.apply(root);', 'OV04 overlay Coin traversal'),
+        ('resetMainLazyGLState(viewer);', 'OV05 reset main Coin GL state'),
+    ], max_calls=2)
+    annotate(root, "src/Gui/Quarter/QuarterWidget.cpp", "QuarterWidget::actualRedraw()", [
+        ('PRIVATE(this)->sorendermanager->render(PRIVATE(this)->clearwindow,\n                                         PRIVATE(this)->clearzbuffer);', 'RM01 Coin render manager'),
+    ], max_calls=2)
+
+    viewer_path = root / "src/Gui/View3DInventorViewer.cpp"
+    viewer_source = viewer_path.read_text()
+    gpu_probe = r'''
+#ifdef __ANDROID__
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
+#include <dlfcn.h>
+
+// Queries only: preserve the selected rendering mode and all GL state.
+static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
+{
+    ::DrnasDocumentTraceScope scope("GPU00 render context snapshot");
+    QOpenGLContext* context = QOpenGLContext::currentContext();
+    char line[1536];
+    std::snprintf(line, sizeof(line),
+        "GPU01 context current=%p widgetContext=%p valid=%d GLES=%d",
+        static_cast<void*>(context), static_cast<void*>(widget ? widget->context() : nullptr),
+        context && context->isValid(), context && context->isOpenGLES());
+    ::drnasDocumentPhase(line, "SNAPSHOT");
+    if (!context || !context->isValid()) return;
+    QOpenGLFunctions* functions = context->functions();
+    if (!functions) return;
+    GLint bound = -1, depth = -1, stencil = -1, viewport[4] = {};
+    functions->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
+    functions->glGetIntegerv(GL_DEPTH_BITS, &depth);
+    functions->glGetIntegerv(GL_STENCIL_BITS, &stencil);
+    functions->glGetIntegerv(GL_VIEWPORT, viewport);
+    std::snprintf(line, sizeof(line),
+        "GPU02 FBO bound=%d widget=%u depth=%d stencil=%d viewport=%d,%d,%d,%d",
+        bound, widget ? widget->defaultFramebufferObject() : 0u, depth, stencil,
+        viewport[0], viewport[1], viewport[2], viewport[3]);
+    ::drnasDocumentPhase(line, "SNAPSHOT");
+    const GLenum tokens[] = {GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION};
+    const char* names[] = {"VENDOR", "RENDERER", "VERSION", "GLSL"};
+    for (int i = 0; i < 4; ++i) {
+        ::drnasDocumentPhase(names[i], "GPU03_QT_QUERY_BEGIN");
+        const GLubyte* value = functions->glGetString(tokens[i]);
+        std::snprintf(line, sizeof(line), "GPU03 Qt %s=%s", names[i],
+                      value ? reinterpret_cast<const char*>(value) : "(null)");
+        ::drnasDocumentPhase(line, "SNAPSHOT");
+        ::drnasDocumentPhase(names[i], "GPU04_LINKED_GL_QUERY_BEGIN");
+        value = glGetString(tokens[i]);
+        std::snprintf(line, sizeof(line), "GPU04 linked GL %s=%s", names[i],
+                      value ? reinterpret_cast<const char*>(value) : "(null)");
+        ::drnasDocumentPhase(line, "SNAPSHOT");
+    }
+    const void* addresses[] = {reinterpret_cast<const void*>(&glGetString),
+        reinterpret_cast<const void*>(&glViewport), reinterpret_cast<const void*>(&glMatrixMode)};
+    const char* symbols[] = {"glGetString", "glViewport", "glMatrixMode"};
+    for (int i = 0; i < 3; ++i) {
+        Dl_info info = {};
+        const int found = dladdr(addresses[i], &info);
+        std::snprintf(line, sizeof(line), "GPU05 %s=%p library=%s symbol=%s", symbols[i],
+            addresses[i], found && info.dli_fname ? info.dli_fname : "(unknown)",
+            found && info.dli_sname ? info.dli_sname : "(unknown)");
+        ::drnasDocumentPhase(line, "SNAPSHOT");
+    }
+}
+#endif
+'''
+    viewer_source = once(viewer_source, 'using namespace Gui;', 'using namespace Gui;\n' + gpu_probe)
+    viewer_source = once(viewer_source, '    switch (renderType) {',
+        '''#ifdef __ANDROID__
+    if (_drnasTraceEnabled) drnasRenderGpuSnapshot(qobject_cast<QOpenGLWidget*>(this->viewport()));
+#endif
+    switch (renderType) {''')
+    viewer_path.write_text(viewer_source)
+
     # Diagnostic APK: skip the crashing Coin3D draw, not document creation.
     # This intentionally leaves the 3D viewport blank while isolating P03.
     quarter_path = root / "src/Gui/Quarter/QuarterWidget.cpp"
@@ -190,4 +297,5 @@ private:
 
 if __name__ == "__main__":
     patch(Path(sys.argv[1]))
-    print("MDI trace v2: original Std_New, MDI attachment/activation and first GL paints have durable native checkpoints")
+    print("Render trace v3: virtual viewer dispatch, GL providers/context/FBO, background and main Coin traversals")
+
