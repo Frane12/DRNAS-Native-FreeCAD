@@ -90,3 +90,10 @@ if(DRNAS_FREECAD_RUNTIME_DIR)
         QT_ANDROID_VERSION_NAME "0.3.0-alpha"
     )
 endif()
+
+# Android-only startup screen runs before Qt's native libraries/QApplication.
+# Change UI scale before context creation, preserving Qt's input-coordinate mapping.
+if(ANDROID AND DRNAS_FREECAD_RUNTIME_DIR)
+    set_target_properties(drnas_freecad_qtgui PROPERTIES
+        QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
+endif()

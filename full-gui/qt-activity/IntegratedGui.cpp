@@ -1188,6 +1188,9 @@ public:
         launchOriginal->setMinimumHeight(42);
         launchOriginal->setEnabled(false);
         outer->addWidget(launchOriginal);
+#ifdef DRNAS_FREECAD_FULL_INTEGRATION
+        setProperty("drnasAutoStartPartDesign", qgetenv("DRNAS_AUTOSTART") != QByteArray("0"));
+#endif
         connect(launchOriginal, &QPushButton::clicked, this,
                 [this, launchOriginal, nativeStatus] {
             launchOriginal->setEnabled(false);
@@ -1295,6 +1298,47 @@ public:
                             .arg(commandBar != nullptr)
                             .arg(commandBar && commandBar->isVisible())
                             .arg(freecadWindow && freecadWindow->isWindow()));
+                        if (property("drnasAutoStartPartDesign").toBool()) {
+                            setProperty("drnasAutoStartPartDesign", false);
+                            DrnasDiagnostics::note(QStringLiteral("AUTO 2/3 PASS: genuine GUI embedded"));
+                            QAction* partDesign = nullptr;
+                            if (commandBar) {
+                                for (QAction* action : commandBar->actions()) {
+                                    if (action->text() == QStringLiteral("PartDesign")) {
+                                        partDesign = action;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (partDesign) {
+                                bool modulesReady = true;
+                                for (const auto& probe : {
+                                         std::pair<const char*, const char*>{"TEST 1 Part", "import Part"},
+                                         {"TEST 2 PartGui", "import PartGui"}}) {
+                                    const QString caption = QString::fromLatin1(probe.first);
+                                    DrnasDiagnostics::note(QStringLiteral("AUTO ") + caption + QStringLiteral(" BEGIN"));
+                                    QString importError;
+                                    if (!runOriginalFreeCADPython(QString::fromLatin1(probe.second), importError)) {
+                                        DrnasDiagnostics::note(QStringLiteral("AUTO ") + caption + QStringLiteral(" FAILED: ") + importError);
+                                        modulesReady = false;
+                                        break;
+                                    }
+                                    DrnasDiagnostics::note(QStringLiteral("AUTO ") + caption + QStringLiteral(" PASS"));
+                                }
+                                DrnasDiagnostics::note(QStringLiteral("AUTO TEST 3: activate PartDesignWorkbench"));
+                                if (modulesReady) partDesign->trigger(); // real registration/activation checkpoints
+                                QString error;
+                                const bool active = modulesReady && runOriginalFreeCADPython(QStringLiteral(
+                                    "import FreeCADGui as Gui\n"
+                                    "if Gui.activeWorkbench().name() != 'PartDesignWorkbench':\n"
+                                    "    raise RuntimeError('PartDesignWorkbench is not active')\n"), error);
+                                DrnasDiagnostics::note(active
+                                    ? QStringLiteral("AUTO 3/3 PASS: PartDesignWorkbench active")
+                                    : QStringLiteral("AUTO 3/3 FAILED: ") + error);
+                            } else {
+                                DrnasDiagnostics::note(QStringLiteral("AUTO 3/3 FAILED: PartDesign action unavailable"));
+                            }
+                        }
                         // Do not resurrect the duplicate desktop menu row.
                         compactOriginalAndroidFreeCADChrome(freecadWindow);
                         // FreeCAD's deferred restoreState() can run later.
@@ -1366,6 +1410,28 @@ public:
             launchOriginal->setEnabled(true);
         });
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
+        if (property("drnasAutoStartPartDesign").toBool()) {
+            // Wait until the QtActivity surface and event loop are ready.
+            // Reuse actual button handlers; never fabricate PASS results.
+            QTimer::singleShot(350, this, [this, runProbe, launchOriginal] {
+                DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 BEGIN: load genuine FreeCAD libraries; QT_SCALE_FACTOR=%1")
+                    .arg(QString::fromLatin1(qgetenv("QT_SCALE_FACTOR"))));
+                if (auto* screen = QGuiApplication::primaryScreen()) {
+                    DrnasDiagnostics::note(QStringLiteral("STARTUP display logical=%1x%2 dpr=%3")
+                        .arg(screen->geometry().width()).arg(screen->geometry().height())
+                        .arg(screen->devicePixelRatio()));
+                }
+                runProbe->click();
+                if (!launchOriginal->isEnabled()) {
+                    setProperty("drnasAutoStartPartDesign", false);
+                    DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 FAILED: GUI launch remains disabled"));
+                    return;
+                }
+                DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 PASS: libraries loaded"));
+                DrnasDiagnostics::note(QStringLiteral("AUTO 2/3 BEGIN: original FreeCAD GUI"));
+                launchOriginal->click();
+            });
+        }
         auto* plainStatus = new QLabel(
             QStringLiteral("NO PREVIEW - original FreeCAD owns the CAD graphics surface."),
             central);
