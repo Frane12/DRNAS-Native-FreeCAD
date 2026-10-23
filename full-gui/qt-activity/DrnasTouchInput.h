@@ -1,0 +1,395 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Qt adaptation of DRNAS Blender's draggable mouse/key groups and spring zoom.
+// Uses existing widgets and logical coordinates; creates no native/GL surface.
+#pragma once
+#include <algorithm>
+#include <functional>
+#include <utility>
+#include <QApplication>
+#include <QDialog>
+#include <QEvent>
+#include <QFrame>
+#include <QGraphicsView>
+#include <QGridLayout>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QMainWindow>
+#include <QMdiArea>
+#include <QMdiSubWindow>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPointer>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QSlider>
+#include <QTimer>
+#include <QTouchEvent>
+#include <QVBoxLayout>
+#include <QWheelEvent>
+#include "StartupDiagnostics.h"
+
+class DrnasPointerMark final : public QWidget {
+public:
+    explicit DrnasPointerMark(QWidget* parent) : QWidget(parent) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        setFixedSize(25,25);
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(Qt::black,4)); p.drawEllipse(QPointF(12,12),5,5);
+        p.drawLine(12,0,12,8); p.drawLine(12,16,12,24);
+        p.drawLine(0,12,8,12); p.drawLine(16,12,24,12);
+        p.setPen(QPen(QColor(110,220,255),2)); p.drawEllipse(QPointF(12,12),5,5);
+        p.drawLine(12,0,12,8); p.drawLine(12,16,12,24);
+        p.drawLine(0,12,8,12); p.drawLine(16,12,24,12);
+    }
+};
+
+class DrnasPointerPad final : public QLabel {
+    QPointF last;
+    bool active = false;
+    int touchId = -1;
+public:
+    std::function<void(QPointF)> movePointer;
+    explicit DrnasPointerPad(QWidget* parent) : QLabel(parent) {
+        setText(QStringLiteral("Pomakni pokazivač ovdje"));
+        setAlignment(Qt::AlignCenter);
+        setMinimumHeight(62);
+        setAttribute(Qt::WA_AcceptTouchEvents);
+        setStyleSheet(QStringLiteral("background:#253c50;border:1px solid #6486a1;border-radius:6px;"));
+    }
+protected:
+    bool event(QEvent* e) override {
+        if (e->type()==QEvent::TouchCancel) { active=false; touchId=-1; e->accept(); return true; }
+        if (e->type()==QEvent::TouchBegin || e->type()==QEvent::TouchUpdate || e->type()==QEvent::TouchEnd) {
+            auto* touch=static_cast<QTouchEvent*>(e);
+            for (const auto& point : touch->points()) {
+                if (touchId<0 && point.state()==QEventPoint::State::Pressed) {
+                    touchId=point.id(); last=point.position(); active=true;
+                }
+                if (point.id()!=touchId) continue;
+                if (active && movePointer) movePointer(point.position()-last);
+                last=point.position();
+                if (point.state()==QEventPoint::State::Released) { active=false; touchId=-1; }
+            }
+            e->accept(); return true;
+        }
+        return QLabel::event(e);
+    }
+    void mousePressEvent(QMouseEvent* e) override { active=true; last=e->position(); e->accept(); }
+    void mouseMoveEvent(QMouseEvent* e) override {
+        if (active && movePointer) movePointer(e->position()-last);
+        last=e->position(); e->accept();
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override { active=false; e->accept(); }
+};
+
+class DrnasTouchInput final : public QObject {
+    QMainWindow* host;
+    QPointer<QMainWindow> cad;
+    QWidget* panel;
+    QLabel* grip;
+    QPushButton* launcher;
+    QPushButton* hold;
+    DrnasPointerMark* mark;
+    QSlider* zoom;
+    QTimer zoomTimer;
+    QPointer<QWidget> mouseReceiver;
+    QPointer<QWidget> keyReceiver;
+    QPointF cursor;
+    QPoint dragOffset;
+    Qt::MouseButtons buttons = Qt::NoButton;
+    Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+    QList<QPushButton*> mouseKeys, modifierKeys;
+    bool injecting=false, dragging=false, repairing=false, repairQueued=false;
+    int queuedZoom=0, previousZoom=0, speed=100;
+    std::function<void(const QString&)> command;
+
+    QPoint globalPoint() const { return host->mapToGlobal(cursor.toPoint()); }
+    QWidget* targetAtCursor() const {
+        if (QWidget* modal=QApplication::activeModalWidget()) return modal;
+        if (!cad) return nullptr;
+        const QPoint p=cad->mapFromGlobal(globalPoint());
+        if (!cad->rect().contains(p)) return cad;
+        QWidget* target=cad->childAt(p);
+        return target ? target : cad.data();
+    }
+    QWidget* keyboardTarget() const {
+        QWidget* focus=QApplication::focusWidget();
+        if (QWidget* modal=QApplication::activeModalWidget()) {
+            if (focus && (focus==modal || modal->isAncestorOf(focus))) return focus;
+            return modal;
+        }
+        if (cad && focus && (focus==cad || cad->isAncestorOf(focus))) return focus;
+        if (keyReceiver && cad && (keyReceiver.data()==cad.data() || cad->isAncestorOf(keyReceiver.data()))) return keyReceiver.data();
+        return mouseReceiver ? mouseReceiver.data() : targetAtCursor();
+    }
+    void sendMouse(QEvent::Type type, Qt::MouseButton button) {
+        QPointer<QWidget> target=mouseReceiver ? mouseReceiver.data() : targetAtCursor();
+        if (!target) { buttons=Qt::NoButton; return; }
+        const QPointF global=globalPoint();
+        const QPointF local=target->mapFromGlobal(global.toPoint());
+        const QPointF window=target->window()->mapFromGlobal(global.toPoint());
+        QMouseEvent event(type,local,window,global,button,buttons,modifiers);
+        injecting=true; QApplication::sendEvent(target,&event); injecting=false;
+    }
+    void mouseButton(Qt::MouseButton button, bool down) {
+        if (down) {
+            if (buttons.testFlag(button)) return;
+            if (buttons==Qt::NoButton) {
+                mouseReceiver=targetAtCursor();
+                if (mouseReceiver) { mouseReceiver->setFocus(Qt::MouseFocusReason); keyReceiver=mouseReceiver; }
+            }
+            buttons|=button;
+            sendMouse(QEvent::MouseButtonPress,button);
+        } else {
+            if (!buttons.testFlag(button)) return;
+            buttons&=~Qt::MouseButtons(button);
+            sendMouse(QEvent::MouseButtonRelease,button);
+            if (buttons==Qt::NoButton) mouseReceiver.clear();
+        }
+    }
+    void sendKey(int key, const QString& text=QString(), Qt::KeyboardModifiers extra=Qt::NoModifier) {
+        QPointer<QWidget> target=keyboardTarget();
+        if (!target) return;
+        const auto flags=modifiers|extra;
+        QKeyEvent press(QEvent::KeyPress,key,flags,text);
+        QKeyEvent release(QEvent::KeyRelease,key,flags,text);
+        injecting=true;
+        QApplication::sendEvent(target,&press);
+        if (target) QApplication::sendEvent(target,&release);
+        injecting=false;
+    }
+    void modifier(Qt::KeyboardModifier flag, int key, bool down) {
+        QPointer<QWidget> target=keyboardTarget();
+        if (down) { if (!keyReceiver) keyReceiver=target; modifiers|=flag; }
+        else modifiers&=~Qt::KeyboardModifiers(flag);
+        if (target) {
+            QKeyEvent event(down?QEvent::KeyPress:QEvent::KeyRelease,key,modifiers);
+            injecting=true; QApplication::sendEvent(target,&event); injecting=false;
+        }
+    }
+    void releaseAll() {
+        for (auto button : {Qt::LeftButton,Qt::MiddleButton,Qt::RightButton}) mouseButton(button,false);
+        if (modifiers.testFlag(Qt::ControlModifier)) modifier(Qt::ControlModifier,Qt::Key_Control,false);
+        if (modifiers.testFlag(Qt::ShiftModifier)) modifier(Qt::ShiftModifier,Qt::Key_Shift,false);
+        if (modifiers.testFlag(Qt::AltModifier)) modifier(Qt::AltModifier,Qt::Key_Alt,false);
+        modifiers=Qt::NoModifier; buttons=Qt::NoButton;
+        for (auto* b : mouseKeys+modifierKeys) { QSignalBlocker blocker(b); b->setChecked(false); }
+        queuedZoom=0; previousZoom=0; zoomTimer.stop();
+        if (zoom) { QSignalBlocker blocker(zoom); zoom->setValue(0); }
+        mouseReceiver.clear();
+    }
+    void showPointer() {
+        if (!cad) return;
+        const QRect r=QRect(cad->mapTo(host,QPoint()),cad->size()).intersected(host->rect());
+        if (r.isEmpty()) return;
+        cursor.setX(std::clamp(cursor.x(),double(r.left()),double(r.right())));
+        cursor.setY(std::clamp(cursor.y(),double(r.top()),double(r.bottom())));
+        mark->move(cursor.toPoint()-QPoint(12,12)); mark->show(); mark->raise();
+    }
+    void movePointer(QPointF delta) {
+        cursor+=delta*(double(speed)/100.0);
+        showPointer(); sendMouse(QEvent::MouseMove,Qt::NoButton);
+    }
+    void zoomStep() {
+        if (QApplication::activeModalWidget()) { queuedZoom=0; zoomTimer.stop(); return; }
+        QWidget* target=nullptr;
+        if (cad) for (auto* view : cad->findChildren<QGraphicsView*>()) {
+            if (view->isVisible() && view->width()>50 && view->height()>50) { target=view->viewport(); break; }
+        }
+        if (!target) { queuedZoom=0; zoomTimer.stop(); return; }
+        const int delta=std::clamp(queuedZoom,-60,60);
+        queuedZoom-=delta;
+        QPoint local=target->mapFromGlobal(globalPoint());
+        if (!target->rect().contains(local)) local=target->rect().center();
+        QWheelEvent event(QPointF(local),QPointF(target->mapToGlobal(local)),QPoint(),QPoint(0,delta),
+                          Qt::NoButton,modifiers,Qt::NoScrollPhase,false);
+        injecting=true; QApplication::sendEvent(target,&event); injecting=false;
+        if (!queuedZoom) zoomTimer.stop();
+    }
+    void queueZoom(int delta) {
+        queuedZoom=std::clamp(queuedZoom+delta,-1200,1200);
+        if (queuedZoom && !zoomTimer.isActive()) zoomTimer.start();
+    }
+    void savePosition() {
+        QSettings s;
+        s.setValue(QStringLiteral("touch/panelX"),double(panel->x())/std::max(1,host->width()));
+        s.setValue(QStringLiteral("touch/panelY"),double(panel->y())/std::max(1,host->height()));
+    }
+    void constrain() {
+        panel->setFixedWidth(std::max(80,std::min(340,host->width()-12)));
+        panel->setFixedHeight(std::max(60,std::min(350,host->height()-80)));
+        panel->move(std::clamp(panel->x(),0,std::max(0,host->width()-panel->width())),
+                    std::clamp(panel->y(),0,std::max(0,host->height()-panel->height())));
+        launcher->setGeometry(std::max(0,host->width()-77),std::max(0,host->height()-90),72,34);
+        panel->raise(); launcher->raise();
+    }
+    void repairWindows(bool maximize=false) {
+        if (!cad || repairing) return;
+        repairing=true;
+        for (auto* area : cad->findChildren<QMdiArea*>()) {
+            const QSize available=area->viewport()->size();
+            if (available.width()<32 || available.height()<32) continue;
+            const QRect bounds(QPoint(),available);
+            for (auto* sub : area->subWindowList()) {
+                if (!sub->isVisible()) continue;
+                if (maximize && sub==area->activeSubWindow()) { sub->showMaximized(); continue; }
+                if (bounds.contains(sub->geometry())) continue;
+                sub->setMinimumSize(0,0);
+                const QSize size=sub->size().boundedTo(available);
+                sub->resize(size);
+                sub->move(std::clamp(sub->x(),0,std::max(0,available.width()-sub->width())),
+                          std::clamp(sub->y(),0,std::max(0,available.height()-sub->height())));
+            }
+        }
+        const QRect bounds(host->mapToGlobal(QPoint()),host->size());
+        for (QWidget* top : QApplication::topLevelWidgets()) {
+            auto* dialog=qobject_cast<QDialog*>(top);
+            if (!dialog || !dialog->isVisible()) continue;
+            QWidget* owner=dialog->parentWidget();
+            if (!owner || (owner!=host && !host->isAncestorOf(owner))) continue;
+            if (bounds.contains(dialog->frameGeometry())) continue;
+            dialog->setMinimumSize(0,0); dialog->setMaximumSize(bounds.size());
+            dialog->resize(dialog->size().boundedTo(bounds.size()));
+            dialog->move(std::clamp(dialog->x(),bounds.left(),std::max(bounds.left(),bounds.right()-dialog->width()+1)),
+                         std::clamp(dialog->y(),bounds.top(),std::max(bounds.top(),bounds.bottom()-dialog->height()+1)));
+        }
+        repairing=false;
+    }
+    void scheduleRepair() {
+        if (repairing || repairQueued) return;
+        repairQueued=true;
+        QTimer::singleShot(0,this,[this]{repairQueued=false; repairWindows(); constrain();});
+    }
+protected:
+    bool eventFilter(QObject* obj,QEvent* event) override {
+        if (injecting) return false;
+        if (event->type()==QEvent::ApplicationDeactivate || (obj==host && event->type()==QEvent::Hide)) releaseAll();
+        if (obj==host && event->type()==QEvent::Resize) {
+            releaseAll();
+            QSettings s;
+            panel->move(int(s.value(QStringLiteral("touch/panelX"),0.02).toDouble()*host->width()),
+                        int(s.value(QStringLiteral("touch/panelY"),0.15).toDouble()*host->height()));
+            cursor=QPointF(host->width()/2.0,host->height()/2.0); scheduleRepair();
+        }
+        if ((event->type()==QEvent::Show || event->type()==QEvent::Move || event->type()==QEvent::Resize) &&
+            (qobject_cast<QMdiSubWindow*>(obj) || qobject_cast<QDialog*>(obj))) scheduleRepair();
+        if (obj==panel && event->type()==QEvent::Hide) { releaseAll(); mark->hide(); savePosition(); }
+        if (obj==grip) {
+            if (event->type()==QEvent::MouseButtonPress) {
+                auto* e=static_cast<QMouseEvent*>(event);
+                if (e->button()==Qt::LeftButton) { dragging=true; dragOffset=e->globalPosition().toPoint()-panel->mapToGlobal(QPoint()); return true; }
+            }
+            if (event->type()==QEvent::MouseMove && dragging) {
+                auto* e=static_cast<QMouseEvent*>(event);
+                panel->move(host->mapFromGlobal(e->globalPosition().toPoint()-dragOffset)); constrain(); return true;
+            }
+            if (event->type()==QEvent::MouseButtonRelease && dragging) { dragging=false; savePosition(); return true; }
+        }
+        QWidget* widget=qobject_cast<QWidget*>(obj);
+        if (cad && widget && (widget==cad || cad->isAncestorOf(widget))) {
+            if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove) {
+                auto* e=static_cast<QMouseEvent*>(event);
+                cursor=host->mapFromGlobal(e->globalPosition().toPoint());
+                keyReceiver=widget;
+                if (mark->isVisible()) showPointer();
+            }
+        }
+        return false;
+    }
+public:
+    DrnasTouchInput(QMainWindow* shell,QMainWindow* freecad,std::function<void(const QString&)> run)
+        : QObject(shell),host(shell),cad(freecad),panel(new QWidget(shell)),zoom(nullptr),command(std::move(run)) {
+        panel->setObjectName(QStringLiteral("drnasTouchInputPanel"));
+        panel->setStyleSheet(QStringLiteral(
+            "QWidget{background:#182d42;color:#e9f2fa;font-size:12px;}"
+            "QPushButton{min-height:30px;background:#315775;border:1px solid #52718d;border-radius:4px;}"
+            "QPushButton:checked,QPushButton:pressed{background:#278caa;}"));
+        auto* outer=new QVBoxLayout(panel); outer->setContentsMargins(5,4,5,5); outer->setSpacing(3);
+        auto* heading=new QHBoxLayout;
+        grip=new QLabel(QStringLiteral("Miš i tipke · povuci"),panel); grip->setMinimumHeight(30);
+        auto* close=new QPushButton(QStringLiteral("×"),panel); close->setFixedWidth(34);
+        close->setFocusPolicy(Qt::NoFocus);
+        heading->addWidget(grip,1); heading->addWidget(close); outer->addLayout(heading);
+        auto* scroll=new QScrollArea(panel); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        auto* content=new QWidget(scroll); auto* body=new QVBoxLayout(content);
+        body->setContentsMargins(0,0,0,0); body->setSpacing(3); scroll->setWidget(content); outer->addWidget(scroll);
+        auto button=[content](const QString& text) { auto* b=new QPushButton(text,content); b->setFocusPolicy(Qt::NoFocus); return b; };
+        auto* mouseRow=new QHBoxLayout;
+        for (auto pair : {std::pair<const char*,Qt::MouseButton>{"LMB",Qt::LeftButton},{"MMB",Qt::MiddleButton},{"RMB",Qt::RightButton}}) {
+            auto* b=button(QString::fromLatin1(pair.first)); mouseKeys.append(b); mouseRow->addWidget(b);
+            connect(b,&QPushButton::pressed,this,[this,pair]{ if (!hold->isChecked()) mouseButton(pair.second,true); });
+            connect(b,&QPushButton::released,this,[this,pair]{ if (!hold->isChecked()) mouseButton(pair.second,false); });
+            connect(b,&QPushButton::clicked,this,[this,pair](bool checked){ if (hold->isChecked()) mouseButton(pair.second,checked); });
+        }
+        hold=button(QStringLiteral("Drži")); hold->setCheckable(true); mouseRow->addWidget(hold);
+        connect(hold,&QPushButton::toggled,this,[this](bool on){ releaseAll(); for (auto* b:mouseKeys) b->setCheckable(on); });
+        auto* reset=button(QStringLiteral("Otpusti")); mouseRow->addWidget(reset);
+        connect(reset,&QPushButton::clicked,this,[this]{releaseAll();}); body->addLayout(mouseRow);
+        auto* pad=new DrnasPointerPad(content); body->addWidget(pad);
+        pad->movePointer=[this](QPointF delta){movePointer(delta);};
+        auto* zoomRow=new QHBoxLayout;
+        auto* minus=button(QStringLiteral("−")); minus->setFixedWidth(34);
+        auto* plus=button(QStringLiteral("+")); plus->setFixedWidth(34);
+        zoom=new QSlider(Qt::Horizontal,content); zoom->setRange(-100,100); zoom->setValue(0); zoom->setMinimumHeight(32);
+        zoom->setFocusPolicy(Qt::NoFocus); zoom->setToolTip(QStringLiteral("Zoom — vraća se u sredinu"));
+        zoomRow->addWidget(minus); zoomRow->addWidget(zoom,1); zoomRow->addWidget(plus); body->addLayout(zoomRow);
+        zoomTimer.setInterval(16);
+        connect(&zoomTimer,&QTimer::timeout,this,[this]{zoomStep();});
+        connect(zoom,&QSlider::sliderMoved,this,[this](int value){queueZoom((value-previousZoom)*12); previousZoom=value;});
+        connect(zoom,&QSlider::sliderReleased,this,[this]{QSignalBlocker b(zoom); zoom->setValue(0); previousZoom=0;});
+        connect(minus,&QPushButton::clicked,this,[this]{queueZoom(-120);});
+        connect(plus,&QPushButton::clicked,this,[this]{queueZoom(120);});
+        auto* mods=new QHBoxLayout;
+        struct Modifier {const char* name; Qt::KeyboardModifier flag; int key;};
+        for (auto m : {Modifier{"Ctrl",Qt::ControlModifier,Qt::Key_Control},{"Shift",Qt::ShiftModifier,Qt::Key_Shift},{"Alt",Qt::AltModifier,Qt::Key_Alt}}) {
+            auto* b=button(QString::fromLatin1(m.name)); b->setCheckable(true); modifierKeys.append(b); mods->addWidget(b);
+            connect(b,&QPushButton::toggled,this,[this,m](bool down){modifier(m.flag,m.key,down);});
+        }
+        for (auto pair : {std::pair<const char*,int>{"Esc",Qt::Key_Escape},{"Enter",Qt::Key_Return}}) {
+            auto* b=button(QString::fromLatin1(pair.first)); mods->addWidget(b);
+            connect(b,&QPushButton::clicked,this,[this,pair]{if(pair.second==Qt::Key_Escape)releaseAll();sendKey(pair.second);});
+        }
+        body->addLayout(mods);
+        auto* keys=new QHBoxLayout;
+        for (auto pair : {std::pair<const char*,int>{"Tab",Qt::Key_Tab},{"Del",Qt::Key_Delete},{"Space",Qt::Key_Space},{"Undo",Qt::Key_Z}}) {
+            auto* b=button(QString::fromLatin1(pair.first)); keys->addWidget(b);
+            connect(b,&QPushButton::clicked,this,[this,pair]{sendKey(pair.second,pair.second==Qt::Key_Space?QStringLiteral(" "):QString(),pair.second==Qt::Key_Z?Qt::ControlModifier:Qt::NoModifier);});
+        }
+        auto* fit=button(QStringLiteral("Fit")); keys->addWidget(fit);
+        connect(fit,&QPushButton::clicked,this,[this]{command(QStringLiteral("import FreeCADGui as Gui\nif Gui.activeDocument(): Gui.activeDocument().activeView().fitAll()\n"));});
+        body->addLayout(keys);
+        auto* footer=new QHBoxLayout;
+        auto* recover=button(QStringLiteral("Vrati prozore")); footer->addWidget(recover);
+        connect(recover,&QPushButton::clicked,this,[this]{releaseAll();repairWindows(true);constrain();savePosition();DrnasDiagnostics::note(QStringLiteral("INPUT: visible windows recovered"));});
+        auto* gear=button(QStringLiteral("⚙")); gear->setFixedWidth(34); footer->addWidget(gear); body->addLayout(footer);
+        auto* options=new QWidget(content); auto* optionLayout=new QVBoxLayout(options); optionLayout->setContentsMargins(0,0,0,0);
+        optionLayout->addWidget(new QLabel(QStringLiteral("Brzina pokazivača"),options));
+        auto* sensitivity=new QSlider(Qt::Horizontal,options); sensitivity->setRange(25,300);
+        QSettings settings; speed=std::clamp(settings.value(QStringLiteral("touch/speed"),100).toInt(),25,300); sensitivity->setValue(speed); optionLayout->addWidget(sensitivity);
+        connect(sensitivity,&QSlider::valueChanged,this,[this](int value){speed=value;QSettings s;s.setValue(QStringLiteral("touch/speed"),value);});
+        body->addWidget(options); options->hide();
+        connect(gear,&QPushButton::clicked,this,[this,options]{options->setVisible(!options->isVisible());constrain();});
+        connect(close,&QPushButton::clicked,panel,&QWidget::hide);
+        launcher=new QPushButton(QStringLiteral("Miš"),host); launcher->setObjectName(QStringLiteral("drnasTouchInputLauncher"));
+        launcher->setFocusPolicy(Qt::NoFocus); launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
+        connect(launcher,&QPushButton::clicked,this,[this]{panel->setVisible(!panel->isVisible());constrain();});
+        mark=new DrnasPointerMark(host); mark->hide();
+        cursor=QPointF(host->width()/2.0,host->height()/2.0);
+        panel->move(int(settings.value(QStringLiteral("touch/panelX"),0.02).toDouble()*host->width()),
+                    int(settings.value(QStringLiteral("touch/panelY"),0.15).toDouble()*host->height()));
+        // Fix a useful initial scroll area height without reserving CAD layout space.
+        scroll->setMinimumHeight(0);
+        constrain(); panel->hide(); launcher->show();
+        qApp->installEventFilter(this);
+        scheduleRepair();
+        DrnasDiagnostics::note(QStringLiteral("INPUT: floating mouse, hold buttons, modifiers, keys and spring zoom installed"));
+    }
+};

@@ -7,6 +7,7 @@
 #include <QApplication>
 #include "StartupDiagnostics.h"
 #include "DrnasDebugCenter.h"
+#include "DrnasTouchInput.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -924,6 +925,9 @@ finally:
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, toolbar);
+    new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
+        invoke(script, QStringLiteral("Mouse / keyboard controls"));
+    });
 }
 
 // Android QtActivity has one usable content surface. A second desktop-style
