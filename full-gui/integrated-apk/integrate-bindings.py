@@ -19,6 +19,7 @@ report.mkdir(parents=True, exist_ok=True)
 metadata = json.loads((bundle/'BUILD-INFO.json').read_text())
 assert metadata['qt'] == '6.8.3' and metadata['python'] == '3.14.8'
 assert metadata['abi'] == 'arm64-v8a'
+assert metadata['coin'] == '50e37f04e7027661ea2318d0425b7836ac819568', 'Coin must match the pinned FreeCAD submodule ABI'
 subprocess.run(['sha256sum','-c','SHA256SUMS'],cwd=native,check=True)
 for package, modules in {'PySide6':['QtCore','QtGui','QtWidgets'], 'shiboken6':['Shiboken'], 'pivy':['_coin']}.items():
     folder = bundle/'python-bindings'/package
