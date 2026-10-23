@@ -22,6 +22,7 @@ public final class StartupActivity extends Activity {
     private static final int[] LONG_EDGES = {0, 960, 1280, 1600, 1920};
     private static final String PREFS = "drnas_startup_display";
     private RadioGroup choices;
+    private RadioGroup viewportTests;
     private SharedPreferences preferences;
     private DisplayMetrics metrics;
     private boolean starting;
@@ -80,6 +81,26 @@ public final class StartupActivity extends Activity {
             ((RadioButton) choices.getChildAt(0)).setChecked(true);
         }
         panel.addView(choices);
+        TextView testHelp = new TextView(this);
+        testHelp.setText("Proba prikaza — odaberi prije pokretanja");
+        testHelp.setTextColor(Color.rgb(215, 232, 245));
+        testHelp.setTextSize(17);
+        testHelp.setPadding(0, dp(12), 0, dp(4));
+        panel.addView(testHelp);
+        viewportTests = new RadioGroup(this);
+        for (String mode : new String[]{"A", "B"}) {
+            RadioButton radio = new RadioButton(this);
+            radio.setId(View.generateViewId());
+            radio.setTag(mode);
+            radio.setText(mode.equals("A") ? "TEST A — postojeći izračun" : "TEST B — dimenzije GL prikaza");
+            radio.setTextColor(Color.WHITE);
+            radio.setTextSize(17);
+            radio.setMinHeight(dp(48));
+            radio.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(110, 205, 255)));
+            viewportTests.addView(radio);
+            if (mode.equals("A")) radio.setChecked(true);
+        }
+        panel.addView(viewportTests);
         Button start = new Button(this);
         start.setText("POKRENI PART DESIGN");
         start.setTextSize(19);
@@ -106,6 +127,9 @@ public final class StartupActivity extends Activity {
         try {
             Os.setenv("QT_SCALE_FACTOR", String.format(Locale.ROOT, "%.6f", scale), true);
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
+            RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
+            Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
+            Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "0", true);
         } catch (android.system.ErrnoException error) {
             Log.e("DRNAS", "Startup display configuration failed", error);
             return;

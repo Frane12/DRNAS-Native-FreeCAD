@@ -133,7 +133,10 @@ class DrnasTouchInput final : public QObject {
         if (!root) root=QApplication::activeModalWidget();
         if (root) {
             const QPoint p=root->mapFromGlobal(globalPoint());
-            if (!root->rect().contains(p)) return nullptr;
+            // QMenu must receive outside clicks too, so it can dismiss its
+            // mouse grab. Other modal dialogs remain restricted to their rect.
+            if (!root->rect().contains(p))
+                return root==QApplication::activePopupWidget() ? root : nullptr;
             QWidget* child=root->childAt(p);
             return child ? child : root;
         }
@@ -158,8 +161,11 @@ class DrnasTouchInput final : public QObject {
         const QPointF global=globalPoint();
         const QPointF local=target->mapFromGlobal(global.toPoint());
         const QPointF window=target->window()->mapFromGlobal(global.toPoint());
-        QMouseEvent event(type,local,window,global,button,buttons,modifiers);
-        deliverEvent(target,&event);
+        // Posting lets both press and release be queued BEFORE a tool button
+        // enters QMenu::exec(). A synchronous press could otherwise suspend
+        // mouseButton(false) and leave our relative pointer holding LMB.
+        QCoreApplication::postEvent(target.data(),new QMouseEvent(
+            type,local,window,global,button,buttons,modifiers));
     }
     void mouseButton(Qt::MouseButton button, bool down) {
         if (down) {
@@ -213,6 +219,9 @@ class DrnasTouchInput final : public QObject {
         cursor.setY(std::clamp(cursor.y(),double(r.top()),double(r.bottom())));
         QWidget* top=QApplication::activePopupWidget();
         if (!top) top=QApplication::activeModalWidget();
+        // A popup clips its children. Draw on the host while the cursor is
+        // outside it, instead of making a moving cursor appear frozen/hidden.
+        if (top && !top->rect().contains(top->mapFromGlobal(globalPoint()))) top=nullptr;
         if (top) {
             mark->hide();
             if (!dialogMark || dialogMark->parentWidget()!=top) {
@@ -343,6 +352,23 @@ class DrnasTouchInput final : public QObject {
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
         if (injectedEvents.contains(event)) return false;
+        if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
+            event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick) {
+            auto* mouse=static_cast<QMouseEvent*>(event);
+            // Our posted mouse events (and their propagated copies) already
+            // contain virtual cursor coordinates; never feed them back into
+            // the physical-finger tracking path.
+            if (!event->spontaneous() && mouse->source()==Qt::MouseEventNotSynthesized) return false;
+        }
+        if (auto* popupWidget=qobject_cast<QWidget*>(obj)) {
+            if ((popupWidget->windowType()==Qt::Popup) &&
+                (event->type()==QEvent::Show || event->type()==QEvent::Hide)) {
+                DrnasDiagnostics::note(QStringLiteral("INPUT popup %1 class=%2 buttons=%3")
+                    .arg(event->type()==QEvent::Show ? QStringLiteral("show") : QStringLiteral("hide"))
+                    .arg(QString::fromLatin1(popupWidget->metaObject()->className())).arg(int(buttons)));
+                QTimer::singleShot(0,this,[this]{showPointer();});
+            }
+        }
         auto* inputWidget=qobject_cast<QWidget*>(obj);
         QWidget* modal=QApplication::activeModalWidget();
         QWidget* popup=QApplication::activePopupWidget();

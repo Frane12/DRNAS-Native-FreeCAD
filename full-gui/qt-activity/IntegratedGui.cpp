@@ -729,8 +729,12 @@ finally:
     });
     // Choose before New in a fresh launch. Never compare A/B by switching
     // already-mutated Coin/GL state within an existing document.
-    auto* abStatus = new QLabel(QStringLiteral("A/B: A"), toolbar);
+    const QString initialAb = qgetenv("DRNAS_VIEWPORT_AB") == QByteArray("B")
+        ? QStringLiteral("B") : QStringLiteral("A");
+    auto* abStatus = new QLabel(QStringLiteral("A/B: ") + initialAb, toolbar);
     const bool abAvailable = dlsym(RTLD_DEFAULT, "drnas_viewport_ab_version") != nullptr;
+    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; render remains off")
+        .arg(initialAb).arg(abAvailable));
     for (const char mode : {'A', 'B'}) {
         auto* action = toolbar->addAction(QStringLiteral("TEST %1").arg(QChar(mode)));
         action->setObjectName(QStringLiteral("drnasViewportTest%1").arg(QChar(mode)));
