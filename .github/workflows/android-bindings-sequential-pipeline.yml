@@ -223,7 +223,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Audit and package complete runtime bindings
-        run: bash full-port/build-bindings-stage.sh bundle
+        run: |
+          bash full-port/build-bindings-stage.sh bundle
+          python3 - <<'PY_INFO'
+          import json, os
+          from pathlib import Path
+          Path('out/bindings/runtime/BUILD-INFO.json').write_text(json.dumps({
+              'qt': '6.8.3', 'python': '3.14.8', 'abi': 'arm64-v8a',
+              'ndk': os.environ['NDK_VERSION'], 'run_id': os.environ['GITHUB_RUN_ID'],
+              'commit': os.environ['GITHUB_SHA'],
+              'coin': '1235c1cae0bd4f48127e5529ce15a10e893eff4d',
+          }, indent=2)+'\n')
+          PY_INFO
+          tar czf out/bindings/android-python-bindings-arm64.tar.gz -C out/bindings/runtime .
+          sha256sum out/bindings/android-python-bindings-arm64.tar.gz > out/bindings/android-python-bindings-arm64.sha256
       - name: Upload verified ARM64 runtime bundle
         uses: actions/upload-artifact@v4
         with:
@@ -252,3 +265,20 @@ jobs:
             .build/coin-arm64/CMakeCache.txt
             .build/pivy-arm64/CMakeCache.txt
           if-no-files-found: warn
+
+  integrate-apk:
+    name: Integrate successful new bindings into verified FreeCAD APK
+    needs: bindings
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Dispatch integration with this exact successful bindings run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/freecadgui-qtactivity-native-apk.yml/dispatches" \
+            -f ref=feature/full-freecad-android -f "inputs[bindings_run_id]=$GITHUB_RUN_ID"
+          echo "APK integration requested for bindings run $GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
