@@ -136,17 +136,34 @@ bindings="$ARTIFACT/python-bindings"
 compat="$ROOT/full-gui/upstream/python-compat/PySide"
 python3 "$ROOT/full-gui/upstream/verify-native-python-bindings.py" "$ARTIFACT" --strict
 test -s "$compat/__init__.py"
-mkdir -p "$work/bundle/assets/drnas/python-site/PySide"
-cp -a "$compat/." "$work/bundle/assets/drnas/python-site/PySide/"
+mkdir -p "$work/bundle/assets/drnas/freecad/Mod/PySide"
+cp -a "$compat/." "$work/bundle/assets/drnas/freecad/Mod/PySide/"
 for package in PySide6 shiboken6 pivy; do
     test -d "$bindings/$package"
-    mkdir -p "$work/bundle/assets/drnas/python-site/$package"
-    cp -a "$bindings/$package/." "$work/bundle/assets/drnas/python-site/$package/"
+    mkdir -p "$work/bundle/assets/drnas/freecad/Mod/$package"
+    cp -a "$bindings/$package/." "$work/bundle/assets/drnas/freecad/Mod/$package/"
 done
 # These packages contain ELF extensions, so extract to filesystem on-device;
 # zipimport cannot load extension modules directly from APK assets.
 python3 "$ROOT/full-gui/upstream/audit-python-bindings.py" \
-  "$work/bundle/assets/drnas/python-site" --require-all
+  "$work/bundle/assets/drnas/freecad/Mod" --require-all
+# stage-freecad-assets.py has already created its manifest. Extend it with
+# binding files and refresh its integrity marker so device extraction sees them.
+python3 - "$work/bundle/assets/drnas" <<'PY_BINDING_MANIFEST'
+from pathlib import Path
+import hashlib
+import sys
+root = Path(sys.argv[1])
+base = root / "freecad"
+manifest = root / "freecad-manifest.txt"
+existing = [line for line in manifest.read_text().splitlines() if line]
+for package in ("PySide", "PySide6", "shiboken6", "pivy"):
+    for path in sorted((base / "Mod" / package).rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            existing.append(path.relative_to(base).as_posix())
+manifest.write_text("\\n".join(dict.fromkeys(existing)) + "\\n")
+print("PASS: registered binding assets in FreeCAD extraction manifest")
+PY_BINDING_MANIFEST
 echo 'PASS: real ARM64 Python bindings and legacy PySide facade staged as extractable assets.'
 
 # Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
