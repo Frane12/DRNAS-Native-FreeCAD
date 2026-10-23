@@ -449,18 +449,18 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     toolbar->setObjectName(QStringLiteral("drnasAndroidFreeCADCommands"));
     toolbar->setMovable(false);
     toolbar->setFloatable(false);
-    toolbar->setAllowedAreas(Qt::TopToolBarArea);
-    toolbar->setIconSize(QSize(21, 21));
+    toolbar->setAllowedAreas(Qt::BottomToolBarArea);
+    toolbar->setIconSize(QSize(28, 28));
     // Qt Android defaults QToolBar buttons to icon-only. These are explicit
     // text commands with no icons, so force their captions to render.
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     toolbar->setStyleSheet(QStringLiteral(
         "QToolBar{background:#182d42;border:0px;spacing:3px;padding:2px;}"
         "QToolButton{color:white;background:#315775;border:1px solid #52718d;"
-        "border-radius:4px;min-height:30px;padding:2px 6px;font-size:12px;}"
+        "border-radius:4px;min-height:48px;padding:5px 10px;font-size:16px;}"
         "QToolButton:pressed{background:#4383a9;}"
         "QLabel{color:#eaf2f8;font-size:11px;padding:2px;}"));
-    shell->addToolBar(Qt::TopToolBarArea, toolbar);
+    shell->addToolBar(Qt::BottomToolBarArea, toolbar);
 
     auto* resultLabel = new QLabel(QStringLiteral("Choose Part to begin"), toolbar);
     resultLabel->setObjectName(QStringLiteral("drnasAndroidCommandResult"));
@@ -498,7 +498,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
             report(label + QStringLiteral(": ") + error);
         }
     };
-    auto* newDoc = toolbar->addAction(QStringLiteral("New"));
+    auto* newDoc = toolbar->addAction(QStringLiteral("NEW +"));
     newDoc->setToolTip(QStringLiteral("FreeCAD.newDocument()"));
     QObject::connect(newDoc, &QAction::triggered, shell, [invoke] {
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C00 QAction triggered: entering handler"));
