@@ -1,0 +1,89 @@
+name: Android ARM64 Shiboken/PySide cross-build experiment
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  QT_VERSION: '6.8.3'
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+jobs:
+  shiboken-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14.8'
+      - name: Restore Android SDK dependencies
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            out/full-deps/qt
+            out/full-deps/python
+          key: drnas-pyside-android-qt683-python314-v1
+          restore-keys: |
+            drnas-pyside-android-qt683-python314-
+      - name: Restore Qt SDK
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt-gui-6.8.3-arm64-v1-${{ hashFiles('full-gui/bootstrap-qt-gui-android.sh', 'full-port/bootstrap-qt.sh', 'full-port/verify-qt-android.sh') }}
+      - name: Restore Python Android SDK
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Install cross-build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake clang libclang-dev llvm-dev patchelf
+          python -m pip install --upgrade build setuptools wheel
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+      - name: Checkout pinned Qt for Python source
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
+          git -C .build/pyside-setup submodule update --init --recursive --depth 1
+      - name: Cross-compile Shiboken6 runtime for Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
+          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
+          py="$GITHUB_WORKSPACE/out/full-deps/python"
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          test -f "$qt/lib/cmake/Qt6Core/Qt6CoreConfig.cmake"
+          test -f "$host/bin/qmake6"
+          test -f "$py/include/python3.14/Python.h"
+          test -f "$py/lib/libpython3.14.so"
+          cmake -S .build/pyside-setup/sources/shiboken6 -B .build/shiboken-android -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$qt" -DQT_HOST_PATH="$host" \
+            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
+            -DPython_LIBRARY="$py/lib/libpython3.14.so" \
+            -DBUILD_TESTS=OFF -DBUILD_SHARED_LIBS=ON \
+            2>&1 | tee shiboken-configure.log
+          cmake --build .build/shiboken-android --parallel 4 2>&1 | tee shiboken-build.log
+          mkdir -p out/python-bindings/shiboken
+          find .build/shiboken-android -type f -name '*.so*' -exec cp -L {} out/python-bindings/shiboken/ \;
+          test -n "$(find out/python-bindings/shiboken -name '*.so*' -print -quit)"
+          for lib in out/python-bindings/shiboken/*.so*; do
+            readelf -h "$lib" | grep -q 'Machine:.*AArch64'
+            ! readelf -d "$lib" | grep -Eq 'libc\.so\.6|ld-linux|libstdc\+\+\.so\.6'
+          done
+      - name: Preserve logs and ARM64 binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-shiboken-cross-build-${{ github.run_id }}
+          path: |
+            shiboken-configure.log
+            shiboken-build.log
+            out/python-bindings/
+          if-no-files-found: warn
