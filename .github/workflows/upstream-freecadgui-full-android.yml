@@ -97,6 +97,19 @@ jobs:
         with:
           path: out/occt-android
           key: occt-fullcad-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Build missing OCCT dependency before any FreeCAD compilation
+        if: steps.occt.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash scripts/android-ndk-smoke.sh
+          bash scripts/build-occt-android.sh
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
+      - name: Save validated OCCT cache for subsequent builds
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
       - name: Restore compiled Qt 6 Android GUI SDK / QtSvg / host Qt tools
         id: qt
         uses: actions/cache/restore@v4
