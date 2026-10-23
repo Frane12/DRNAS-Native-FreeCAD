@@ -28,6 +28,19 @@ jobs:
       - name: Checkout matching Qt for Python
         run: |
           git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
+      - name: Set up supported Linux host Python for Shiboken generator
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install and locate matching Linux host Shiboken6Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'shiboken6-generator==6.8.3'
+          tools_config="$(find "$(python -c 'import site; print(site.getsitepackages()[0])')" -type f -name Shiboken6ToolsConfig.cmake -print -quit)"
+          test -n "$tools_config" || { echo "::error::Shiboken6ToolsConfig.cmake absent in pinned host generator"; exit 1; }
+          echo "SHIBOKEN_HOST_TOOLS_DIR=$(dirname "$tools_config")" >> "$GITHUB_ENV"
+          echo "Validated Linux host Shiboken6Tools package: $tools_config"
       - name: Cross-compile Shiboken6
         run: |
           set -euo pipefail
@@ -39,6 +52,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
             -DCMAKE_PREFIX_PATH="$qt" -DQT_HOST_PATH="$host" \
+            -DShiboken6Tools_DIR="$SHIBOKEN_HOST_TOOLS_DIR" \
             -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
             -DPython_LIBRARY="$py/lib/libpython3.14.so" -DBUILD_TESTS=OFF \
             2>&1 | tee shiboken-configure.log
