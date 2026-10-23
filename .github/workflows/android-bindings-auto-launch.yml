@@ -1,8 +1,5 @@
 name: DRNAS Auto Compile Python GUI Dependencies
 on:
-  workflow_run:
-    workflows: ['DRNAS FreeCADGui QtActivity APK Integration']
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +13,6 @@ concurrency:
 jobs:
   launch:
     name: Dispatch sequential ARM64 bindings build on experimental branch
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'feature/full-freecad-android')
     runs-on: ubuntu-24.04
     steps:
       - name: Verify experimental workflow exists on target branch
@@ -35,4 +31,4 @@ jobs:
           echo "### ARM64 bindings pipeline dispatched" >> "$GITHUB_STEP_SUMMARY"
           echo "Branch: feature/arm64-python-bindings-gates" >> "$GITHUB_STEP_SUMMARY"
           echo "Sequence: Shiboken6 -> PySide6 -> Coin3D -> Pivy." >> "$GITHUB_STEP_SUMMARY"
-          echo "Warning: Pivy stage currently has an intentional failing gate; this is an experimental build, not an APK release." >> "$GITHUB_STEP_SUMMARY"
+          echo "Successful bindings now dispatch APK integration; the APK must not launch bindings again." >> "$GITHUB_STEP_SUMMARY"
