@@ -1,0 +1,32 @@
+name: DRNAS Android Python Bindings Preflight
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/dependency-sequential-bootstrap]
+    paths:
+      - 'full-gui/integrated-apk/stage-python-bindings.py'
+      - 'full-gui/upstream/verify-native-python-bindings.py'
+      - '.github/workflows/android-python-bindings-preflight.yml'
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Python binding integration scripts compile
+        run: |
+          set -euo pipefail
+          python3 -m py_compile full-gui/integrated-apk/stage-python-bindings.py
+          python3 -m py_compile full-gui/upstream/verify-native-python-bindings.py
+      - name: Assert absent Android binding wheels fail closed
+        run: |
+          set -euo pipefail
+          mkdir -p out/android-python-binding-wheels
+          if python3 full-gui/integrated-apk/stage-python-bindings.py \
+            --wheels out/android-python-binding-wheels --stage /tmp/drnas-binding-preflight; then
+            echo '::error::Missing ARM64 binding wheels were incorrectly accepted'
+            exit 1
+          fi
+          echo 'PASS: Missing Android ARM64 wheels correctly block APK packaging'

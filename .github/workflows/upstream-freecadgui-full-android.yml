@@ -97,6 +97,19 @@ jobs:
         with:
           path: out/occt-android
           key: occt-fullcad-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Build missing OCCT dependency before any FreeCAD compilation
+        if: steps.occt.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash scripts/android-ndk-smoke.sh
+          bash scripts/build-occt-android.sh
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
+      - name: Save validated OCCT cache for subsequent builds
+        if: steps.occt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/occt-android
+          key: occt-install-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
       - name: Restore compiled Qt 6 Android GUI SDK / QtSvg / host Qt tools
         id: qt
         uses: actions/cache/restore@v4
@@ -139,6 +152,84 @@ jobs:
         with:
           path: out/full-gui/host-icu73
           key: drnas-qt-host-icu73-v1-${{ hashFiles('full-gui/bootstrap-icu73-host.sh') }}
+      - name: Bootstrap missing hosticu dependency
+        if: steps.host_icu.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash full-gui/bootstrap-icu73-host.sh
+      - name: Cache verified hosticu dependency
+        if: steps.host_icu.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-gui/host-icu73
+          key: drnas-qt-host-icu73-v1-${{ hashFiles('full-gui/bootstrap-icu73-host.sh') }}
+      - name: Bootstrap missing qt dependency
+        if: steps.qt.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash full-port/bootstrap-qt.sh
+          bash full-gui/bootstrap-qt-gui-android.sh
+      - name: Cache verified qt dependency
+        if: steps.qt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt-gui-6.8.3-arm64-v1-${{ hashFiles('full-gui/bootstrap-qt-gui-android.sh', 'full-port/bootstrap-qt.sh', 'full-port/verify-qt-android.sh') }}
+      - name: Bootstrap missing yaml dependency
+        if: steps.yaml.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash full-port/bootstrap-yaml-android.sh
+      - name: Cache verified yaml dependency
+        if: steps.yaml.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/yaml-cpp
+          key: drnas-yaml-cpp-0.8.0-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-yaml-android.sh') }}
+      - name: Bootstrap missing icu dependency
+        if: steps.icu.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash full-port/bootstrap-icu-android.sh
+      - name: Cache verified icu dependency
+        if: steps.icu.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/icu
+          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
+      - name: Bootstrap missing python dependency
+        if: steps.python.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash full-port/bootstrap-python-android.sh
+      - name: Cache verified python dependency
+        if: steps.python.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Bootstrap missing xerces dependency
+        if: steps.xerces.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash full-port/bootstrap-xerces-android.sh
+      - name: Cache verified xerces dependency
+        if: steps.xerces.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/xerces-c
+          key: drnas-xerces325-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-xerces-android.sh') }}
+      - name: Bootstrap missing boost dependency
+        if: steps.boost.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          bash full-port/bootstrap-boost-android.sh
+      - name: Cache verified boost dependency
+        if: steps.boost.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/boost
+          key: drnas-boost188-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-boost-android.sh') }}
       - name: Verify complete Android-target dependency caches
         run: |
           set -euo pipefail
