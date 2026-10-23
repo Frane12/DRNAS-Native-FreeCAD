@@ -1,5 +1,11 @@
 name: ARM64 Python bindings dependency pipeline
 on:
+  push:
+    branches: [feature/arm64-python-bindings-gates]
+    paths:
+      - '.github/workflows/android-bindings-sequential-pipeline.yml'
+      - 'full-port/bootstrap-qt.sh'
+      - 'full-port/bootstrap-python-android.sh'
   workflow_dispatch:
 permissions:
   contents: read
