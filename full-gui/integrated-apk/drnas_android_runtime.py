@@ -8,6 +8,16 @@ import importlib.util
 import faulthandler
 import FreeCAD as App
 
+# Keep exception reporting deterministic on Android terminals without TTY.
+os.environ.setdefault('PYTHON_COLORS', '0')
+os.environ.setdefault('NO_COLOR', '1')
+try:
+    import sys as _drnas_sys
+    if hasattr(_drnas_sys, 'exceptionhook'):
+        _drnas_sys.excepthook = _drnas_sys.__excepthook__
+except Exception:
+    pass
+
 
 def _drnas_mark(message):
     path = os.environ.get('DRNAS_WB_LOG_PATH')
@@ -108,6 +118,13 @@ if not getattr(App, '__drnas_runtime_installed__', False):
             sys.path.append(_drnas_directory)
     importlib.invalidate_caches()
     _drnas_mark('sys.path=' + repr(sys.path))
+    # Observe module availability without importing native extensions or altering FreeCAD.
+    for _drnas_name in ('Sketcher', 'SketcherGui', 'Part', 'PartGui'):
+        try:
+            _drnas_spec = importlib.util.find_spec(_drnas_name)
+            _drnas_mark('MODULE SPEC ' + _drnas_name + '=' + repr(_drnas_spec))
+        except BaseException as _drnas_exc:
+            _drnas_mark('MODULE SPEC ERROR ' + _drnas_name + '=' + repr(_drnas_exc))
     _drnas_mark('APP INIT ERROR=' + str(getattr(App, '__DRNAS_AndroidInitError__', 'none recorded')))
     for _drnas_binding in ('PySide', 'PySide6', 'shiboken6', 'pivy'):
         try:
