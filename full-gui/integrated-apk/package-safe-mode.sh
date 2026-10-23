@@ -129,6 +129,26 @@ test "${#names[@]}" -gt 0
 python3 "$ROOT/full-gui/integrated-apk/stage-freecad-assets.py" \
   "$ARTIFACT/resources" "$work/bundle/assets/drnas" "$STAGE"
 
+# Native Qt/Python/Coin bindings are mandatory for a functional FreeCAD UI.
+# The upstream artifact must provide genuine Android-built extensions.
+# Never substitute host wheels, dummy modules or a pure-Python Pivy stub.
+bindings="$ARTIFACT/python-bindings"
+compat="$ROOT/full-gui/upstream/python-compat/PySide"
+python3 "$ROOT/full-gui/upstream/verify-native-python-bindings.py" "$ARTIFACT" --strict
+test -s "$compat/__init__.py"
+mkdir -p "$work/bundle/assets/drnas/python-site/PySide"
+cp -a "$compat/." "$work/bundle/assets/drnas/python-site/PySide/"
+for package in PySide6 shiboken6 pivy; do
+    test -d "$bindings/$package"
+    mkdir -p "$work/bundle/assets/drnas/python-site/$package"
+    cp -a "$bindings/$package/." "$work/bundle/assets/drnas/python-site/$package/"
+done
+# These packages contain ELF extensions, so extract to filesystem on-device;
+# zipimport cannot load extension modules directly from APK assets.
+python3 "$ROOT/full-gui/upstream/audit-python-bindings.py" \
+  "$work/bundle/assets/drnas/python-site" --require-all
+echo 'PASS: real ARM64 Python bindings and legacy PySide facade staged as extractable assets.'
+
 # Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
 # Keep the same packaging policy. Uncompressed debug DSOs ballooned to >550 MB.
 ( cd "$work/bundle" && zip -q -9 "$work/unsigned.apk" "${names[@]}" )
