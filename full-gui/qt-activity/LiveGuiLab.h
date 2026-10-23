@@ -87,7 +87,7 @@ class DrnasLiveGuiLab : public QObject {
         outline->raise(); panel->raise(); launcher->raise();
     }
     void apply() {
-        if (!ready || !bar) return;
+        if (!ready || !bar || bar->property("drnasFloatingOverlay").toBool()) return;
         const auto area = placement->currentIndex() == 0 ? Qt::TopToolBarArea : Qt::BottomToolBarArea;
         bar->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
         if (host->toolBarArea(bar) != area) host->addToolBar(area, bar);
@@ -100,7 +100,7 @@ class DrnasLiveGuiLab : public QObject {
             .arg(placement->currentText()).arg(height->value()).arg(fontSize->value()).arg(iconSize->value()));
     }
     void reset() {
-        if (!bar) return;
+        if (!bar || bar->property("drnasFloatingOverlay").toBool()) return;
         const QSignalBlocker a(placement), b(height), c(fontSize), d(iconSize);
         bar->setAllowedAreas(Qt::AllToolBarAreas);
         host->addToolBar(originalArea, bar);
