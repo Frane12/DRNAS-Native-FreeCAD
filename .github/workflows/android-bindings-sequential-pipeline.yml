@@ -85,6 +85,26 @@ jobs:
           echo "SHIBOKEN_HOST_TOOLS_DIR=$(dirname "$tools_config")" >> "$GITHUB_ENV"
           echo "SHIBOKEN_HOST_PREFIX=$prefix" >> "$GITHUB_ENV"
           echo "Validated host tools CMake package: $tools_config"
+      - name: Preflight host and Android cross-build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
+          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
+          py="$GITHUB_WORKSPACE/out/full-deps/python"
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          for required in "$qt/lib/cmake/Qt6/Qt6Config.cmake" "$host/lib/cmake/Qt6/Qt6Config.cmake" "$ndk/build/cmake/android.toolchain.cmake" "$py/include/python3.14/Python.h" "$SHIBOKEN_HOST_TOOLS_DIR/Shiboken6ToolsConfig.cmake"; do
+            test -f "$required" || { echo "::error::Preflight missing: $required"; exit 1; }
+          done
+          test -x "$(command -v python3)" || { echo "::error::Missing host Python"; exit 1; }
+          test -d .build/pyside-setup/sources/shiboken6 || { echo "::error::Missing Shiboken source"; exit 1; }
+          test -n "$SHIBOKEN_HOST_PREFIX" || { echo "::error::Missing host Shiboken prefix"; exit 1; }
+          ldd "$host/lib/libQt6Core.so.6" | tee host-qt-preflight-ldd.log
+          if grep -q 'not found' host-qt-preflight-ldd.log; then
+            echo "::error::Host Qt unresolved runtime libraries"; exit 1
+          fi
+          find "$qt/lib" -maxdepth 1 -name 'libQt6Core.so' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
+          echo "Preflight passed: host generator, ICU, Android Qt, Python headers and NDK"
       - name: Cross-compile Shiboken6
         run: |
           set -euo pipefail
