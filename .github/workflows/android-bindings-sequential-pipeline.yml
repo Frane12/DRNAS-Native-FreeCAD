@@ -103,6 +103,7 @@ jobs:
             -DPython_LIBRARY="$py/lib/libpython3.14.so" \
             -DPython_EXECUTABLE="$(command -v python3)" \
             -DPython3_EXECUTABLE="$(command -v python3)" \
+            -DQFP_PYTHON_HOST_PATH="$(command -v python3)" \
             -DSHIBOKEN_PYTHON_EXECUTABLE="$(command -v python3)" -DBUILD_TESTS=OFF \
             2>&1 | tee shiboken-configure.log
           cmake --build .build/shiboken --parallel 4 2>&1 | tee shiboken-build.log
