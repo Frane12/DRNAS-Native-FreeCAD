@@ -7,8 +7,8 @@ import zipfile
 
 BINDINGS = {
     "PySide6": ("PySide6/__init__.py", "PySide6/QtCore", "PySide6/QtWidgets"),
-    "shiboken6": ("shiboken6/__init__.py", "shiboken6/shiboken6"),
-    "pivy": ("pivy/__init__.py", "pivy/coin"),
+    "shiboken6": ("shiboken6/__init__.py", "shiboken6/Shiboken"),
+    "pivy": ("pivy/__init__.py", "pivy/coin.py", "pivy/_coin"),
 }
 def inspect(names):
     results = {}

@@ -16,8 +16,8 @@ import sys
 
 REQUIRED = {
     "PySide6": ("QtCore", "QtGui", "QtWidgets"),
-    "shiboken6": ("shiboken6",),
-    "pivy": ("coin",),
+    "shiboken6": ("Shiboken",),
+    "pivy": ("_coin",),
 }
 ELF_MAGIC = b"\x7fELF"
 AARCH64 = 183

@@ -18,7 +18,7 @@ DEVICE_LIBS = {
     "libandroid.so", "libEGL.so", "libGLESv2.so", "libGLESv3.so",
     "libOpenSLES.so", "libjnigraphics.so", "libvulkan.so",
     "libmediandk.so", "libaaudio.so", "libnativewindow.so",
-    "libatomic.so", "libstdc++.so", "libc++_shared.so",
+    "libatomic.so", "libstdc++.so",
 }
 
 
@@ -32,6 +32,17 @@ def inspect(apk):
             for name in archive.namelist()
             if name.startswith("lib/arm64-v8a/") and name.endswith(".so")
         }
+        extensions = {
+            name: name for name in archive.namelist()
+            if name.startswith("assets/drnas/freecad/Mod/") and name.endswith(".so")
+        }
+        for package, modules in {"PySide6": ("QtCore", "QtGui", "QtWidgets"), "shiboken6": ("Shiboken",), "pivy": ("_coin",)}.items():
+            prefix = f"assets/drnas/freecad/Mod/{package}/"
+            if prefix+"__init__.py" not in archive.namelist():
+                missing.append(("APK assets", prefix+"__init__.py"))
+            for module in modules:
+                if not any(n.startswith(prefix+module) for n in extensions):
+                    missing.append(("APK assets", prefix+module+"*.so"))
         if not libs:
             raise RuntimeError("APK has no arm64-v8a native shared objects")
         required = {
@@ -46,8 +57,8 @@ def inspect(apk):
         for name in sorted(required - libs.keys()):
             missing.append(("APK", name))
         with tempfile.TemporaryDirectory(prefix="drnas-apk-abi-") as tmp:
-            for soname, member in sorted(libs.items()):
-                target = Path(tmp) / soname
+            for soname, member in sorted({**libs, **extensions}.items()):
+                target = Path(tmp) / Path(soname).name
                 with target.open("wb") as fp:
                     fp.write(archive.read(member))
                 header = subprocess.check_output(
