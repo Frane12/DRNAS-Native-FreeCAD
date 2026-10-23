@@ -14,7 +14,7 @@ class DrnasRenderSurfaceGuard final : public QObject {
     QPointer<QWidget> host;
     QPointer<QWindow> observedWindow;
     QList<QPointer<QOpenGLWidget>> suspended;
-    bool surfaceLost=false, paused=false, queued=false;
+    bool surfaceLost=false, paused=false, queued=false, needsRepaint=true;
 
     bool ready() const {
         QWindow* window=host ? host->windowHandle() : nullptr;
@@ -49,8 +49,10 @@ class DrnasRenderSurfaceGuard final : public QObject {
         const auto restore=suspended;
         suspended.clear();
         for (const auto& widget:restore) if (widget) widget->setUpdatesEnabled(true);
-        if (wasPaused) {
-            DrnasDiagnostics::note(QStringLiteral("SURFACE: exposed again; resume Qt-managed GL updates"));
+        if (wasPaused || needsRepaint) {
+            needsRepaint=false;
+            DrnasDiagnostics::note(QStringLiteral("SURFACE: ready %1x%2; queue Qt refresh after expose/resize")
+                .arg(host->width()).arg(host->height()));
             // Queue one normal repaint. Qt owns context/FBO initialization;
             // do not spin on an invalid context or force an EGL retry loop.
             for (auto* widget:host->findChildren<QOpenGLWidget*>())
@@ -79,7 +81,11 @@ protected:
                 scheduleRefresh();
             } else if (event->type()==QEvent::Expose) {
                 if (!window->isExposed()) pause();
+                needsRepaint=true;
                 scheduleRefresh(); // Let Qt finish the expose transition first.
+            } else if (event->type()==QEvent::Resize) {
+                needsRepaint=true;
+                scheduleRefresh();
             }
         }
         if (event->type()==QEvent::ApplicationStateChange) {
@@ -88,6 +94,13 @@ protected:
         }
         if (object==host && (event->type()==QEvent::Show || event->type()==QEvent::Hide ||
                             event->type()==QEvent::WinIdChange)) scheduleRefresh();
+        if (object==host && event->type()==QEvent::Resize) {
+            // Rotation can resize an existing surface without destroying it.
+            // Coalesce resize bursts, then repaint at the new Qt dimensions.
+            // Keep this pending if EGL surface exposure has not returned yet.
+            needsRepaint=true;
+            scheduleRefresh();
+        }
         auto* widget=qobject_cast<QOpenGLWidget*>(object);
         if (widget && host->isAncestorOf(widget)) {
             if (event->type()==QEvent::Show || event->type()==QEvent::ParentChange) scheduleRefresh();
