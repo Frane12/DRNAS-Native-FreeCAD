@@ -4,464 +4,251 @@ on:
     branches: [feature/arm64-python-bindings-gates]
     paths:
       - '.github/workflows/android-bindings-sequential-pipeline.yml'
+      - 'full-port/*bindings*'
       - 'full-port/bootstrap-qt.sh'
       - 'full-port/bootstrap-python-android.sh'
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: android-bindings-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
 env:
   QT_VERSION: '6.8.3'
   ANDROID_API: '26'
   NDK_VERSION: '27.2.12479018'
+  CCACHE_DIR: ${{ github.workspace }}/.cache/bindings-ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_COMPRESS: 'true'
 jobs:
-  shiboken:
+  bindings:
+    name: Host tools → Shiboken → PySide6 → Coin3D → Pivy → ARM64 bundle
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14.8'
-      - name: Install NDK and prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libclang-dev llvm-dev patchelf
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-      - name: Bootstrap Android target Qt and Python
-        run: |
-          bash full-port/bootstrap-qt.sh
-          bash full-port/bootstrap-python-android.sh
-      - name: Checkout matching Qt for Python
-        run: |
-          git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
-      - name: Set up supported Linux host Python for Shiboken generator
+      - name: Supported host Python for Qt 6.8 generator (target remains CPython 3.14)
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install and locate matching Linux host Shiboken6Tools
-        shell: bash
+      - name: Validate workflow and every shell step before building
         run: |
-          set -euo pipefail
-          # The PyPI generator wheel does not ship Shiboken6ToolsConfig.cmake.
-          # Build matching Linux host tools separately; never mix host ELF with Android libs.
-          host_qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          prefix="$GITHUB_WORKSPACE/out/bindings/shiboken-host"
-          # Qt host binaries require ICU 73; Ubuntu 24.04 ships a newer ABI.
-          # Use an available ICU 73.2 amd64 runtime package for host linking only.
-          icu_dir="$RUNNER_TEMP/icu73/lib"
-          mkdir -p "$icu_dir"
-          python3 - <<'PY'
-          import urllib.request, pathlib, subprocess, tempfile
-          base = "https://mirrors.edge.kernel.org/deepin/beige/pool/main/i/icu/"
-          dest = pathlib.Path(__import__("os").environ["RUNNER_TEMP"]) / "icu73"
-          deb = dest / "libicu73.deb"
-          urllib.request.urlretrieve(base + "libicu73_73.2-1deepin1_amd64.deb", deb)
-          subprocess.run(["dpkg-deb", "-x", str(deb), str(dest)], check=True)
-          PY
-          icu_lib="$(find "$RUNNER_TEMP/icu73" -type f -name 'libicuuc.so.73*' -printf '%h\n' -quit)"
-          test -n "$icu_lib" || { echo "::error::ICU 73 libraries missing"; exit 1; }
-          export LD_LIBRARY_PATH="$icu_lib:${LD_LIBRARY_PATH:-}"
-          export LIBRARY_PATH="$icu_lib:${LIBRARY_PATH:-}"
-          export LDFLAGS="-Wl,-rpath-link,$icu_lib ${LDFLAGS:-}"
-          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
-          echo "LIBRARY_PATH=$LIBRARY_PATH" >> "$GITHUB_ENV"
-          echo "LDFLAGS=$LDFLAGS" >> "$GITHUB_ENV"
-          ldd "$host_qt/lib/libQt6Core.so.6" | tee qt-host-ldd.log
-          if ldd "$host_qt/lib/libQt6Core.so.6" | grep -q 'not found'; then
-            echo "::error::Host Qt dependencies unresolved"; exit 1
-          fi
-          test -f "$host_qt/lib/cmake/Qt6/Qt6Config.cmake"
-          cmake -S .build/pyside-setup/sources/shiboken6 -B .build/shiboken-host -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$prefix" \
-            -DCMAKE_PREFIX_PATH="$host_qt" \
-            -DSHIBOKEN_BUILD_TOOLS=ON -DSHIBOKEN_BUILD_LIBS=ON \
-            -DBUILD_TESTS=OFF \
-            2>&1 | tee shiboken-host-configure.log
-          cmake --build .build/shiboken-host --parallel 4 2>&1 | tee shiboken-host-build.log
-          cmake --install .build/shiboken-host
-          tools_config="$(find "$prefix" -type f -name Shiboken6ToolsConfig.cmake -print -quit)"
-          test -n "$tools_config" || { echo "::error::Host source build did not install Shiboken6ToolsConfig.cmake"; exit 1; }
-          echo "SHIBOKEN_HOST_TOOLS_DIR=$(dirname "$tools_config")" >> "$GITHUB_ENV"
-          echo "SHIBOKEN_HOST_PREFIX=$prefix" >> "$GITHUB_ENV"
-          echo "Validated host tools CMake package: $tools_config"
-      - name: Preflight host and Android cross-build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          for required in "$qt/lib/cmake/Qt6/Qt6Config.cmake" "$host/lib/cmake/Qt6/Qt6Config.cmake" "$ndk/build/cmake/android.toolchain.cmake" "$py/include/python3.14/Python.h" "$SHIBOKEN_HOST_TOOLS_DIR/Shiboken6ToolsConfig.cmake"; do
-            test -f "$required" || { echo "::error::Preflight missing: $required"; exit 1; }
-          done
-          test -x "$(command -v python3)" || { echo "::error::Missing host Python"; exit 1; }
-          test -d .build/pyside-setup/sources/shiboken6 || { echo "::error::Missing Shiboken source"; exit 1; }
-          test -n "$SHIBOKEN_HOST_PREFIX" || { echo "::error::Missing host Shiboken prefix"; exit 1; }
-          ldd "$host/lib/libQt6Core.so.6" | tee host-qt-preflight-ldd.log
-          if grep -q 'not found' host-qt-preflight-ldd.log; then
-            echo "::error::Host Qt unresolved runtime libraries"; exit 1
-          fi
-          find "$qt/lib" -maxdepth 1 -name 'libQt6Core.so' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-          test -f "$py/lib/libpython3.14.so" || { echo "::error::Android libpython3.14.so missing"; exit 1; }
-          readelf -h "$py/lib/libpython3.14.so" | grep -q 'Machine:.*AArch64' || { echo "::error::Android libpython architecture mismatch"; exit 1; }
-          nm -D "$py/lib/libpython3.14.so" | grep -q ' PyType_Ready
-      - name: Cross-compile Shiboken6
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/pyside-setup/sources/shiboken6 -B .build/shiboken -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_PREFIX_PATH="$qt" -DCMAKE_FIND_ROOT_PATH="$qt" \
-            -DQt6_DIR="$qt/lib/cmake/Qt6" -DQT_HOST_PATH="$host" \
-            -DShiboken6Tools_DIR="$SHIBOKEN_HOST_TOOLS_DIR" \
-            -DQFP_SHIBOKEN_HOST_PATH="$SHIBOKEN_HOST_PREFIX" \
-            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
-            -DPython_LIBRARY="$py/lib/libpython3.14.so" \
-            -DPython_EXECUTABLE="$(command -v python3)" \
-            -DPython3_EXECUTABLE="$(command -v python3)" \
-            -DQFP_PYTHON_HOST_PATH="$(command -v python3)" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-L$py/lib -Wl,--no-undefined -lpython3.14" \
-            -DSHIBOKEN_PYTHON_EXECUTABLE="$(command -v python3)" -DBUILD_TESTS=OFF \
-            2>&1 | tee shiboken-configure.log
-          cmake --build .build/shiboken --parallel 4 2>&1 | tee shiboken-build.log
-          mkdir -p out/bindings/shiboken
-          find .build/shiboken -type f -name '*.so*' -exec cp -L {} out/bindings/shiboken/ \;
-          test -n "$(find out/bindings/shiboken -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/shiboken/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shiboken-stage
-          path: |
-            out/bindings/shiboken/
-            shiboken-configure.log
-            shiboken-build.log
-          if-no-files-found: warn
-  pyside6:
-    needs: shiboken
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: shiboken-stage
-          path: out/bindings/shiboken
-      - name: Validate Shiboken ARM64 prerequisite
-        run: |
-          set -euo pipefail
-          find out/bindings/shiboken -type f -name '*.so*' -print -quit | grep -q .
-          find out/bindings/shiboken -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-      - name: Install Android PySide build prerequisites
+          python3 -m pip install 'PyYAML==6.0.3'
+          python3 full-port/check-bindings-workflow.py
+      - name: Install host tools and Android NDK
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libclang-dev llvm-dev
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          sudo apt-get install -y cmake ninja-build ccache libclang-dev llvm-dev patchelf swig libgl-dev libegl-dev libxcb-cursor0
+          if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
+          fi
+          mkdir -p out/bindings/logs
+      - name: Prepare isolated host ICU runtime
+        run: bash full-port/build-bindings-stage.sh host-deps
+      - name: Restore compilation cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/bindings-ccache
+          key: bindings-ccache-arm64-ndk27-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: bindings-ccache-arm64-ndk27-
+      - name: Restore existing Qt Android and host SDK
+        id: qt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt-gui-6.8.3-arm64-v1-${{ hashFiles('full-gui/bootstrap-qt-gui-android.sh', 'full-port/bootstrap-qt.sh', 'full-port/verify-qt-android.sh') }}
+      - name: Prepare Qt SDK when not cached
+        if: steps.qt.outputs.cache-hit != 'true'
+        run: |
           bash full-port/bootstrap-qt.sh
-          bash full-port/bootstrap-python-android.sh
-          git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
-          python -m pip install --upgrade pip
-          python -m pip install 'shiboken6==6.8.3' 'shiboken6-generator==6.8.3'
-      - name: Preflight PySide6 target SDK and Shiboken handoff
-        shell: bash
+          bash full-gui/bootstrap-qt-gui-android.sh
+      - name: Save verified Qt SDK immediately
+        if: steps.qt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/qt
+          key: ${{ steps.qt.outputs.cache-primary-key }}
+      - name: Restore official Android CPython SDK
+        id: python
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Prepare target CPython when not cached
+        if: steps.python.outputs.cache-hit != 'true'
+        run: bash full-port/bootstrap-python-android.sh
+      - name: Save target Python SDK immediately
+        if: steps.python.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/full-deps/python
+          key: ${{ steps.python.outputs.cache-primary-key }}
+      - name: Fetch pinned matching sources
+        run: bash full-port/build-bindings-stage.sh sources
+      - name: Build Linux Shiboken generator and validate host dependencies
+        run: bash full-port/build-bindings-stage.sh host
+      - name: Restore completed shiboken SDK checkpoint
+        id: shiboken
+        uses: actions/cache/restore@v4
+        with:
+          path: out/bindings/shiboken-sdk.tar.gz
+          key: bindings-shiboken-arm64-qt683-py314-ndk27-v2-${{ hashFiles('full-port/build-bindings-stage.sh') }}
+      - name: Build or verify cached shiboken Android ARM64 SDK
         run: |
           set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          for required in "$qt/lib/cmake/Qt6/Qt6Config.cmake" "$host/lib/cmake/Qt6/Qt6Config.cmake" "$py/include/python3.14/Python.h" "$ndk/build/cmake/android.toolchain.cmake"; do
-            test -f "$required" || { echo "::error::PySide6 missing $required"; exit 1; }
-          done
-          test -d .build/pyside-setup/sources/pyside6 || { echo "::error::PySide6 sources missing"; exit 1; }
-          find out/bindings/shiboken -type f -name '*.so*' -print -quit | grep -q . || { echo "::error::Shiboken ARM64 artifact missing"; exit 1; }
-          find out/bindings/shiboken -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-          test -n "$(find out/bindings/shiboken -type f -name 'Shiboken6Config.cmake' -print -quit)" || { echo "::error::Shiboken CMake SDK not transferred; library alone is insufficient for PySide6"; exit 1; }
-          echo "PySide6 preflight PASS"
-      - name: Attempt PySide6 Android ARM64 CMake build
-        shell: bash
+          if [[ "${{ steps.shiboken.outputs.cache-hit }}" == true ]]; then
+            mkdir -p out/bindings/target
+            tar xzf out/bindings/shiboken-sdk.tar.gz -C out/bindings/target
+            bash scripts/verify-android-elf.sh out/bindings/target
+          else
+            bash full-port/build-bindings-stage.sh shiboken
+          fi
+      - name: Save successful shiboken checkpoint before next stage
+        if: steps.shiboken.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/bindings/shiboken-sdk.tar.gz
+          key: ${{ steps.shiboken.outputs.cache-primary-key }}
+      - name: Preserve full shiboken SDK with headers and CMake metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: shiboken-stage
+          path: out/bindings/shiboken-sdk.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - name: Restore completed pyside6 SDK checkpoint
+        id: pyside6
+        uses: actions/cache/restore@v4
+        with:
+          path: out/bindings/pyside6-sdk.tar.gz
+          key: bindings-pyside6-arm64-qt683-py314-ndk27-v2-${{ hashFiles('full-port/build-bindings-stage.sh') }}
+      - name: Build or verify cached pyside6 Android ARM64 SDK
         run: |
           set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/pyside-setup/sources/pyside6 -B .build/pyside6-arm64 -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_PREFIX_PATH="$qt;$GITHUB_WORKSPACE/out/bindings/shiboken" \
-            -DQT_HOST_PATH="$host" \
-            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
-            -DPython_LIBRARY="$py/lib/libpython3.14.so" -DBUILD_TESTS=OFF \
-            2>&1 | tee pyside6-configure.log
-          cmake --build .build/pyside6-arm64 --parallel 4 2>&1 | tee pyside6-build.log
-          mkdir -p out/bindings/pyside6
-          find .build/pyside6-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/pyside6/ \;
-          test -n "$(find out/bindings/pyside6 -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/pyside6/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
-        if: always()
+          if [[ "${{ steps.pyside6.outputs.cache-hit }}" == true ]]; then
+            mkdir -p out/bindings/target
+            tar xzf out/bindings/pyside6-sdk.tar.gz -C out/bindings/target
+            bash scripts/verify-android-elf.sh out/bindings/target
+          else
+            bash full-port/build-bindings-stage.sh pyside6
+          fi
+      - name: Save successful pyside6 checkpoint before next stage
+        if: steps.pyside6.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/bindings/pyside6-sdk.tar.gz
+          key: ${{ steps.pyside6.outputs.cache-primary-key }}
+      - name: Preserve full pyside6 SDK with headers and CMake metadata
+        uses: actions/upload-artifact@v4
         with:
           name: pyside6-stage
-          path: |
-            pyside6-configure.log
-            pyside6-build.log
-            out/bindings/pyside6/
-          if-no-files-found: warn
-  coin3d:
-    needs: pyside6
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare Coin3D Android toolchain
+          path: out/bindings/pyside6-sdk.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - name: Restore Android GL4ES and GLU
+        id: gl
+        uses: actions/cache/restore@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+      - name: Build real Android OpenGL compatibility libraries when missing
+        if: steps.gl.outputs.cache-hit != 'true'
+        run: bash full-gui/upstream/build-android-gl4es-glu.sh
+      - name: Save Android OpenGL SDK immediately
+        if: steps.gl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: ${{ steps.gl.outputs.cache-primary-key }}
+      - name: Restore completed coin3d SDK checkpoint
+        id: coin3d
+        uses: actions/cache/restore@v4
+        with:
+          path: out/bindings/coin3d-sdk.tar.gz
+          key: bindings-coin3d-arm64-qt683-py314-ndk27-v2-${{ hashFiles('full-port/build-bindings-stage.sh') }}
+      - name: Build or verify cached coin3d Android ARM64 SDK
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-          git clone --depth 1 https://github.com/coin3d/coin.git .build/coin
-      - name: Preflight Coin3D Android dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" || { echo "::error::Coin3D NDK missing"; exit 1; }
-          test -f .build/coin/CMakeLists.txt || { echo "::error::Coin3D sources missing"; exit 1; }
-          command -v cmake >/dev/null && command -v ninja >/dev/null && command -v readelf >/dev/null || { echo "::error::Coin3D build tools missing"; exit 1; }
-          echo "Coin3D preflight PASS"
-      - name: Cross-compile Coin3D ARM64
-        shell: bash
-        run: |
-          set -euo pipefail
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/coin -B .build/coin-arm64 -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_BUILD_TYPE=Release -DCOIN_BUILD_TESTS=OFF \
-            2>&1 | tee coin-configure.log
-          cmake --build .build/coin-arm64 --parallel 4 2>&1 | tee coin-build.log
-          mkdir -p out/bindings/coin
-          find .build/coin-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/coin/ \;
-          test -n "$(find out/bindings/coin -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/coin/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
-        if: always()
+          if [[ "${{ steps.coin3d.outputs.cache-hit }}" == true ]]; then
+            mkdir -p out/bindings/target
+            tar xzf out/bindings/coin3d-sdk.tar.gz -C out/bindings/target
+            bash scripts/verify-android-elf.sh out/bindings/target
+          else
+            bash full-port/build-bindings-stage.sh coin3d
+          fi
+      - name: Save successful coin3d checkpoint before next stage
+        if: steps.coin3d.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/bindings/coin3d-sdk.tar.gz
+          key: ${{ steps.coin3d.outputs.cache-primary-key }}
+      - name: Preserve full coin3d SDK with headers and CMake metadata
+        uses: actions/upload-artifact@v4
         with:
           name: coin3d-stage
+          path: out/bindings/coin3d-sdk.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - name: Restore completed pivy SDK checkpoint
+        id: pivy
+        uses: actions/cache/restore@v4
+        with:
+          path: out/bindings/pivy-sdk.tar.gz
+          key: bindings-pivy-arm64-qt683-py314-ndk27-v2-${{ hashFiles('full-port/build-bindings-stage.sh') }}
+      - name: Build or verify cached pivy Android ARM64 SDK
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.pivy.outputs.cache-hit }}" == true ]]; then
+            mkdir -p out/bindings/target
+            tar xzf out/bindings/pivy-sdk.tar.gz -C out/bindings/target
+            bash scripts/verify-android-elf.sh out/bindings/target
+          else
+            bash full-port/build-bindings-stage.sh pivy
+          fi
+      - name: Save successful pivy checkpoint before next stage
+        if: steps.pivy.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/bindings/pivy-sdk.tar.gz
+          key: ${{ steps.pivy.outputs.cache-primary-key }}
+      - name: Preserve full pivy SDK with headers and CMake metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: pivy-stage
+          path: out/bindings/pivy-sdk.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+      - name: Audit and package complete runtime bindings
+        run: bash full-port/build-bindings-stage.sh bundle
+      - name: Upload verified ARM64 runtime bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-python-bindings-arm64
           path: |
-            coin-configure.log
-            coin-build.log
-            out/bindings/coin/
-          if-no-files-found: warn
-  pivy:
-    needs: coin3d
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: coin3d-stage
-          path: out/coin-stage
-      - uses: actions/download-artifact@v4
-        with:
-          name: shiboken-stage
-          path: out/shiboken-stage
-      - name: Preflight Pivy Coin3D and Shiboken ARM64 inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for folder in out/coin-stage out/shiboken-stage; do
-            test -d "$folder" || { echo "::error::Pivy dependency artifact missing: $folder"; exit 1; }
-            find "$folder" -type f -name '*.so*' -print -quit | grep -q . || { echo "::error::Pivy dependency shared libraries missing: $folder"; exit 1; }
-            find "$folder" -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-          done
-          echo "Pivy prerequisite artifacts PASS (cross-build implementation still pending)"
-      - name: Pivy cross-build gate
-        run: |
-          echo "::error::Pivy requires Coin3D and Shiboken generator; ARM64 build not yet implemented."
-          exit 1
- || { echo "::error::Android Python missing PyType_Ready export"; exit 1; }
-          echo "Preflight passed: host generator, ICU, Android Qt, Python headers and ARM64 libpython"
-      - name: Cross-compile Shiboken6
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/pyside-setup/sources/shiboken6 -B .build/shiboken -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_PREFIX_PATH="$qt" -DCMAKE_FIND_ROOT_PATH="$qt" \
-            -DQt6_DIR="$qt/lib/cmake/Qt6" -DQT_HOST_PATH="$host" \
-            -DShiboken6Tools_DIR="$SHIBOKEN_HOST_TOOLS_DIR" \
-            -DQFP_SHIBOKEN_HOST_PATH="$SHIBOKEN_HOST_PREFIX" \
-            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
-            -DPython_LIBRARY="$py/lib/libpython3.14.so" \
-            -DPython_EXECUTABLE="$(command -v python3)" \
-            -DPython3_EXECUTABLE="$(command -v python3)" \
-            -DQFP_PYTHON_HOST_PATH="$(command -v python3)" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-L$py/lib -Wl,--no-undefined -lpython3.14" \
-            -DSHIBOKEN_PYTHON_EXECUTABLE="$(command -v python3)" -DBUILD_TESTS=OFF \
-            2>&1 | tee shiboken-configure.log
-          cmake --build .build/shiboken --parallel 4 2>&1 | tee shiboken-build.log
-          mkdir -p out/bindings/shiboken
-          find .build/shiboken -type f -name '*.so*' -exec cp -L {} out/bindings/shiboken/ \;
-          test -n "$(find out/bindings/shiboken -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/shiboken/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
+            out/bindings/android-python-bindings-arm64.tar.gz
+            out/bindings/android-python-bindings-arm64.sha256
+            out/bindings/STATUS.txt
+          if-no-files-found: error
+      - name: Save compiler cache even if a later stage failed
         if: always()
+        uses: actions/cache/save@v4
         with:
-          name: shiboken-stage
-          path: |
-            out/bindings/shiboken/
-            shiboken-configure.log
-            shiboken-build.log
-          if-no-files-found: warn
-  pyside6:
-    needs: shiboken
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: shiboken-stage
-          path: out/bindings/shiboken
-      - name: Validate Shiboken ARM64 prerequisite
-        run: |
-          set -euo pipefail
-          find out/bindings/shiboken -type f -name '*.so*' -print -quit | grep -q .
-          find out/bindings/shiboken -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-      - name: Install Android PySide build prerequisites
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libclang-dev llvm-dev
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-          bash full-port/bootstrap-qt.sh
-          bash full-port/bootstrap-python-android.sh
-          git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
-          python -m pip install --upgrade pip
-          python -m pip install 'shiboken6==6.8.3' 'shiboken6-generator==6.8.3'
-      - name: Preflight PySide6 target SDK and Shiboken handoff
-        shell: bash
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          for required in "$qt/lib/cmake/Qt6/Qt6Config.cmake" "$host/lib/cmake/Qt6/Qt6Config.cmake" "$py/include/python3.14/Python.h" "$ndk/build/cmake/android.toolchain.cmake"; do
-            test -f "$required" || { echo "::error::PySide6 missing $required"; exit 1; }
-          done
-          test -d .build/pyside-setup/sources/pyside6 || { echo "::error::PySide6 sources missing"; exit 1; }
-          find out/bindings/shiboken -type f -name '*.so*' -print -quit | grep -q . || { echo "::error::Shiboken ARM64 artifact missing"; exit 1; }
-          find out/bindings/shiboken -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-          test -n "$(find out/bindings/shiboken -type f -name 'Shiboken6Config.cmake' -print -quit)" || { echo "::error::Shiboken CMake SDK not transferred; library alone is insufficient for PySide6"; exit 1; }
-          echo "PySide6 preflight PASS"
-      - name: Attempt PySide6 Android ARM64 CMake build
-        shell: bash
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/pyside-setup/sources/pyside6 -B .build/pyside6-arm64 -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_PREFIX_PATH="$qt;$GITHUB_WORKSPACE/out/bindings/shiboken" \
-            -DQT_HOST_PATH="$host" \
-            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
-            -DPython_LIBRARY="$py/lib/libpython3.14.so" -DBUILD_TESTS=OFF \
-            2>&1 | tee pyside6-configure.log
-          cmake --build .build/pyside6-arm64 --parallel 4 2>&1 | tee pyside6-build.log
-          mkdir -p out/bindings/pyside6
-          find .build/pyside6-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/pyside6/ \;
-          test -n "$(find out/bindings/pyside6 -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/pyside6/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
+          path: .cache/bindings-ccache
+          key: bindings-ccache-arm64-ndk27-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Preserve diagnostics on success or failure
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: pyside6-stage
+          name: bindings-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            pyside6-configure.log
-            pyside6-build.log
-            out/bindings/pyside6/
+            out/bindings/logs/
+            out/full-freecad/*log
+            .build/shiboken/CMakeCache.txt
+            .build/pyside6-arm64/CMakeCache.txt
+            .build/coin-arm64/CMakeCache.txt
+            .build/pivy-arm64/CMakeCache.txt
           if-no-files-found: warn
-  coin3d:
-    needs: pyside6
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare Coin3D Android toolchain
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-          git clone --depth 1 https://github.com/coin3d/coin.git .build/coin
-      - name: Preflight Coin3D Android dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" || { echo "::error::Coin3D NDK missing"; exit 1; }
-          test -f .build/coin/CMakeLists.txt || { echo "::error::Coin3D sources missing"; exit 1; }
-          command -v cmake >/dev/null && command -v ninja >/dev/null && command -v readelf >/dev/null || { echo "::error::Coin3D build tools missing"; exit 1; }
-          echo "Coin3D preflight PASS"
-      - name: Cross-compile Coin3D ARM64
-        shell: bash
-        run: |
-          set -euo pipefail
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/coin -B .build/coin-arm64 -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_BUILD_TYPE=Release -DCOIN_BUILD_TESTS=OFF \
-            2>&1 | tee coin-configure.log
-          cmake --build .build/coin-arm64 --parallel 4 2>&1 | tee coin-build.log
-          mkdir -p out/bindings/coin
-          find .build/coin-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/coin/ \;
-          test -n "$(find out/bindings/coin -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/coin/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coin3d-stage
-          path: |
-            coin-configure.log
-            coin-build.log
-            out/bindings/coin/
-          if-no-files-found: warn
-  pivy:
-    needs: coin3d
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: coin3d-stage
-          path: out/coin-stage
-      - uses: actions/download-artifact@v4
-        with:
-          name: shiboken-stage
-          path: out/shiboken-stage
-      - name: Preflight Pivy Coin3D and Shiboken ARM64 inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for folder in out/coin-stage out/shiboken-stage; do
-            test -d "$folder" || { echo "::error::Pivy dependency artifact missing: $folder"; exit 1; }
-            find "$folder" -type f -name '*.so*' -print -quit | grep -q . || { echo "::error::Pivy dependency shared libraries missing: $folder"; exit 1; }
-            find "$folder" -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-          done
-          echo "Pivy prerequisite artifacts PASS (cross-build implementation still pending)"
-      - name: Pivy cross-build gate
-        run: |
-          echo "::error::Pivy requires Coin3D and Shiboken generator; ARM64 build not yet implemented."
-          exit 1
