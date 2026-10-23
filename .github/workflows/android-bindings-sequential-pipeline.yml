@@ -47,15 +47,15 @@ jobs:
           host_qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
           prefix="$GITHUB_WORKSPACE/out/bindings/shiboken-host"
           # Qt host binaries require ICU 73; Ubuntu 24.04 ships a newer ABI.
-          # Use the matching Ubuntu 23.10 ICU runtime libraries for host linking only.
+          # Use an available ICU 73.2 amd64 runtime package for host linking only.
           icu_dir="$RUNNER_TEMP/icu73/lib"
           mkdir -p "$icu_dir"
           python3 - <<'PY'
           import urllib.request, pathlib, subprocess, tempfile
-          base = "https://old-releases.ubuntu.com/ubuntu/pool/main/i/icu/"
+          base = "https://mirrors.edge.kernel.org/deepin/beige/pool/main/i/icu/"
           dest = pathlib.Path(__import__("os").environ["RUNNER_TEMP"]) / "icu73"
           deb = dest / "libicu73.deb"
-          urllib.request.urlretrieve(base + "libicu73_73.2-1ubuntu3_amd64.deb", deb)
+          urllib.request.urlretrieve(base + "libicu73_73.2-1deepin1_amd64.deb", deb)
           subprocess.run(["dpkg-deb", "-x", str(deb), str(dest)], check=True)
           PY
           icu_lib="$(find "$RUNNER_TEMP/icu73" -type f -name 'libicuuc.so.73*' -printf '%h\n' -quit)"
