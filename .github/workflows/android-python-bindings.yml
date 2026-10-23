@@ -23,7 +23,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build clang git libclang-dev llvm-dev
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk:$NDK_VERSION"
+          if [ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" || true
+          fi
+          test -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" || {
+            echo "::error::Required Android NDK unavailable"
+            ls -la "$ANDROID_HOME/ndk" || true
+            exit 1
+          }
       - uses: actions/cache/restore@v4
         id: qt
         with:
