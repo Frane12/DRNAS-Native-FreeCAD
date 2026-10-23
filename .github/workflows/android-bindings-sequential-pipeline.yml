@@ -206,6 +206,24 @@ jobs:
           path: out/bindings/coin3d-sdk.tar.gz
           if-no-files-found: error
           retention-days: 14
+      - name: Prepare and preflight Pivy SWIG standard-header parsing
+        run: |
+          set -euo pipefail
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          cxx_headers="$ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/c++/v1"
+          for header in climits new; do
+            test -s "$cxx_headers/$header"
+            # Pivy already has parse-only standard-header placeholders in
+            # fake_headers/. Complete that upstream SWIG mechanism only.
+            # C++ compilation still uses the real NDK libc++ headers.
+            printf '// SWIG parsing only; compilation uses NDK libc++.\n' > ".build/pivy/fake_headers/$header"
+          done
+          probe="$RUNNER_TEMP/pivy-standard-headers"
+          printf '#include <climits>\n#include <new>\n' > "$probe.i"
+          swig -c++ -python -includeall -I"$GITHUB_WORKSPACE/.build/pivy/fake_headers" -E "$probe.i" > "$probe-preprocessed.txt"
+          printf '#include <climits>\n#include <new>\nstatic_assert(INT_MAX > 0);\n' > "$probe.cpp"
+          "$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android$ANDROID_API-clang++" -std=c++17 -fsyntax-only "$probe.cpp"
+          echo 'PASS: SWIG parses standard includes and Android compiler resolves genuine libc++ headers'
       - name: Restore completed pivy SDK checkpoint
         id: pivy
         uses: actions/cache/restore@v4
