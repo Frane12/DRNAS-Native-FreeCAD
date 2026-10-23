@@ -16,10 +16,11 @@ env:
   NDK_VERSION: '27.2.12479018'
   ANDROID_API: '26'
   CCACHE_DIR: ${{ github.workspace }}/.cache/full-freecad
-  CCACHE_MAXSIZE: '2G'
+  CCACHE_MAXSIZE: '4G'
   CCACHE_COMPRESS: 'true'
   CCACHE_BASEDIR: ${{ github.workspace }}
   CCACHE_NOHASHDIR: 'true'
+  CCACHE_COMPILERCHECK: 'content'
 
 concurrency:
   group: drnas-genuine-freecadgui-full-build-${{ github.ref }}
@@ -213,6 +214,14 @@ jobs:
           key: full-freecad-android-arm64-ndk27-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             full-freecad-android-arm64-ndk27-
+
+      - name: Verify restored incremental compiler cache
+        run: |
+          set -euo pipefail
+          ccache --version
+          ccache --max-size "$CCACHE_MAXSIZE"
+          ccache --show-stats
+          echo "Incremental compiler cache restored; only changed source files should recompile."
 
       - name: Attempt REAL upstream FreeCADGui CMake + compilation
         id: build
