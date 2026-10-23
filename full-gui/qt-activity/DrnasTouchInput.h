@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDialog>
 #include <QEvent>
+#include <QElapsedTimer>
 #include <QFrame>
 #include <QGraphicsView>
 #include <QGridLayout>
@@ -97,12 +98,17 @@ class DrnasTouchInput final : public QObject {
     QPushButton* launcher;
     QPushButton* hold;
     DrnasPointerMark* mark;
+    QPointer<DrnasPointerMark> dialogMark;
     QSlider* zoom;
     QTimer zoomTimer;
     QPointer<QWidget> mouseReceiver;
     QPointer<QWidget> keyReceiver;
     QPointF cursor;
     QPoint dragOffset;
+    QPointF relativeLast, relativeStart;
+    QElapsedTimer relativeClock;
+    bool relativeActive=false, relativeMoved=false;
+    int relativeTouchId=-1;
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
@@ -112,12 +118,20 @@ class DrnasTouchInput final : public QObject {
 
     QPoint globalPoint() const { return host->mapToGlobal(cursor.toPoint()); }
     QWidget* targetAtCursor() const {
-        if (QWidget* modal=QApplication::activeModalWidget()) return modal;
-        if (!cad) return nullptr;
-        const QPoint p=cad->mapFromGlobal(globalPoint());
-        if (!cad->rect().contains(p)) return cad;
-        QWidget* target=cad->childAt(p);
-        return target ? target : cad.data();
+        // Resolve the actual button/viewport under the virtual cursor,
+        // including modal dialogs, menus and the shell's own tool controls.
+        QWidget* root=QApplication::activePopupWidget();
+        if (!root) root=QApplication::activeModalWidget();
+        if (root) {
+            const QPoint p=root->mapFromGlobal(globalPoint());
+            if (!root->rect().contains(p)) return nullptr;
+            QWidget* child=root->childAt(p);
+            return child ? child : root;
+        }
+        QWidget* hit=QApplication::widgetAt(globalPoint());
+        if (hit && (hit==host || host->isAncestorOf(hit))) return hit;
+        const QPoint p=host->mapFromGlobal(globalPoint());
+        return host->rect().contains(p) ? host->childAt(p) : nullptr;
     }
     QWidget* keyboardTarget() const {
         QWidget* focus=QApplication::focusWidget();
@@ -186,16 +200,50 @@ class DrnasTouchInput final : public QObject {
         mouseReceiver.clear();
     }
     void showPointer() {
-        if (!cad) return;
-        const QRect r=QRect(cad->mapTo(host,QPoint()),cad->size()).intersected(host->rect());
+        const QRect r=host->rect();
         if (r.isEmpty()) return;
         cursor.setX(std::clamp(cursor.x(),double(r.left()),double(r.right())));
         cursor.setY(std::clamp(cursor.y(),double(r.top()),double(r.bottom())));
-        mark->move(cursor.toPoint()-QPoint(12,12)); mark->show(); mark->raise();
+        QWidget* top=QApplication::activePopupWidget();
+        if (!top) top=QApplication::activeModalWidget();
+        if (top) {
+            mark->hide();
+            if (!dialogMark || dialogMark->parentWidget()!=top) {
+                if (dialogMark) dialogMark->hide();
+                dialogMark=static_cast<DrnasPointerMark*>(top->findChild<QWidget*>(QStringLiteral("drnasModalPointer"),Qt::FindDirectChildrenOnly));
+                if (!dialogMark) {
+                    dialogMark=new DrnasPointerMark(top);
+                    dialogMark->setObjectName(QStringLiteral("drnasModalPointer"));
+                }
+            }
+            dialogMark->move(top->mapFromGlobal(globalPoint())-QPoint(12,12));
+            dialogMark->show(); dialogMark->raise();
+        } else {
+            if (dialogMark) dialogMark->hide();
+            mark->move(cursor.toPoint()-QPoint(12,12)); mark->show(); mark->raise();
+        }
     }
     void movePointer(QPointF delta) {
         cursor+=delta*(double(speed)/100.0);
         showPointer(); sendMouse(QEvent::MouseMove,Qt::NoButton);
+    }
+    void beginRelative(const QPointF& p) {
+        relativeActive=true; relativeMoved=false;
+        relativeLast=relativeStart=p; relativeClock.start();
+        showPointer();
+    }
+    void updateRelative(const QPointF& p) {
+        if (!relativeActive) return;
+        if ((p-relativeStart).manhattanLength()>QApplication::startDragDistance()) relativeMoved=true;
+        movePointer(p-relativeLast); relativeLast=p;
+    }
+    void endRelative(const QPointF& p) {
+        if (!relativeActive) return;
+        updateRelative(p); relativeActive=false;
+        if (!relativeMoved && relativeClock.elapsed()<350 && buttons==Qt::NoButton) {
+            mouseButton(Qt::LeftButton,true);
+            mouseButton(Qt::LeftButton,false);
+        }
     }
     void zoomStep() {
         if (QApplication::activeModalWidget()) { queuedZoom=0; zoomTimer.stop(); return; }
@@ -230,16 +278,34 @@ class DrnasTouchInput final : public QObject {
         launcher->setGeometry(std::max(0,host->width()-77),std::max(0,host->height()-90),72,34);
         panel->raise(); launcher->raise();
     }
-    void repairWindows(bool maximize=false) {
+    void repairWindows() {
         if (!cad || repairing) return;
         repairing=true;
         for (auto* area : cad->findChildren<QMdiArea*>()) {
+            // Desktop cascade positions are relative to the MDI viewport,
+            // not to the screen. New documents must fill this viewport.
+            if (!area->property("drnasMobileMdi").toBool()) {
+                area->setProperty("drnasMobileMdi",true);
+                area->setOption(QMdiArea::DontMaximizeSubWindowOnActivation,false);
+                connect(area,&QMdiArea::subWindowActivated,this,[this](QMdiSubWindow*){scheduleRepair();});
+            }
             const QSize available=area->viewport()->size();
             if (available.width()<32 || available.height()<32) continue;
             const QRect bounds(QPoint(),available);
             for (auto* sub : area->subWindowList()) {
                 if (!sub->isVisible()) continue;
-                if (maximize && sub==area->activeSubWindow()) { sub->showMaximized(); continue; }
+                if (sub==area->activeSubWindow() || !sub->property("drnasMobilePlaced").toBool()) {
+                    sub->setProperty("drnasMobilePlaced",true);
+                    sub->setMinimumSize(0,0);
+                    if (!sub->isMaximized()) {
+                        sub->move(0,0);
+                        sub->resize(available);
+                        sub->showMaximized();
+                        DrnasDiagnostics::note(QStringLiteral("MDI: document maximized in viewport %1x%2")
+                            .arg(available.width()).arg(available.height()));
+                    }
+                    continue;
+                }
                 if (bounds.contains(sub->geometry())) continue;
                 sub->setMinimumSize(0,0);
                 const QSize size=sub->size().boundedTo(available);
@@ -270,7 +336,50 @@ class DrnasTouchInput final : public QObject {
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
         if (injecting) return false;
-        if (event->type()==QEvent::ApplicationDeactivate || (obj==host && event->type()==QEvent::Hide)) releaseAll();
+        auto* inputWidget=qobject_cast<QWidget*>(obj);
+        QWidget* modal=QApplication::activeModalWidget();
+        QWidget* popup=QApplication::activePopupWidget();
+        const bool inApp=inputWidget && (inputWidget==host || host->isAncestorOf(inputWidget) ||
+            (modal && (inputWidget==modal || modal->isAncestorOf(inputWidget))) ||
+            (popup && (inputWidget==popup || popup->isAncestorOf(inputWidget))));
+        // Keep the compact mouse/key panel directly operable. Everywhere
+        // else is a relative touchpad; lifting a finger never warps the cursor.
+        const bool directControl=inputWidget &&
+            (inputWidget==panel || panel->isAncestorOf(inputWidget) || inputWidget==launcher);
+        if (inApp && !directControl) {
+            if (event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate || event->type()==QEvent::TouchEnd) {
+                auto* touch=static_cast<QTouchEvent*>(event);
+                for (const auto& point:touch->points()) {
+                    if (relativeTouchId<0 && point.state()==QEventPoint::State::Pressed) {
+                        relativeTouchId=point.id(); beginRelative(point.globalPosition());
+                    }
+                    if (point.id()!=relativeTouchId) continue;
+                    if (point.state()==QEventPoint::State::Released) {
+                        endRelative(point.globalPosition()); relativeTouchId=-1;
+                    } else updateRelative(point.globalPosition());
+                }
+                event->accept(); return true;
+            }
+            if (event->type()==QEvent::TouchCancel) {
+                relativeActive=false; relativeTouchId=-1; releaseAll(); event->accept(); return true;
+            }
+            if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
+                event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick) {
+                auto* mouse=static_cast<QMouseEvent*>(event);
+                if (mouse->source()!=Qt::MouseEventNotSynthesized) {
+                    if (relativeTouchId<0) {
+                        if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseButtonDblClick)
+                            beginRelative(mouse->globalPosition());
+                        else if (event->type()==QEvent::MouseButtonRelease) endRelative(mouse->globalPosition());
+                        else updateRelative(mouse->globalPosition());
+                    }
+                    event->accept(); return true;
+                }
+            }
+        }
+        if (event->type()==QEvent::ApplicationDeactivate || (obj==host && event->type()==QEvent::Hide)) {
+            relativeActive=false; relativeTouchId=-1; releaseAll();
+        }
         if (obj==host && event->type()==QEvent::Resize) {
             releaseAll();
             QSettings s;
@@ -279,8 +388,8 @@ protected:
             cursor=QPointF(host->width()/2.0,host->height()/2.0); scheduleRepair();
         }
         if ((event->type()==QEvent::Show || event->type()==QEvent::Move || event->type()==QEvent::Resize) &&
-            (qobject_cast<QMdiSubWindow*>(obj) || qobject_cast<QDialog*>(obj))) scheduleRepair();
-        if (obj==panel && event->type()==QEvent::Hide) { releaseAll(); mark->hide(); savePosition(); }
+            (qobject_cast<QMdiSubWindow*>(obj) || qobject_cast<QDialog*>(obj) || qobject_cast<QMdiArea*>(obj))) scheduleRepair();
+        if (obj==panel && event->type()==QEvent::Hide) { releaseAll(); savePosition(); }
         if (obj==grip) {
             if (event->type()==QEvent::MouseButtonPress) {
                 auto* e=static_cast<QMouseEvent*>(event);
@@ -368,7 +477,7 @@ public:
         body->addLayout(keys);
         auto* footer=new QHBoxLayout;
         auto* recover=button(QStringLiteral("Vrati prozore")); footer->addWidget(recover);
-        connect(recover,&QPushButton::clicked,this,[this]{releaseAll();repairWindows(true);constrain();savePosition();DrnasDiagnostics::note(QStringLiteral("INPUT: visible windows recovered"));});
+        connect(recover,&QPushButton::clicked,this,[this]{releaseAll();repairWindows();constrain();savePosition();DrnasDiagnostics::note(QStringLiteral("INPUT: visible windows recovered"));});
         auto* gear=button(QStringLiteral("⚙")); gear->setFixedWidth(34); footer->addWidget(gear); body->addLayout(footer);
         auto* options=new QWidget(content); auto* optionLayout=new QVBoxLayout(options); optionLayout->setContentsMargins(0,0,0,0);
         optionLayout->addWidget(new QLabel(QStringLiteral("Brzina pokazivača"),options));
@@ -390,6 +499,7 @@ public:
         constrain(); panel->hide(); launcher->show();
         qApp->installEventFilter(this);
         scheduleRepair();
-        DrnasDiagnostics::note(QStringLiteral("INPUT: floating mouse, hold buttons, modifiers, keys and spring zoom installed"));
+        showPointer();
+        DrnasDiagnostics::note(QStringLiteral("INPUT: default full-screen relative touchpad, tap to click; mobile MDI maximize enabled"));
     }
 };
