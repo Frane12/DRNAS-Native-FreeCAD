@@ -42,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build ccache libclang-dev llvm-dev patchelf swig libgl-dev libegl-dev libxcb-cursor0
+          sudo apt-get install -y cmake ninja-build ccache libclang-dev llvm-dev patchelf swig libgl-dev libegl-dev libgles-dev libxcb-cursor0
           if [[ ! -f "$ANDROID_HOME/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]]; then
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
           fi
@@ -120,6 +120,12 @@ jobs:
           path: out/bindings/shiboken-sdk.tar.gz
           if-no-files-found: error
           retention-days: 14
+      - name: Preflight host generator OpenGL ES parsing headers
+        run: |
+          set -euo pipefail
+          test -s /usr/include/GLES2/gl2.h
+          test -s /usr/include/GLES3/gl3.h
+          printf '#include <GLES2/gl2.h>\n' | c++ -x c++ -E - > /dev/null
       - name: Restore completed pyside6 SDK checkpoint
         id: pyside6
         uses: actions/cache/restore@v4
