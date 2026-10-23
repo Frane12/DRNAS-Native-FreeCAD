@@ -357,7 +357,8 @@ p.write_text('#include <cstdlib>\\n' + s.replace(needle, replacement))
 print('Original FreeCAD AppHomePath now resolves bundled Android workbenches')
 PY_DRNAS_HOME
 """
-workbench_diagnostics_patch = 'python3 "$ROOT/full-gui/upstream/patch-workbench-diagnostics.py" "$SOURCE"\n'
+workbench_diagnostics_patch = ('python3 "$ROOT/full-gui/upstream/patch-workbench-diagnostics.py" "$SOURCE"\n'
+                               'python3 "$ROOT/full-gui/upstream/patch-document-diagnostics.py" "$SOURCE"\n')
 # Android's Bionic runtime does not ship desktop fontconfig headers/libs.
 # Preserve FreeCAD Sketcher's real TrueType/OpenType font discovery via Qt
 # and the device's actual font directories, without a dummy fontconfig shim.
