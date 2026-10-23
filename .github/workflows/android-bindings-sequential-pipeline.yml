@@ -1,158 +1,25 @@
-name: ARM64 Python bindings dependency pipeline
+name: Start verified ARM64 bindings and APK pipeline
 on:
   workflow_dispatch:
 permissions:
   contents: read
-env:
-  QT_VERSION: '6.8.3'
-  ANDROID_API: '26'
-  NDK_VERSION: '27.2.12479018'
+  actions: write
 jobs:
-  shiboken:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14.8'
-      - name: Install NDK and prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libclang-dev llvm-dev patchelf
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-      - name: Bootstrap Android target Qt and Python
-        run: |
-          bash full-port/bootstrap-qt.sh
-          bash full-port/bootstrap-python-android.sh
-      - name: Checkout matching Qt for Python
-        run: |
-          git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
-      - name: Cross-compile Shiboken6
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/pyside-setup/sources/shiboken6 -B .build/shiboken -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_PREFIX_PATH="$qt" -DQT_HOST_PATH="$host" \
-            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
-            -DPython_LIBRARY="$py/lib/libpython3.14.so" -DBUILD_TESTS=OFF \
-            2>&1 | tee shiboken-configure.log
-          cmake --build .build/shiboken --parallel 4 2>&1 | tee shiboken-build.log
-          mkdir -p out/bindings/shiboken
-          find .build/shiboken -type f -name '*.so*' -exec cp -L {} out/bindings/shiboken/ \;
-          test -n "$(find out/bindings/shiboken -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/shiboken/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: shiboken-stage
-          path: |
-            out/bindings/shiboken/
-            shiboken-configure.log
-            shiboken-build.log
-          if-no-files-found: warn
-  pyside6:
-    needs: shiboken
+  start-sequential-build:
+    name: Preflight build source and start maintained ARM64 pipeline
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: shiboken-stage
-          path: out/bindings/shiboken
-      - name: Validate Shiboken ARM64 prerequisite
+      - name: Validate maintained build source before dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          find out/bindings/shiboken -type f -name '*.so*' -print -quit | grep -q .
-          find out/bindings/shiboken -type f -name '*.so*' -exec sh -c 'readelf -h "$1" | grep -q "Machine:.*AArch64"' _ {} \;
-      - name: Install Android PySide build prerequisites
+          gh api "repos/$GITHUB_REPOSITORY/branches/feature/arm64-python-bindings-gates" --jq .commit.sha
+          gh api "repos/$GITHUB_REPOSITORY/contents/full-port/build-bindings-stage.sh?ref=feature/arm64-python-bindings-gates" --jq .sha
+      - name: Start sequential dependency build with automatic APK integration
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libclang-dev llvm-dev
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-          bash full-port/bootstrap-qt.sh
-          bash full-port/bootstrap-python-android.sh
-          git clone --depth 1 --branch v6.8.3 https://code.qt.io/pyside/pyside-setup.git .build/pyside-setup
-          python -m pip install --upgrade pip
-          python -m pip install 'shiboken6==6.8.3' 'shiboken6-generator==6.8.3'
-      - name: Attempt PySide6 Android ARM64 CMake build
-        shell: bash
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          py="$GITHUB_WORKSPACE/out/full-deps/python"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/pyside-setup/sources/pyside6 -B .build/pyside6-arm64 -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_PREFIX_PATH="$qt;$GITHUB_WORKSPACE/out/bindings/shiboken" \
-            -DQT_HOST_PATH="$host" \
-            -DPython_ROOT_DIR="$py" -DPython_INCLUDE_DIR="$py/include/python3.14" \
-            -DPython_LIBRARY="$py/lib/libpython3.14.so" -DBUILD_TESTS=OFF \
-            2>&1 | tee pyside6-configure.log
-          cmake --build .build/pyside6-arm64 --parallel 4 2>&1 | tee pyside6-build.log
-          mkdir -p out/bindings/pyside6
-          find .build/pyside6-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/pyside6/ \;
-          test -n "$(find out/bindings/pyside6 -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/pyside6/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: pyside6-stage
-          path: |
-            pyside6-configure.log
-            pyside6-build.log
-            out/bindings/pyside6/
-          if-no-files-found: warn
-  coin3d:
-    needs: pyside6
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Prepare Coin3D Android toolchain
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
-          git clone --depth 1 https://github.com/coin3d/coin.git .build/coin
-      - name: Cross-compile Coin3D ARM64
-        shell: bash
-        run: |
-          set -euo pipefail
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S .build/coin -B .build/coin-arm64 -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$ANDROID_API \
-            -DCMAKE_BUILD_TYPE=Release -DCOIN_BUILD_TESTS=OFF \
-            2>&1 | tee coin-configure.log
-          cmake --build .build/coin-arm64 --parallel 4 2>&1 | tee coin-build.log
-          mkdir -p out/bindings/coin
-          find .build/coin-arm64 -type f -name '*.so*' -exec cp -L {} out/bindings/coin/ \;
-          test -n "$(find out/bindings/coin -type f -name '*.so*' -print -quit)"
-          for so in out/bindings/coin/*.so*; do readelf -h "$so" | grep -q 'Machine:.*AArch64'; done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coin3d-stage
-          path: |
-            coin-configure.log
-            coin-build.log
-            out/bindings/coin/
-          if-no-files-found: warn
-  pivy:
-    needs: coin3d
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Pivy cross-build gate
-        run: |
-          echo "::error::Pivy requires Coin3D and Shiboken generator; ARM64 build not yet implemented."
-          exit 1
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/android-bindings-sequential-pipeline.yml/dispatches" -f ref=feature/arm64-python-bindings-gates
+          echo 'Build requested on feature/arm64-python-bindings-gates. Follow that run for compilation and APK integration; this launcher does not compile an APK.' >> "$GITHUB_STEP_SUMMARY"
