@@ -187,6 +187,23 @@ jobs:
           bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/out/full-gui/host-icu73/lib" >> "$GITHUB_ENV"
 
+      - name: Restore prebuilt Android Python GUI binding wheels
+        uses: actions/cache/restore@v4
+        with:
+          path: out/android-python-binding-wheels
+          key: drnas-python-gui-bindings-qt683-py314-arm64-v1
+
+      - name: Integrate verified Android Python binding wheels
+        run: |
+          set -euo pipefail
+          test -d out/android-python-binding-wheels || {
+            echo "::error::Missing Android ARM64 PySide6/Shiboken6/Pivy wheels. Build or supply them before packaging."
+            exit 1
+          }
+          python3 full-gui/integrated-apk/stage-python-bindings.py \
+            --wheels out/android-python-binding-wheels \
+            --stage out/upstream-freecad-gui/resources/python-bindings
+
       - name: Require real Android ARM64 PySide6 Shiboken6 and Pivy before APK
         run: |
           set -euo pipefail
