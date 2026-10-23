@@ -439,6 +439,78 @@ bool runOriginalFreeCADPython(const QString& script, QString& error)
     return true;
 }
 
+// Child overlay: never docks into the CAD layout or creates an Android window.
+class DrnasFloatingCommands : public QObject {
+    QMainWindow* host;
+    QWidget* panel;
+    QPushButton* launcher;
+    QWidget* grip;
+    QPoint dragOffset;
+    bool dragging = false;
+    void constrain() {
+        const int w = std::max(1, std::min(460, host->width() - 12));
+        panel->setFixedWidth(w);
+        panel->adjustSize();
+        panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
+                    std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
+        launcher->setGeometry(std::max(0, host->width()/2-28),
+                              std::max(0, host->height()-40), 56, 34);
+        panel->raise(); launcher->raise();
+    }
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        if (obj == host && event->type() == QEvent::Resize) constrain();
+        if (obj == grip) {
+            auto* mouse = dynamic_cast<QMouseEvent*>(event);
+            if (mouse && event->type() == QEvent::MouseButtonPress &&
+                mouse->button() == Qt::LeftButton) {
+                dragging = true;
+                dragOffset = mouse->globalPosition().toPoint()-panel->mapToGlobal(QPoint());
+                return true;
+            }
+            if (mouse && event->type() == QEvent::MouseMove && dragging) {
+                panel->move(host->mapFromGlobal(mouse->globalPosition().toPoint()-dragOffset));
+                constrain(); return true;
+            }
+            if (event->type() == QEvent::MouseButtonRelease && dragging) {
+                dragging = false; return true;
+            }
+        }
+        return QObject::eventFilter(obj, event);
+    }
+public:
+    DrnasFloatingCommands(QMainWindow* shell, QToolBar* toolbar)
+        : QObject(shell), host(shell) {
+        panel = new QWidget(host);
+        panel->setObjectName(QStringLiteral("drnasFloatingCommands"));
+        panel->setStyleSheet(QStringLiteral("background:#182d42;color:white;"));
+        auto* layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(3,3,3,3); layout->setSpacing(2);
+        auto* row = new QHBoxLayout;
+        auto* title = new QLabel(QStringLiteral("DRNAS tools — drag"), panel);
+        title->setMinimumHeight(30);
+        grip = title; grip->installEventFilter(this);
+        auto* close = new QPushButton(QStringLiteral("×"), panel);
+        close->setFixedSize(34,30);
+        row->addWidget(title,1); row->addWidget(close);
+        layout->addLayout(row);
+        toolbar->setParent(panel);
+        toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+        layout->addWidget(toolbar);
+        launcher = new QPushButton(QStringLiteral("Tools"), host);
+        launcher->setObjectName(QStringLiteral("drnasFloatingCommandsLauncher"));
+        launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
+        connect(launcher, &QPushButton::clicked, this, [this] {
+            panel->setVisible(!panel->isVisible()); constrain();
+        });
+        connect(close, &QPushButton::clicked, panel, &QWidget::hide);
+        host->installEventFilter(this);
+        panel->move(6,6); constrain();
+        panel->hide(); launcher->show();
+        DrnasDiagnostics::note(QStringLiteral("DRNAS floating tools: collapsed; CAD layout unreserved"));
+    }
+};
+
 void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freecad)
 {
     if (!shell || !freecad || shell->findChild<QToolBar*>(
@@ -449,7 +521,8 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     toolbar->setObjectName(QStringLiteral("drnasAndroidFreeCADCommands"));
     toolbar->setMovable(false);
     toolbar->setFloatable(false);
-    toolbar->setAllowedAreas(Qt::BottomToolBarArea);
+    toolbar->setAllowedAreas(Qt::NoToolBarArea);
+    toolbar->setProperty("drnasFloatingOverlay", true);
     toolbar->setIconSize(QSize(28, 28));
     // Qt Android defaults QToolBar buttons to icon-only. These are explicit
     // text commands with no icons, so force their captions to render.
@@ -457,10 +530,10 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     toolbar->setStyleSheet(QStringLiteral(
         "QToolBar{background:#182d42;border:0px;spacing:3px;padding:2px;}"
         "QToolButton{color:white;background:#315775;border:1px solid #52718d;"
-        "border-radius:4px;min-height:48px;padding:5px 10px;font-size:16px;}"
+        "border-radius:4px;min-height:30px;padding:3px 6px;font-size:12px;}"
         "QToolButton:pressed{background:#4383a9;}"
         "QLabel{color:#eaf2f8;font-size:11px;padding:2px;}"));
-    shell->addToolBar(Qt::BottomToolBarArea, toolbar);
+    // Mounted as a child overlay after actions are populated.
 
     auto* resultLabel = new QLabel(QStringLiteral("Choose Part to begin"), toolbar);
     resultLabel->setObjectName(QStringLiteral("drnasAndroidCommandResult"));
@@ -784,7 +857,7 @@ finally:
     toolbar->addSeparator();
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
-    toolbar->raise();
+    new DrnasFloatingCommands(shell, toolbar);
 }
 
 // Android QtActivity has one usable content surface. A second desktop-style
