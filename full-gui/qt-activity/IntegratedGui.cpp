@@ -33,6 +33,8 @@
 #include <QPushButton>
 #include <QPointer>
 #include <QScreen>
+#include <QOpenGLContext>
+#include <QOpenGLWidget>
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -511,6 +513,69 @@ public:
     }
 };
 
+
+void recordNativeGlesViewport(QMainWindow* freecad)
+{
+    // Earlier GPU03 readings also went through GL4ES. Query the Android GLES
+    // dispatch library explicitly, using read-only queries in the viewport context.
+    QOpenGLWidget* widget = nullptr;
+    if (freecad) {
+        for (auto* candidate : freecad->findChildren<QOpenGLWidget*>()) {
+            if (candidate->isVisible() && candidate->isValid() &&
+                candidate->width() > 100 && candidate->height() > 100) {
+                widget = candidate;
+                break;
+            }
+        }
+    }
+    if (!widget) {
+        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE: no visible document viewport; create a document first"));
+        return;
+    }
+    QOpenGLContext* previous = QOpenGLContext::currentContext();
+    QSurface* previousSurface = previous ? previous->surface() : nullptr;
+    widget->makeCurrent();
+    void* gles = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
+    using ReadString = const unsigned char* (*)(unsigned int);
+    using ReadInteger = void (*)(unsigned int, int*);
+    auto readString = gles ? reinterpret_cast<ReadString>(dlsym(gles, "glGetString")) : nullptr;
+    auto readInteger = gles ? reinterpret_cast<ReadInteger>(dlsym(gles, "glGetIntegerv")) : nullptr;
+    const bool current = QOpenGLContext::currentContext() == widget->context();
+    if (current && readString && readInteger) {
+        Dl_info provider = {};
+        dladdr(reinterpret_cast<const void*>(readString), &provider);
+        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE glGetString provider=%1")
+            .arg(QString::fromLocal8Bit(provider.dli_fname ? provider.dli_fname : "(unknown)")));
+        const unsigned int tokens[] = {0x1F00, 0x1F01, 0x1F02, 0x8B8C};
+        const char* names[] = {"VENDOR", "RENDERER", "VERSION", "GLSL"};
+        for (int i = 0; i < 4; ++i) {
+            const unsigned char* value = readString(tokens[i]);
+            DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE %1=%2")
+                .arg(QString::fromLatin1(names[i]),
+                     value ? QString::fromLatin1(reinterpret_cast<const char*>(value)) : QStringLiteral("(null)")));
+        }
+        int fbo = -1, viewport[4] = {}, depth = -1, stencil = -1;
+        readInteger(0x8CA6, &fbo);       // GL_FRAMEBUFFER_BINDING
+        readInteger(0x0BA2, viewport);   // GL_VIEWPORT
+        readInteger(0x0D56, &depth);     // GL_DEPTH_BITS
+        readInteger(0x0D57, &stencil);   // GL_STENCIL_BITS
+        DrnasDiagnostics::note(QStringLiteral(
+            "GPU_NATIVE FBO=%1 QtFBO=%2 depth=%3 stencil=%4 viewport=%5,%6,%7,%8 widgetLogical=%9x%10 dpr=%11")
+            .arg(fbo).arg(widget->defaultFramebufferObject()).arg(depth).arg(stencil)
+            .arg(viewport[0]).arg(viewport[1]).arg(viewport[2]).arg(viewport[3])
+            .arg(widget->width()).arg(widget->height()).arg(widget->devicePixelRatioF()));
+    } else {
+        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE unavailable: current=%1 GLES=%2 strings=%3 integers=%4")
+            .arg(current).arg(gles != nullptr).arg(readString != nullptr).arg(readInteger != nullptr));
+    }
+    if (gles) dlclose(gles);
+    // Restore the caller's current-context choice. No extra GL surface is created.
+    if (previous != widget->context()) {
+        widget->doneCurrent();
+        if (previous && previousSurface) previous->makeCurrent(previousSurface);
+    }
+}
+
 void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freecad)
 {
     if (!shell || !freecad || shell->findChild<QToolBar*>(
@@ -636,12 +701,13 @@ finally:
     coinRender->setChecked(qgetenv("DRNAS_ENABLE_COIN_REDRAW") == QByteArray("1"));
     coinRender->setToolTip(QStringLiteral("Enable genuine Coin rendering with GPU/context diagnostics; may crash. Copy Log after restart."));
     QObject::connect(coinRender, &QAction::triggered, shell,
-                     [invoke, report](bool enabled) {
+                     [invoke, report, upstream](bool enabled) {
         qputenv("DRNAS_ENABLE_COIN_REDRAW", enabled ? QByteArray("1") : QByteArray("0"));
         DrnasDiagnostics::note(QStringLiteral("RENDER PROBE: genuine Coin redraw enabled=%1; session only").arg(enabled));
         report(enabled ? QStringLiteral("Coin render test enabled; create a document or redraw")
                        : QStringLiteral("Coin render test disabled; blank viewport fallback"));
         if (enabled) {
+            recordNativeGlesViewport(upstream.data());
             invoke(QStringLiteral(
                 "import FreeCADGui as Gui\n"
                 "if Gui.activeDocument() is not None:\n"
@@ -978,7 +1044,12 @@ void recordOriginalGuiStage(const char* stageName)
                 "_drnas_mark = _drnas_runtime._drnas_mark\n"
                 "_drnas_storage_test = _drnas_runtime._drnas_storage_test\n"
                 "_drnas_part_commands = _drnas_runtime._drnas_part_commands\n"
-                "_drnas_fault_file = _drnas_runtime._drnas_fault_file\n"), runtimeError)) {
+                "_drnas_fault_file = _drnas_runtime._drnas_fault_file\n"
+                "import FreeCAD as App\n"
+                "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
+                "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
+                "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"
+                "_drnas_mark('RA11 ISOLATION: ShowNaviCube=False before viewer construction; main scene renderer unchanged')\n"), runtimeError)) {
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
     }
