@@ -23,6 +23,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QTimer>
@@ -112,11 +113,19 @@ class DrnasTouchInput final : public QObject {
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
-    bool injecting=false, dragging=false, repairing=false, repairQueued=false;
+    QSet<const QEvent*> injectedEvents;
+    bool dragging=false, repairing=false, repairQueued=false;
     int queuedZoom=0, previousZoom=0, speed=100;
     std::function<void(const QString&)> command;
 
     QPoint globalPoint() const { return host->mapToGlobal(cursor.toPoint()); }
+    void deliverEvent(QWidget* target,QEvent* event) {
+        // A click can enter QDialog::exec(). Ignore only this injected event,
+        // so fresh finger input still works inside the nested dialog loop.
+        injectedEvents.insert(event);
+        QApplication::sendEvent(target,event);
+        injectedEvents.remove(event);
+    }
     QWidget* targetAtCursor() const {
         // Resolve the actual button/viewport under the virtual cursor,
         // including modal dialogs, menus and the shell's own tool controls.
@@ -150,7 +159,7 @@ class DrnasTouchInput final : public QObject {
         const QPointF local=target->mapFromGlobal(global.toPoint());
         const QPointF window=target->window()->mapFromGlobal(global.toPoint());
         QMouseEvent event(type,local,window,global,button,buttons,modifiers);
-        injecting=true; QApplication::sendEvent(target,&event); injecting=false;
+        deliverEvent(target,&event);
     }
     void mouseButton(Qt::MouseButton button, bool down) {
         if (down) {
@@ -174,10 +183,8 @@ class DrnasTouchInput final : public QObject {
         const auto flags=modifiers|extra;
         QKeyEvent press(QEvent::KeyPress,key,flags,text);
         QKeyEvent release(QEvent::KeyRelease,key,flags,text);
-        injecting=true;
-        QApplication::sendEvent(target,&press);
-        if (target) QApplication::sendEvent(target,&release);
-        injecting=false;
+        deliverEvent(target,&press);
+        if (target) deliverEvent(target,&release);
     }
     void modifier(Qt::KeyboardModifier flag, int key, bool down) {
         QPointer<QWidget> target=keyboardTarget();
@@ -185,7 +192,7 @@ class DrnasTouchInput final : public QObject {
         else modifiers&=~Qt::KeyboardModifiers(flag);
         if (target) {
             QKeyEvent event(down?QEvent::KeyPress:QEvent::KeyRelease,key,modifiers);
-            injecting=true; QApplication::sendEvent(target,&event); injecting=false;
+            deliverEvent(target,&event);
         }
     }
     void releaseAll() {
@@ -258,7 +265,7 @@ class DrnasTouchInput final : public QObject {
         if (!target->rect().contains(local)) local=target->rect().center();
         QWheelEvent event(QPointF(local),QPointF(target->mapToGlobal(local)),QPoint(),QPoint(0,delta),
                           Qt::NoButton,modifiers,Qt::NoScrollPhase,false);
-        injecting=true; QApplication::sendEvent(target,&event); injecting=false;
+        deliverEvent(target,&event);
         if (!queuedZoom) zoomTimer.stop();
     }
     void queueZoom(int delta) {
@@ -335,7 +342,7 @@ class DrnasTouchInput final : public QObject {
     }
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
-        if (injecting) return false;
+        if (injectedEvents.contains(event)) return false;
         auto* inputWidget=qobject_cast<QWidget*>(obj);
         QWidget* modal=QApplication::activeModalWidget();
         QWidget* popup=QApplication::activePopupWidget();
