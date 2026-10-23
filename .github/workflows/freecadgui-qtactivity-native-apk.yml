@@ -187,6 +187,15 @@ jobs:
           bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
           echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/out/full-gui/host-icu73/lib" >> "$GITHUB_ENV"
 
+      - name: Require real Android ARM64 PySide6 Shiboken6 and Pivy before APK
+        run: |
+          set -euo pipefail
+          resources="out/upstream-freecad-gui/resources"
+          python3 full-gui/upstream/audit-python-bindings.py "$resources" --require-all
+          python3 full-gui/upstream/verify-native-python-bindings.py "$resources" --strict
+          echo 'PASS: Mandatory Python GUI binding inventory and ARM64 ELF header checks.'
+          echo 'NOTE: Importability and full DT_NEEDED/ABI compatibility still require runtime tests.'
+
       - name: Stage native FreeCADGui and all verified Android dependencies
         env:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
