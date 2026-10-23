@@ -1,0 +1,31 @@
+name: ARM64 Python binding dependency gates
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check pinned Android runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "QT_VERSION: '6.8.3'" .github/workflows/upstream-freecadgui-full-android.yml
+          grep -q "NDK_VERSION: '27.2.12479018'" .github/workflows/upstream-freecadgui-full-android.yml
+          grep -q "ANDROID_API: '26'" .github/workflows/upstream-freecadgui-full-android.yml
+          grep -q "3.14.8" .github/workflows/upstream-freecadgui-full-android.yml
+          echo 'Preflight PASS: pinned Qt 6.8.3, CPython 3.14.8, NDK 27, API 26.'
+      - name: Check upstream availability and build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          for url in https://code.qt.io/pyside/pyside-setup.git https://github.com/coin3d/coin.git https://github.com/coin3d/pivy.git; do
+            git ls-remote "$url" HEAD >/dev/null
+          done
+          echo 'Source endpoints reachable; this does NOT establish Android compatibility.'
+      - name: Report build readiness
+        run: |
+          echo 'Next work: host Shiboken generator, Android Shiboken runtime, PySide6 bindings, Coin3D and Pivy SWIG build.'
+          echo 'No APK or target ARM64 Python modules are produced by this preflight.'
