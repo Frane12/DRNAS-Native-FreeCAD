@@ -44,10 +44,18 @@ jobs:
           import re
           for pc in root.glob('*.pc'):
               content=pc.read_text()
-              updated=re.sub(r'\\$\\(BLDLIBRARY\\)|\\$\\{BLDLIBRARY\\}', '-lpython3.14', content)
-              # Some Android CPython pkg-config files expose an unresolved
-              # make variable via a nested pkg-config variable definition.
-              updated=re.sub(r'(?m)^BLDLIBRARY=.*          PY
+              updated=content.replace('$(BLDLIBRARY)', '-lpython3.14').replace('${BLDLIBRARY}', '-lpython3.14')
+              updated=re.sub(r'(?m)^BLDLIBRARY=.*$', 'BLDLIBRARY=-lpython3.14', updated)
+              if updated != content:
+                  pc.write_text(updated)
+                  found+=1
+          import subprocess
+          result=subprocess.check_output(['pkg-config','--define-prefix','--libs','python3'],text=True)
+          print('Python pkg-config libs:',result.strip())
+          if 'BLDLIBRARY' in result:
+              raise SystemExit('Unresolved Python linker metadata remains')
+          print('Fixed Python pkg-config files:',found)
+          PY
           SH
           chmod +x $GITHUB_WORKSPACE/.drnas-fix-python-pc.sh
       - name: Cross-build CPython 3.14 Android ARM64 NumPy wheel
