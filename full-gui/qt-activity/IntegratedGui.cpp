@@ -1220,9 +1220,27 @@ finally:
     options->setPopupMode(QToolButton::InstantPopup); clean->addWidget(options);
     new DrnasFloatingCommands(shell, clean);
     if(auto* debugButton=shell->findChild<QPushButton*>(QStringLiteral("drnasDebugLauncher"))) debugButton->hide();
-    new DrnasMobileWorkspace(shell,freecad);
-    new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
-        invoke(script, QStringLiteral("Mouse / keyboard controls"));
+    // FreeCADGui's startup calls processEvents() from native stage callbacks.
+    // Registering global event filters or changing the upstream dock tree in
+    // that nested loop can crash before the first CAD workspace is displayed.
+    // Install the optional workspace/input layers only AFTER native startup
+    // has returned, the first event-loop turn has finished, and the viewport
+    // has had a chance to receive its first Qt Show/Resize events.
+    const QPointer<QMainWindow> hostGuard(shell), cadGuard(freecad);
+    DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P1 command bar ready; defer adaptive workspace"));
+    QTimer::singleShot(900,shell,[hostGuard,cadGuard,invoke]{
+        if(!hostGuard || !cadGuard) return;
+        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P2 before mobile workspace"));
+        new DrnasMobileWorkspace(hostGuard.data(),cadGuard.data());
+        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P3 mobile workspace installed"));
+    });
+    QTimer::singleShot(1500,shell,[hostGuard,cadGuard,invoke]{
+        if(!hostGuard || !cadGuard) return;
+        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P4 before touch controllers"));
+        new DrnasTouchInput(hostGuard.data(),cadGuard.data(),[invoke](const QString& script){
+            invoke(script,QStringLiteral("Mouse / keyboard controls"));
+        });
+        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P5 touch controllers installed"));
     });
 }
 
@@ -1294,7 +1312,10 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (shell->statusBar()) shell->statusBar()->hide();
         shell->setCentralWidget(window);
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
-        installOriginalFreeCADTouchControls(shell, window);
+        // Critical Android lifecycle ordering: early embed MUST stay as plain
+        // Qt::Widget reparenting. Do not create more toolbars/event filters or
+        // run a dock geometry repair while native FreeCADGui startup is active.
+        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P0 early native embed; controls deferred"));
         if (!beforeFirstShow) {
             window->show();
         }
@@ -1655,6 +1676,10 @@ public:
                     }
                     if (embedded) {
                         auto* freecadWindow = qobject_cast<QMainWindow*>(centralWidget());
+                        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI N1 native FreeCADGui returned; install command controls"));
+                        if(freecadWindow)
+                            installOriginalFreeCADTouchControls(this,freecadWindow);
+                        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI N2 command controls returned"));
                         compactOriginalAndroidFreeCADChrome(freecadWindow);
                         auto* commandBar = findChild<QToolBar*>(
                             QStringLiteral("drnasAndroidFreeCADCommands"));
