@@ -50,6 +50,8 @@ class RenderSnapshotTests(unittest.TestCase):
             Name=name, Shape=Shape(local), Placement=Placement(local),
             getGlobalPlacement=lambda: Placement(global_x), InListRecursive=list(parents),
             ViewObject=types.SimpleNamespace(Visibility=visible),
+            getParentGeoFeatureGroup=lambda: next((p for p in parents if p.isDerivedFrom('PartDesign::Body')), None),
+            getParentGroup=lambda: None,
             isDerivedFrom=lambda kind: body and kind == 'PartDesign::Body')
 
     def test_parent_placement_applied_once_and_document_not_mutated(self):
@@ -77,6 +79,14 @@ class RenderSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             _, info = self.export(Path(td), [cut, box])
             self.assertEqual(info['objects'], ['Cut', 'Box'])
+
+    def test_hidden_dependent_body_does_not_hide_external_input(self):
+        dependent = self.obj('Body', body=True, visible=False)
+        external = self.obj('External', parents=[dependent])
+        external.getParentGeoFeatureGroup = lambda: None
+        with tempfile.TemporaryDirectory() as td:
+            _, info = self.export(Path(td), [dependent, external])
+            self.assertEqual(info['objects'], ['External'])
 
     def test_empty_document_removes_previous_snapshot(self):
         with tempfile.TemporaryDirectory() as td:

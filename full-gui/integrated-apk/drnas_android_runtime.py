@@ -163,7 +163,13 @@ def _drnas_render_export(directory):
             if view is None or not view.Visibility:
                 continue
             # A hidden parent suppresses its visible children in the real GUI.
-            parents = obj.InListRecursive
+            # Follow containers, not InListRecursive (which also contains
+            # dependent Boolean features that do not control this visibility).
+            parents = []
+            parent = obj.getParentGeoFeatureGroup() or obj.getParentGroup()
+            while parent is not None and parent not in parents:
+                parents.append(parent)
+                parent = parent.getParentGeoFeatureGroup() or parent.getParentGroup()
             if any((parent.isDerivedFrom('App::Part') or parent.isDerivedFrom('PartDesign::Body')) and
                    not parent.ViewObject.Visibility for parent in parents):
                 continue
