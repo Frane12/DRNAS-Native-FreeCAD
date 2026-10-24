@@ -372,6 +372,17 @@ protected:
         auto* inputWidget=qobject_cast<QWidget*>(obj);
         QWidget* modal=QApplication::activeModalWidget();
         QWidget* popup=QApplication::activePopupWidget();
+        // Android modal dialogs must receive direct touch/click events. Relative
+        // touchpad translation can otherwise consume the only way to dismiss them.
+        if (modal && inputWidget && (inputWidget==modal || modal->isAncestorOf(inputWidget))) {
+            if (relativeActive || relativeTouchId>=0 || buttons!=Qt::NoButton) {
+                relativeActive=false;
+                relativeTouchId=-1;
+                releaseAll();
+                DrnasDiagnostics::note(QStringLiteral("INPUT modal direct mode: released relative pointer"));
+            }
+            return false;
+        }
         const bool inApp=inputWidget && (inputWidget==host || host->isAncestorOf(inputWidget) ||
             (modal && (inputWidget==modal || modal->isAncestorOf(inputWidget))) ||
             (popup && (inputWidget==popup || popup->isAncestorOf(inputWidget))));
