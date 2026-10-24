@@ -226,6 +226,25 @@ public:
                 "    Gui.activeDocument().activeView().setAxisCross(%2)\n"
                 "    Gui.activeDocument().activeView().redraw()\n").arg(QStringLiteral("False"),
                     axes && stage==4 ? QStringLiteral("True") : QStringLiteral("False")));
+            // Coin/Quarter repaint A/B: a second redraw after Qt has finished
+            // dismissing the Tools popup. This does not modify the OCCT renderer.
+            const int requestedStage=stage;
+            QTimer::singleShot(180,this,[this,requestedStage] {
+                if (stage!=requestedStage || stage<1 || stage>3) return;
+                if (upstream) {
+                    const auto views=upstream->findChildren<QOpenGLWidget*>();
+                    DrnasDiagnostics::note(QStringLiteral("COIN_REPAINT_AB stage=%1 views=%2 activePopup=%3")
+                        .arg(stage).arg(views.size())
+                        .arg(QApplication::activePopupWidget()!=nullptr));
+                    for (auto* view:views) {
+                        if (view && view->isVisible()) view->update();
+                    }
+                }
+                execute(QStringLiteral(
+                    "import FreeCADGui as Gui\n"
+                    "if Gui.activeDocument() is not None:\n"
+                    "    Gui.activeDocument().activeView().redraw()\n"));
+            });
         }
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 QUEUED").arg(stage));
     }
