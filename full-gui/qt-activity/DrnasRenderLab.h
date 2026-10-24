@@ -45,12 +45,18 @@ protected:
         glClearColor(0.82f,0.13f,0.65f,1.f);
         glClear(GL_COLOR_BUFFER_BIT);
         const GLenum error=glGetError();
+        unsigned char pixel[4]={0,0,0,0};
+        glReadPixels(qMax(0,int(width()*devicePixelRatioF())/2),
+                     qMax(0,int(height()*devicePixelRatioF())/2),
+                     1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+        const GLenum readError=glGetError();
         glGetIntegerv(GL_FRAMEBUFFER_BINDING,&after);
         static int samples=0;
         if (samples++<8) DrnasDiagnostics::note(QStringLiteral(
-            "FBO_PROBE PAINT qtFbo=%1 boundBefore=%2 boundAfter=%3 status=0x%4 error=0x%5 logical=%6x%7 dpr=%8")
+            "FBO_PROBE PAINT qtFbo=%1 boundBefore=%2 boundAfter=%3 status=0x%4 error=0x%5 readError=0x%6 pixel=%7,%8,%9,%10 logical=%11x%12 dpr=%13")
             .arg(defaultFramebufferObject()).arg(before).arg(after)
             .arg(uint(status),0,16).arg(uint(error),0,16)
+            .arg(uint(readError),0,16).arg(pixel[0]).arg(pixel[1]).arg(pixel[2]).arg(pixel[3])
             .arg(width()).arg(height()).arg(devicePixelRatioF()));
     }
 };
@@ -188,9 +194,13 @@ public:
         DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=reference").arg(supported));
     }
     void setStage(int value) {
+        if (value==4) {
+            DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE GUARD: stage=4 NaviCube blocked after confirmed segfault"));
+            return;
+        }
         stage=value;
         if (stage!=4) axes=false;
-        axesAction->setEnabled(nativeStages && stage==4);
+        axesAction->setEnabled(false);
         for (auto* action:stages->actions()) action->setChecked(action->data().toInt()==stage);
         axesAction->setChecked(axes);
         qputenv("DRNAS_RENDER_STAGE",QByteArray::number(stage));
@@ -214,7 +224,7 @@ public:
                 "App.ParamGet('User parameter:BaseApp/Preferences/View').SetBool('ShowNaviCube', %1)\n"
                 "if Gui.activeDocument() is not None:\n"
                 "    Gui.activeDocument().activeView().setAxisCross(%2)\n"
-                "    Gui.activeDocument().activeView().redraw()\n").arg(stage==4 ? QStringLiteral("True") : QStringLiteral("False"),
+                "    Gui.activeDocument().activeView().redraw()\n").arg(QStringLiteral("False"),
                     axes && stage==4 ? QStringLiteral("True") : QStringLiteral("False")));
         }
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 QUEUED").arg(stage));
