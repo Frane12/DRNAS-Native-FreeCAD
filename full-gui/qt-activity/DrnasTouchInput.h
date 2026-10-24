@@ -93,7 +93,8 @@ public:
         restore(); show();
     }
     void clamp() {
-        move(std::clamp(x(),0,std::max(0,host->width()-width())),std::clamp(y(),0,std::max(0,host->height()-height())));raise();
+        move(std::clamp(x(),0,std::max(0,host->width()-width())),std::clamp(y(),0,std::max(0,host->height()-height())));
+        if(!QApplication::activeModalWidget() && !QApplication::activePopupWidget())raise();
     }
     void restore() {
         QSettings s;move(qRound(s.value(setting("x"),initial.x()).toDouble()*std::max(0,host->width()-width())),
@@ -226,9 +227,31 @@ class DrnasTouchInput final : public QObject {
             Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false));
         if(!queuedZoom)zoomTimer.stop();
     }
+    void fitDialog(QDialog* dialog) {
+        if(!dialog || !dialog->isVisible() || !dialog->parentWidget() ||
+           !(dialog->parentWidget()==host || host->isAncestorOf(dialog->parentWidget())))return;
+        const QRect bounds(host->mapToGlobal(QPoint()),host->size());
+        // A dialog already on screen must retain its own size, position and focus.
+        if(bounds.contains(dialog->frameGeometry()))return;
+        if(dialog->property("drnasLastDialogBounds").toRect()==bounds)return;
+        dialog->setProperty("drnasLastDialogBounds",bounds);
+        const QSize frame=dialog->frameGeometry().size()-dialog->size();
+        const QSize usable=QSize(std::max(1,bounds.width()-std::max(0,frame.width())-12),
+                                 std::max(1,bounds.height()-std::max(0,frame.height())-12));
+        dialog->setMinimumSize(0,0);
+        dialog->resize(dialog->size().boundedTo(usable));
+        dialog->move(bounds.center()-QPoint(dialog->width()/2,dialog->height()/2));
+        DrnasDiagnostics::note(QStringLiteral("MODAL_FIT dialog=%1 screen=%2x%3")
+            .arg(dialog->objectName()).arg(bounds.width()).arg(bounds.height()));
+    }
     void repair() {
         repairQueued=false;
         if(!cad)return;
+        if(QWidget* modal=QApplication::activeModalWidget()) {
+            fitDialog(qobject_cast<QDialog*>(modal));
+            return; // Never maximize MDI documents or raise host controls during exec().
+        }
+        if(QApplication::activePopupWidget())return;
         for(auto* area:cad->findChildren<QMdiArea*>()) {
             area->setOption(QMdiArea::DontMaximizeSubWindowOnActivation,false);
             if(auto* active=area->activeSubWindow())if(active->isVisible()&&!active->isMaximized())active->showMaximized();
@@ -240,14 +263,8 @@ class DrnasTouchInput final : public QObject {
                 if(auto* shell=cad->findChild<QWidget*>(QString::fromLatin1(name)+suffix))
                     if(shell->findChildren<QDockWidget*>().isEmpty())shell->hide();
         }
-        const QRect bounds(host->mapToGlobal(QPoint()),host->size());
-        for(auto* top:QApplication::topLevelWidgets())if(auto* dialog=qobject_cast<QDialog*>(top)) {
-            if(!dialog->isVisible() || !dialog->parentWidget() ||
-               !(dialog->parentWidget()==host || host->isAncestorOf(dialog->parentWidget())))continue;
-            dialog->setMinimumSize(0,0);dialog->setMaximumSize(bounds.size());
-            dialog->resize(dialog->size().boundedTo(bounds.size()));
-            dialog->move(bounds.center()-QPoint(dialog->width()/2,dialog->height()/2));
-        }
+        for(auto* top:QApplication::topLevelWidgets())
+            if(auto* dialog=qobject_cast<QDialog*>(top))fitDialog(dialog);
         for(auto* control:controls)control->clamp();
     }
     void scheduleRepair(){if(repairQueued)return;repairQueued=true;QTimer::singleShot(0,this,[this]{repair();});}
@@ -263,6 +280,19 @@ protected:
         if((type==QEvent::Show || type==QEvent::Resize) &&
             (qobject_cast<QDialog*>(object)||qobject_cast<QMdiSubWindow*>(object)||
              (widget && widget->objectName().startsWith(QStringLiteral("Overlay")))))scheduleRepair();
+        if(auto* dialog=qobject_cast<QDialog*>(object)) {
+            if(type==QEvent::Show && dialog->isModal()) {
+                releaseAll();mark->hide();
+                for(auto* control:controls)control->setEnabled(false);
+                DrnasDiagnostics::note(QStringLiteral("MODAL_BEGIN %1; host controls suspended").arg(dialog->objectName()));
+            } else if(type==QEvent::Hide || type==QEvent::Destroy) {
+                QTimer::singleShot(0,this,[this] {
+                    if(QApplication::activeModalWidget())return;
+                    for(auto* control:controls)control->setEnabled(true);
+                    scheduleRepair();
+                });
+            }
+        }
         if(!widget || isControl(widget))return false;
         // Ordinary Qt controls, especially dialog buttons, keep direct touch.
         // Only the 3D surface behaves as a relative touchpad.
@@ -309,3 +339,4 @@ public:
         DrnasDiagnostics::note(QStringLiteral("INPUT minimal: movable L/R + zoom; direct dialogs; relative CAD viewport"));
     }
 };
+

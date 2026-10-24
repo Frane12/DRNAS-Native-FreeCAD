@@ -400,6 +400,7 @@ class DrnasMobileWorkspace final : public QObject {
     int lastOrientation=-1, lastDockCount=-1;
     void apply() {
         if (!window || window->width()<1 || window->height()<1) return;
+        if(QApplication::activeModalWidget() || QApplication::activePopupWidget())return;
         const bool portrait=window->height()>window->width();
         const int dockCount=window->findChildren<QDockWidget*>().size();
         if (lastOrientation==int(portrait) && lastDockCount==dockCount) return;
@@ -428,13 +429,14 @@ class DrnasMobileWorkspace final : public QObject {
 protected:
     bool eventFilter(QObject* object,QEvent* event) override {
         if(object==window && (event->type()==QEvent::Resize || event->type()==QEvent::Show || event->type()==QEvent::ChildAdded)) settle.start();
+        if(event->type()==QEvent::Hide && (qobject_cast<QDialog*>(object) || qobject_cast<QMenu*>(object)))settle.start();
         return QObject::eventFilter(object,event);
     }
 public:
     explicit DrnasMobileWorkspace(QMainWindow* owner):QObject(owner),window(owner) {
         settle.setSingleShot(true); settle.setInterval(180);
         connect(&settle,&QTimer::timeout,this,[this]{apply();});
-        owner->installEventFilter(this); settle.start();
+        qApp->installEventFilter(this); settle.start();
     }
 };
 
@@ -504,7 +506,10 @@ class DrnasFloatingCommands : public QObject {
                     std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
         if(launcher->parentWidget()==host)
             launcher->setGeometry(std::max(0,host->width()/2-28),std::max(0,host->height()-40),56,34);
-        panel->raise(); launcher->raise();
+        if(!QApplication::activeModalWidget() && !QApplication::activePopupWidget()) {
+            if(panel->isVisible())panel->raise();
+            if(launcher->isVisible())launcher->raise();
+        }
     }
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override {
@@ -1799,3 +1804,4 @@ extern "C" __attribute__((visibility("default")))
 void* drnas_create_qt_gui_shell_after_qt_android_bootstrap() {
     return new DrnasQtCADShell();
 }
+
