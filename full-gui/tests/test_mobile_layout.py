@@ -47,6 +47,10 @@ for token in (
     'zoomTimer.setInterval(65)',
     'TOUCH_VIEW_BEGIN',
     'TOUCH_VIEW_RESIZE',
+    'TOUCH_PAN_BEGIN',
+    'TOUCH_PAN_END',
+    'mouseButton(Qt::MiddleButton,false)',
+    'suppressAfterPan',
 ):
     assert token in touch, f"Android modal/touch navigation contract missing: {token}"
 assert 'queuedZoom' not in touch and 'previousZoom' not in touch, (
