@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 env:
   FREECAD_REF: 'd4ffc7f725973e073907746e88d320d3e438fd34'
@@ -172,12 +173,21 @@ jobs:
         with:
           path: out/upstream-freecad-gui/opengl-compat
           key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+      - name: Build patched GL4ES and GLU on cache miss
+        if: steps.gl.outputs.cache-hit != 'true'
+        run: bash full-gui/upstream/build-android-gl4es-glu.sh
+      - name: Cache patched native GL4ES and GLU
+        if: steps.gl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
       - name: Demand real Bionic GL4ES and GLU before FreeCADGui configure
         run: |
           set -euo pipefail
-          test "${{ steps.gl.outputs.cache-hit }}" = true
-          test -f out/upstream-freecad-gui/opengl-compat/lib/libGL.so
-          test -f out/upstream-freecad-gui/opengl-compat/lib/libGLU.so
+          test -s out/upstream-freecad-gui/opengl-compat/lib/libGL.so
+          test -s out/upstream-freecad-gui/opengl-compat/lib/libGLU.so
+          readelf -h out/upstream-freecad-gui/opengl-compat/lib/libGL.so | grep -q AArch64
           readelf -h out/upstream-freecad-gui/opengl-compat/lib/libGLU.so | grep -q AArch64
       # Actual Part geometry needs native FreeType/HarfBuzz shaping.
       # Cache compiled AArch64 archives independently of expensive OCCT.
@@ -327,3 +337,12 @@ jobs:
           path: out/upstream-freecad-gui/
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Launch APK integration after successful native build
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run freecadgui-qtactivity-native-apk.yml --ref feature/full-freecad-android -f upstream_run_id="$GITHUB_RUN_ID"
+          echo "Triggered DRNAS APK integration from $GITHUB_RUN_ID"

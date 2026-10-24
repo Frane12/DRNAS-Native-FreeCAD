@@ -25,6 +25,52 @@ fetch() {
 }
 fetch ptitSeb/gl4es "$PIN_GL4ES" "$SRC/gl4es-freecad"
 fetch ptitSeb/GLU "$PIN_GLU" "$SRC/glu-freecad"
+
+python3 - "$SRC/gl4es-freecad/src/gl/framebuffers.c" <<'PY_QT_FBO_ADOPT'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+source = p.read_text()
+old = """    glframebuffer_t *fb = find_framebuffer(framebuffer);
+    if(!fb) {
+        errorShim(GL_INVALID_VALUE);
+        return;
+    }"""
+new = """    glframebuffer_t *fb = find_framebuffer(framebuffer);
+#ifdef __ANDROID__
+    // Qt allocates the QOpenGLWidget FBO through native GLES, not GL4ES.
+    // Adopt only an existing native FBO when our renderer test requests it.
+    const char *sync = getenv("DRNAS_COIN_FBO_SYNC");
+    if (!fb && framebuffer && sync && sync[0]=='1' && sync[1]=='\\0') {
+        LOAD_GLES2_OR_OES(glIsFramebuffer);
+        if (gles_glIsFramebuffer(framebuffer)) {
+            int inserted = 0;
+            khint_t k = kh_put(framebufferlist_t, glstate->fbo.framebufferlist,
+                               framebuffer, &inserted);
+            if (inserted > 0) {
+                fb = calloc(1, sizeof(glframebuffer_t));
+                if (fb) {
+                    fb->id = framebuffer;
+                    kh_value(glstate->fbo.framebufferlist,k) = fb;
+                    fprintf(stderr,"DRNAS_GL4ES_ADOPT_QT_FBO id=%u\\n",framebuffer);
+                } else {
+                    kh_del(framebufferlist_t,glstate->fbo.framebufferlist,k);
+                }
+            } else if (inserted == 0) {
+                fb = kh_value(glstate->fbo.framebufferlist,k);
+            }
+        }
+    }
+#endif
+    if(!fb) {
+        errorShim(GL_INVALID_VALUE);
+        return;
+    }"""
+if source.count(old) != 1:
+    raise SystemExit("GL4ES pinned glBindFramebuffer source changed")
+p.write_text(source.replace(old,new,1))
+print("GL4ES external Qt FBO adoption patch applied")
+PY_QT_FBO_ADOPT
 cmake -S "$SRC/gl4es-freecad" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$ANDROID_API" \

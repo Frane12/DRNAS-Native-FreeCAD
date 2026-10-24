@@ -520,13 +520,54 @@ static void drnasViewportAbSnapshot(const char* phase, QOpenGLWidget* widget,
 #endif
 '''
     # Insert after gpu_probe, whose declarations/includes this helper uses.
-    viewer_source = once(viewer_source, gpu_probe, gpu_probe + ab_probe)
+
+    fbo_sync = r'''
+#ifdef __ANDROID__
+static void drnasSyncQtCoinFbo(QOpenGLWidget* widget)
+{
+    const char* mode=std::getenv("DRNAS_COIN_FBO_SYNC");
+    if (!mode || mode[0]!='1' || mode[1]!='\0' || !widget) return;
+    auto* context=QOpenGLContext::currentContext();
+    if (!context || !context->isValid() || context!=widget->context()) {
+        ::drnasDocumentPhase("FBO_SYNC invalid or foreign context", "SKIP");
+        return;
+    }
+    const GLuint qtFbo=widget->defaultFramebufferObject();
+    if (!qtFbo) { ::drnasDocumentPhase("FBO_SYNC no Qt FBO", "SKIP"); return; }
+    using Query=void (*)(unsigned int,int*);
+    static void* gles=dlopen("libGLESv2.so",RTLD_NOW|RTLD_LOCAL);
+    static Query nativeQuery=gles ? reinterpret_cast<Query>(dlsym(gles,"glGetIntegerv")) : nullptr;
+    int nativeBefore=-1,gl4esBefore=-1,nativeAfter=-1,gl4esAfter=-1;
+    if(nativeQuery) nativeQuery(GL_FRAMEBUFFER_BINDING,&nativeBefore);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING,&gl4esBefore);
+    if(nativeBefore!=int(qtFbo) || gl4esBefore!=int(qtFbo))
+        glBindFramebuffer(GL_FRAMEBUFFER,qtFbo);
+    if(nativeQuery) nativeQuery(GL_FRAMEBUFFER_BINDING,&nativeAfter);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING,&gl4esAfter);
+    const GLenum status=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    const GLenum error=glGetError();
+    const bool passed=(nativeAfter==int(qtFbo) && gl4esAfter==int(qtFbo)
+                     && status==GL_FRAMEBUFFER_COMPLETE && error==GL_NO_ERROR);
+    static unsigned int samples=0;
+    if(samples++<48 || !passed) {
+        char line[320];
+        std::snprintf(line,sizeof(line),
+          "FBO_SYNC qt=%u nativeBefore=%d wrappedBefore=%d nativeAfter=%d wrappedAfter=%d status=0x%x error=0x%x",
+          qtFbo,nativeBefore,gl4esBefore,nativeAfter,gl4esAfter,unsigned(status),unsigned(error));
+        ::drnasDocumentPhase(line,passed?"PASS":"WARNING");
+    }
+}
+#endif
+'''
+    viewer_source = once(viewer_source, gpu_probe, gpu_probe + ab_probe + fbo_sync)
     viewport_call = '    glViewport(origin[0], origin[1], size[0], size[1]);'
     viewer_source = once(viewer_source, viewport_call, r'''#ifdef __ANDROID__
     static unsigned int abFrames = 0;
     const bool traceViewport = abFrames++ < 32;
     auto* abWidget = qobject_cast<QOpenGLWidget*>(this->viewport());
     if (traceViewport) drnasViewportAbSnapshot("BEFORE_GL_VIEWPORT", abWidget, size[0], size[1]);
+    drnasSyncQtCoinFbo(abWidget);
+    if (traceViewport) drnasViewportAbSnapshot("AFTER_FBO_SYNC", abWidget, size[0], size[1]);
 #endif
 ''' + viewport_call + r'''
 #ifdef __ANDROID__
