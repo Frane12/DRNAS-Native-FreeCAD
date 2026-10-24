@@ -215,6 +215,32 @@ assert source.count(state) == 1, 'Upstream Quarter multisample state changed'
 assert source.count(restore) == 1, 'Upstream Quarter multisample restore changed'
 source = source.replace(state, '#ifndef ANDROID\n' + state + '\n#endif')
 source = source.replace(restore, '#ifndef ANDROID\n' + restore + '\n#endif')
+
+# Instrument the real Quarter paint path, not the separate DRNAS Qt test widget.
+# The same context is sampled before and after the original paint operations.
+probe = r'''
+#ifdef __ANDROID__
+    {
+        static unsigned drnasQuarterSamples = 0;
+        if (drnasQuarterSamples++ < 64 && w->context()) {
+            QOpenGLFunctions* drnasGL = w->context()->functions();
+            GLint drnasFbo = -1, drnasViewport[4] = {-1,-1,-1,-1};
+            drnasGL->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &drnasFbo);
+            drnasGL->glGetIntegerv(GL_VIEWPORT, drnasViewport);
+            const GLenum drnasErr = drnasGL->glGetError();
+            fprintf(stderr, "[DRNAS_COIN_QUARTER] phase=paint_entry fbo=%d viewport=%d,%d,%d,%d glError=0x%x\\n",
+                    drnasFbo, drnasViewport[0], drnasViewport[1],
+                    drnasViewport[2], drnasViewport[3], unsigned(drnasErr));
+            fflush(stderr);
+        }
+    }
+#endif
+'''
+# Insert before the existing multisample guard, which is inside Quarter's paint.
+guard = '#ifndef ANDROID\\n' + state + '\\n#endif'
+assert source.count(guard) == 1, 'Quarter paint diagnostic anchor missing'
+source = '#include <cstdio>\\n' + source.replace(guard, probe + guard)
+
 path.write_text(source)
 print('Quarter Android GLES2 omits unsupported GL_MULTISAMPLE toggling')
 PY_QUARTER_ANDROID
