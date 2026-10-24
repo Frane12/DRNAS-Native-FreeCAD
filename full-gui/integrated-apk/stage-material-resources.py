@@ -40,7 +40,7 @@ def stage(source, destination):
     count += copy_tree(material / "materialtools", destination / "Mod/Material/materialtools")
     # InitGui scripts resolve workbench icons via the same ResourceDir.
     for module in ("Part", "Sketcher", "PartDesign"):
-        count += copy_tree(source / "src/Mod" / module / "Resources",
+        count += copy_tree(source / "src/Mod" / module / "Gui/Resources",
                            destination / "share/Mod" / module / "Resources")
     root = destination / "share/Mod/Material/Resources"
     required = {

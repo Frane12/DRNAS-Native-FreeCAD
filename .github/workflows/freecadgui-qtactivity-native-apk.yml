@@ -120,9 +120,9 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             src/Mod/Material
-            src/Mod/Part/Resources
-            src/Mod/Sketcher/Resources
-            src/Mod/PartDesign/Resources
+            src/Mod/Part/Gui/Resources
+            src/Mod/Sketcher/Gui/Resources
+            src/Mod/PartDesign/Gui/Resources
 
       - name: Stage and verify default material libraries before APK packaging
         run: |
