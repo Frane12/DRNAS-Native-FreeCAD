@@ -109,7 +109,7 @@ jobs:
               assert any('_multiarray_umath' in p for p in so), 'Missing core extension'
               for name in so:
                   data=z.read(name)
-                  assert data[:4]==b'\\x7fELF', name
+                  assert data[:4]==bytes((0x7f, 0x45, 0x4c, 0x46)), name
                   assert int.from_bytes(data[18:20],'little')==183, f'Not AArch64: {name}'
               print('PASS:',wheel.name,'ARM64 native extensions:',len(so))
           PY
