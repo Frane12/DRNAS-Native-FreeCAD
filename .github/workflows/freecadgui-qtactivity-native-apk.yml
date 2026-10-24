@@ -42,7 +42,7 @@ jobs:
   package-real-gui:
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    if: github.ref == 'refs/heads/feature/full-freecad-android'
+    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:

@@ -479,8 +479,10 @@ int drnas_render_stages_version() { return 1; }
 static int drnasRenderStage()
 {
     const char* stage = std::getenv("DRNAS_RENDER_STAGE");
-    return stage && stage[0] >= '0' && stage[0] <= '8' && stage[1] == '\0'
-        ? stage[0] - '0' : 4;
+    if (!stage) return 4;
+    char* end = nullptr;
+    const long value = std::strtol(stage, &end, 10);
+    return end != stage && *end == '\0' && value >= 0 && value <= 10 ? int(value) : 4;
 }
 #else
 static int drnasRenderStage() { return 4; }
@@ -623,7 +625,93 @@ static void drnasSyncQtCoinFbo(QOpenGLWidget* widget)
 }
 #endif
 '''
-    viewer_source = once(viewer_source, gpu_probe, gpu_probe + ab_probe + fbo_sync)
+    geometry_probe = r'''
+#ifdef __ANDROID__
+#include <Inventor/nodes/SoCube.h>
+#include <Inventor/nodes/SoOrthographicCamera.h>
+extern "C" __attribute__((visibility("default")))
+int drnas_geometry_probe_version() { return 1; }
+
+static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cacheContext)
+{
+    if (!widget || !QOpenGLContext::currentContext()) return;
+    const int width=qRound(widget->width()*widget->devicePixelRatioF());
+    const int height=qRound(widget->height()*widget->devicePixelRatioF());
+    if (width<=0 || height<=0) return;
+    using Query=void (*)(unsigned int,int*);
+    using Read=void (*)(int,int,int,int,unsigned int,unsigned int,void*);
+    using Error=unsigned int (*)();
+    static void* gles=dlopen("libGLESv2.so",RTLD_NOW|RTLD_LOCAL);
+    auto query=gles ? reinterpret_cast<Query>(dlsym(gles,"glGetIntegerv")) : nullptr;
+    auto read=gles ? reinterpret_cast<Read>(dlsym(gles,"glReadPixels")) : nullptr;
+    auto error=gles ? reinterpret_cast<Error>(dlsym(gles,"glGetError")) : nullptr;
+    const GLenum prior=glGetError();
+    if(error) for(int i=0;i<16 && error()!=GL_NO_ERROR;++i) {}
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glUseProgram(0);
+    glViewport(0,0,width,height);
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND); glDisable(GL_ALPHA_TEST); glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING); glDisable(GL_TEXTURE_2D); glDisable(GL_DEPTH_TEST);
+    glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE); glDepthMask(GL_TRUE);
+    glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+    glClearColor(0.03f,0.05f,0.10f,1.f);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
+    const GLenum setupError=glGetError();
+    ::drnasDocumentPhase(mode==9 ? "GEOMETRY_PROBE GL4ES triangle" : "GEOMETRY_PROBE isolated Coin cube", "BEGIN");
+    if(mode==9) {
+        glColor4f(1.f,0.3f,0.05f,1.f);
+        glBegin(GL_TRIANGLES);
+        glVertex3f(-0.75f,-0.65f,0.f);
+        glVertex3f(0.75f,-0.65f,0.f);
+        glVertex3f(0.f,0.75f,0.f);
+        glEnd();
+    } else {
+        // Independent graph and camera: no FreeCAD ViewProvider or document.
+        const CoinPtr<SoSeparator> root(new SoSeparator);
+        root->renderCaching=SoSeparator::OFF;
+        auto* camera=new SoOrthographicCamera;
+        camera->position.setValue(3.f,2.f,5.f);
+        camera->pointAt(SbVec3f(0.f,0.f,0.f));
+        camera->height=4.5f;
+        camera->nearDistance=0.1f; camera->farDistance=30.f;
+        root->addChild(camera);
+        auto* light=new SoLightModel; light->model=SoLightModel::BASE_COLOR;
+        root->addChild(light);
+        auto* material=new SoMaterial;
+        material->diffuseColor.setValue(0.1f,0.95f,0.35f);
+        root->addChild(material);
+        root->addChild(new SoCube);
+        const SbViewportRegion viewport(width,height);
+        SoGLRenderAction action(viewport);
+        action.setCacheContext(cacheContext);
+        action.apply(root);
+    }
+    glFinish();
+    const GLenum drawError=glGetError();
+    int bound=-1; unsigned char center[4]={},corner[4]={};
+    if(query) query(GL_FRAMEBUFFER_BINDING,&bound);
+    if(read) {
+        read(width/2,height/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,center);
+        read(2,2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,corner);
+    }
+    const unsigned int nativeError=error ? error() : 0;
+    char line[640];
+    std::snprintf(line,sizeof(line),
+        "GEOMETRY_PROBE mode=%d qtFbo=%u nativeFbo=%d size=%dx%d prior=0x%x setup=0x%x draw=0x%x native=0x%x read=%d center=%u,%u,%u,%u corner=%u,%u,%u,%u",
+        mode,widget->defaultFramebufferObject(),bound,width,height,unsigned(prior),unsigned(setupError),unsigned(drawError),nativeError,int(read!=nullptr),
+        unsigned(center[0]),unsigned(center[1]),unsigned(center[2]),unsigned(center[3]),
+        unsigned(corner[0]),unsigned(corner[1]),unsigned(corner[2]),unsigned(corner[3]));
+    ::drnasDocumentPhase(line,"DRAW_RETURNED");
+    glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix();
+    glPopAttrib();
+}
+#endif
+'''
+    viewer_source = once(viewer_source, gpu_probe, gpu_probe + ab_probe + fbo_sync + geometry_probe)
     viewport_call = '    glViewport(origin[0], origin[1], size[0], size[1]);'
     viewer_source = once(viewer_source, viewport_call, r'''#ifdef __ANDROID__
     static unsigned int abFrames = 0;
@@ -631,6 +719,11 @@ static void drnasSyncQtCoinFbo(QOpenGLWidget* widget)
     auto* abWidget = qobject_cast<QOpenGLWidget*>(this->viewport());
     if (traceViewport) drnasViewportAbSnapshot("BEFORE_GL_VIEWPORT", abWidget, size[0], size[1]);
     drnasSyncQtCoinFbo(abWidget);
+    if (drnasRenderStage()==9 || drnasRenderStage()==10) {
+        drnasGeometryProbe(abWidget,drnasRenderStage(),
+            this->getSoRenderManager()->getGLRenderAction()->getCacheContext());
+        return;
+    }
     if (traceViewport) drnasViewportAbSnapshot("AFTER_FBO_SYNC", abWidget, size[0], size[1]);
 #endif
 ''' + viewport_call + r'''
