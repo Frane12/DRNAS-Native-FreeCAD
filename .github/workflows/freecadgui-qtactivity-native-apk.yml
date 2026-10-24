@@ -16,6 +16,10 @@ on:
         description: 'Successful upstream FreeCADGui run ID (empty = latest success)'
         type: string
         required: false
+      numpy_run_id:
+        description: 'Successful NumPy Android ARM64 wheel workflow run ID'
+        type: string
+        required: false
       bindings_run_id:
         description: 'Successful sequential ARM64 bindings run (empty = latest success)'
         type: string
@@ -249,29 +253,34 @@ jobs:
           cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
           python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
 
-      - name: Mandatory NumPy ARM64 / CPython 3.14 dependency preflight
+      - name: Resolve successful NumPy wheel workflow run
+        id: numpy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_NUMPY_RUN: ${{ inputs.numpy_run_id }}
         run: |
           set -euo pipefail
-          # Never mistake a host x86_64 NumPy for an Android extension.
-          pyroot="out/full-deps/python/lib/python3.14/site-packages"
-          numpy="$pyroot/numpy"
-          if [ ! -f "$numpy/__init__.py" ]; then
-            echo "::error::NumPy missing for embedded Android CPython 3.14. A genuine Android ARM64 NumPy build is required before producing a test APK."
-            exit 1
+          run="$INPUT_NUMPY_RUN"
+          if [ -z "$run" ]; then
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/numpy-android-arm64.yml/runs?branch=feature/full-freecad-android&status=success&per_page=10" --jq '.workflow_runs[0].id')"
           fi
-          mapfile -t extensions < <(find "$numpy" -type f -name '*.so' | sort)
-          if [ "${#extensions[@]}" -eq 0 ]; then
-            echo "::error::NumPy has no compiled extensions; pure Python files alone are insufficient."
-            exit 1
-          fi
-          for ext in "${extensions[@]}"; do
-            readelf -h "$ext" | grep -q 'Machine:.*AArch64' || { echo "::error::Non-ARM64 NumPy extension: $ext"; exit 1; }
-            if readelf -d "$ext" | grep -Eq 'libc\\.so\\.6|ld-linux'; then
-              echo "::error::Linux/glibc NumPy extension cannot run on Android: $ext"; exit 1
-            fi
-          done
-          echo "PASS: Android ARM64 NumPy binary preflight (${#extensions[@]} extensions)"
-
+          test "$run" != null && [[ "$run" =~ ^[0-9]+$ ]]
+          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"
+          test "$(jq -r .conclusion <<< "$info")" = success
+          test "$(jq -r .head_branch <<< "$info")" = feature/full-freecad-android
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      - name: Download verified NumPy CPython 3.14 Android ARM64 wheel
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.numpy.outputs.run }}
+          github-token: ${{ github.token }}
+          name: drnas-numpy-cp314-android-arm64
+          path: out/numpy-wheel
+      - name: Stage NumPy wheel for APK packaging and verify native ABI
+        run: |
+          set -euo pipefail
+          mkdir -p out/integrated-freecad-qtapk
+          python3 full-gui/integrated-apk/stage-numpy-wheel.py out/numpy-wheel out/integrated-freecad-qtapk/numpy-stage
       - name: Stage native FreeCADGui and all verified Android dependencies
         env:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
