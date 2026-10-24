@@ -17,7 +17,7 @@ permissions:
 
 concurrency:
   group: drnas-model-lab-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  # Only this isolated PR: newer fixes supersede older APK packaging runs.\n  cancel-in-progress: true
 
 env:
   QT_VERSION: '6.8.3'
