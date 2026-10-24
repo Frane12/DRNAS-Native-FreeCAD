@@ -216,8 +216,9 @@ class DrnasTouchInput final : public QObject {
             return nullptr;
         // A real touch panel, native popup or lower shell control wins over
         // CAD toolbar fallback routing. No coordinate scaling (logical pixels).
-        for (QWidget* overlay : {panel, commandsPanel.data(), commandsLauncher.data(),
-                                 launcher, cancelButton, contextButton}) {
+        for (QWidget* overlay : std::initializer_list<QWidget*>{
+                panel, commandsPanel.data(), commandsLauncher.data(),
+                launcher, cancelButton, contextButton}) {
             if (overlay && overlay->isVisible() &&
                 overlay->rect().contains(overlay->mapFromGlobal(global.toPoint())))
                 return nullptr;
