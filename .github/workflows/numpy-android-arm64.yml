@@ -75,7 +75,10 @@ jobs:
           assert src.count(needle)==1, 'NumPy longdouble probe changed upstream'
           src=src.replace(needle, """# Android AArch64 uses IEEE-754 binary128 little-endian long double.
           # Avoid executing a target binary on the x86_64 GitHub runner.
-          longdouble_format = 'IEEE_QUAD_LE' if host_machine.system() == 'android' and host_machine.cpu_family() == 'aarch64' else meson.get_external_property('longdouble_format', 'UNKNOWN')""")
+          longdouble_format = meson.get_external_property('longdouble_format', 'UNKNOWN')
+          if host_machine.system() == 'android' and host_machine.cpu_family() == 'aarch64'
+            longdouble_format = 'IEEE_QUAD_LE'
+          endif""")
           p.write_text(src)
           print('Patched target-only long double detection for Android AArch64')
           PY
