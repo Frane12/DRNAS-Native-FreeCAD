@@ -36,6 +36,19 @@ def inspect(apk):
             name: name for name in archive.namelist()
             if name.startswith("assets/drnas/freecad/Mod/") and name.endswith(".so")
         }
+        # NumPy wheels bundle a hashed libc++ runtime under numpy.libs/.
+        # Android assets are extracted with their relative layout at runtime;
+        # recognize these bundled SONAMEs, but require the actual ELF payload.
+        bundled = {
+            name.rsplit("/", 1)[-1]: name
+            for name in archive.namelist()
+            if name.startswith("assets/drnas/freecad/Mod/numpy.libs/")
+            and name.endswith(".so")
+        }
+        for soname in bundled:
+            if soname in libs:
+                raise RuntimeError(f"Duplicate native SONAME: {soname}")
+        available = set(libs) | set(bundled)
         for package, modules in {"PySide6": ("QtCore", "QtGui", "QtWidgets"), "shiboken6": ("Shiboken",), "pivy": ("_coin",)}.items():
             prefix = f"assets/drnas/freecad/Mod/{package}/"
             if prefix+"__init__.py" not in archive.namelist():
@@ -57,7 +70,7 @@ def inspect(apk):
         for name in sorted(required - libs.keys()):
             missing.append(("APK", name))
         with tempfile.TemporaryDirectory(prefix="drnas-apk-abi-") as tmp:
-            for soname, member in sorted({**libs, **extensions}.items()):
+            for soname, member in sorted({**libs, **extensions, **bundled}.items()):
                 target = Path(tmp) / Path(soname).name
                 with target.open("wb") as fp:
                     fp.write(archive.read(member))
@@ -72,7 +85,7 @@ def inspect(apk):
                 if re.search(r"libc\.so\.6|ld-linux|libstdc\+\+\.so\.6", dynamic):
                     raise RuntimeError(f"Linux/glibc dependency in {soname}")
                 for dep in re.findall(r"Shared library: \[([^]]+)\]", dynamic):
-                    if dep not in libs and dep not in DEVICE_LIBS:
+                    if dep not in available and dep not in DEVICE_LIBS:
                         missing.append((soname, dep))
     if missing:
         print("ERROR: APK is not linkable at startup; missing DT_NEEDED libraries:")
