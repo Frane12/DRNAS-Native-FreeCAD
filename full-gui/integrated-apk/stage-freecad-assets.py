@@ -8,7 +8,8 @@ import hashlib
 
 REQUIRED = {
     "Mod/Part/InitGui.py", "Mod/Sketcher/InitGui.py",
-    "Mod/PartDesign/InitGui.py",
+    "Mod/PartDesign/InitGui.py", "Mod/Measure/InitGui.py",
+    "lib/Measure.so", "lib/MeasureGui.so",
     "data/Gui/Stylesheets/overlay/icons/taskshow.svg",
     "share/Mod/Material/Resources/Materials/Appearance/Default.FCMat",
     "share/Mod/Material/Resources/Materials/Standard/Default.FCMat",
@@ -39,7 +40,7 @@ def main():
     # Explicitly labeled prebuilt LAB: previous archive predates _PartDesign.so staging.
     extensions = ["Part", "PartGui", "Sketcher", "SketcherGui"]
     if os.environ.get("DRNAS_PARTIAL_GUI_LAB") != "1":
-        extensions.extend(["Materials", "MatGui", "_PartDesign", "PartDesignGui"])
+        extensions.extend(["Materials", "MatGui", "_PartDesign", "PartDesignGui", "Measure", "MeasureGui"])
     for module in extensions:
         name = module + ".so"
         library = native / name

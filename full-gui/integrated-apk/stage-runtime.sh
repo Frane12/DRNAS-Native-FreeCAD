@@ -19,6 +19,12 @@ for essential in FreeCADBase FreeCADApp FreeCADGui Coin; do
         exit 1
     }
 done
+for module in Measure MeasureGui; do
+    test -s "$NATIVE/$module.so" || {
+        echo "::error::Dependency-first gate: full upstream ARM64 artifact missing $module.so" >&2
+        exit 1
+    }
+done
 for gl in GL GLU; do
     test -s "$ARTIFACT/opengl-compat/lib/lib${gl}.so" || {
         echo "::error::Missing verified Android GL4ES/Mesa ${gl} build." >&2
@@ -70,6 +76,18 @@ if [[ "${DRNAS_PARTIAL_GUI_LAB:-0}" == 1 ]]; then
     echo "LAB: original PartDesign not included; no library stubs."
 fi
 
+# Genuine FreeCAD workbench Python extensions have no lib prefix. Both
+# must survive copying (and remain available for asset extraction).
+for module in Measure MeasureGui; do
+    test -s "$STAGE/$module.so" || {
+        echo "::error::Missing staged ARM64 native dependency $module.so" >&2
+        exit 1
+    }
+    readelf -h "$STAGE/$module.so" | grep -q 'Machine:.*AArch64' || {
+        echo "::error::Invalid ARM64 ABI for $module.so" >&2
+        exit 1
+    }
+done
 # Safely rewrite GL4ES and private ICU dependencies in-place. patchelf
 # previously caused invalid PT_LOAD alignment (see device's libCoin TIPx
 # crash). This intentionally does not relocate any ELF dynamic string table.
@@ -101,7 +119,7 @@ test "$missing" -eq 0
 for essential in FreeCADBase FreeCADApp FreeCADGui Coin GL GLU; do
     test -f "$STAGE/lib${essential}.so"
 done
-(cd "$STAGE" && sha256sum libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so libGL.so libGLU.so) > "$REPORT/native-libs-sha256.txt"
+(cd "$STAGE" && sha256sum libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so libGL.so libGLU.so Measure.so MeasureGui.so) > "$REPORT/native-libs-sha256.txt"
 printf 'FreeCAD ARM64 GUI binary staging PASS; source build: %s\n' "${UPSTREAM_GUI_RUN_ID:-unknown}" > "$REPORT/BUILD-INFO.txt"
 echo 'QtActivity runtime probe only: FreeCAD upstream MainWindow is not yet started; editing unverified.' >> "$REPORT/BUILD-INFO.txt"
 echo "PASS: $(find "$STAGE" -maxdepth 1 -name '*.so' -type f | wc -l) Android AArch64 native libraries staged."

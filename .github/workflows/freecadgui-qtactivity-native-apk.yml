@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       upstream_run_id:
-        description: 'Successful upstream FreeCADGui run ID (empty = latest success)'
+        description: 'REQUIRED: successful full ARM64 FreeCADGui/Measure/MeasureGui dependency build run ID'
         type: string
-        required: false
+        required: true
       numpy_run_id:
         description: 'Successful NumPy Android ARM64 wheel workflow run ID'
         type: string
@@ -57,7 +57,9 @@ jobs:
     needs: touch-input
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
+    # Dependency first: pushes may run touch tests, but MUST NOT package a
+    # previous native artifact. The successful full build dispatches explicitly.
+    if: github.ref == 'refs/heads/feature/full-freecad-android' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -92,11 +94,11 @@ jobs:
           INPUT_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
           set -euo pipefail
-          if [[ -n "$INPUT_RUN_ID" ]]; then
-            run_id="$INPUT_RUN_ID"
-          else
-            run_id="40093671283"
+          if [[ -z "$INPUT_RUN_ID" ]]; then
+            echo "::error::Dependency first: provide a successful upstream ARM64 full build run ID (Measure + MeasureGui)."
+            exit 1
           fi
+          run_id="$INPUT_RUN_ID"
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
           test "$(jq -r '.conclusion' <<<"$info")" = success
@@ -130,6 +132,23 @@ jobs:
           name: DRNAS-Actual-Upstream-FreeCADGui-ARM64-${{ steps.upstream.outputs.run_id }}-${{ steps.upstream.outputs.attempt }}
           path: out/upstream-freecad-gui
 
+      - name: Require original ARM64 Measure and MeasureGui in upstream artifact
+        run: |
+          set -euo pipefail
+          for module in Measure MeasureGui; do
+            so="out/upstream-freecad-gui/native/$module.so"
+            test -s "$so" || {
+              echo "::error::Full ARM64 dependency build omitted $module.so; STOP before integration."
+              exit 1
+            }
+            # Recorded integrity in upstream artifact is verified again by
+            # stage-runtime.sh before copying libraries into the APK.
+            grep -Eq "([[:space:]]|^)$module[.]so$" out/upstream-freecad-gui/native/SHA256SUMS || {
+              echo "::error::No upstream SHA256 provenance for $module.so"
+              exit 1
+            }
+          done
+          echo 'PASS: original Measure.so + MeasureGui.so in full compiler artifact'
       - name: Checkout original material and icon resources matching the native FreeCAD revision
         uses: actions/checkout@v4
         with:
@@ -156,7 +175,7 @@ jobs:
             echo "::error::Upstream native GUI artifact lacks resources/. Select a successful full GUI run that includes 'Stage real native FreeCAD Part, Sketcher, PartDesign workbench UI and icons'."
             exit 1
           fi
-          for module in Part Sketcher PartDesign; do
+          for module in Part Sketcher PartDesign Measure; do
             test -s "$root/Mod/$module/InitGui.py" || {
               echo "::error::Original $module/InitGui.py missing in upstream artifact"
               exit 1
@@ -245,6 +264,13 @@ jobs:
           test -f out/full-gui/host-icu73/lib/libicui18n.so.73
           test -f out/upstream-freecad-gui/native/libFreeCADGui.so
           test -f out/upstream-freecad-gui/native/libCoin.so
+          for module in Measure MeasureGui; do
+            so="out/upstream-freecad-gui/native/$module.so"
+            test -s "$so" || { echo "::error::Missing upstream full ARM64 $module.so"; exit 1; }
+            readelf -h "$so" | grep -q 'Machine:.*AArch64' || {
+              echo "::error::Wrong ABI for $module.so"; exit 1;
+            }
+          done
           for mod in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
             test -s "out/occt-android/lib/lib${mod}.so" || { echo "::error::Missing complete OCCT lib${mod}.so"; exit 1; }
           done
@@ -380,6 +406,17 @@ jobs:
           for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
             grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
           done
+          for required in Measure MeasureGui; do
+            grep -Fx "lib/arm64-v8a/${required}.so" out/integrated-freecad-qtapk/apk-files.txt || {
+              echo "::error::Final signed APK missing genuine $required.so"; exit 1;
+            }
+            grep -Fx "assets/drnas/freecad/lib/${required}.so" out/integrated-freecad-qtapk/apk-files.txt || {
+              echo "::error::Final signed APK missing Python-loadable $required.so"; exit 1;
+            }
+          done
+          grep -Fx 'assets/drnas/freecad/Mod/Measure/InitGui.py' out/integrated-freecad-qtapk/apk-files.txt || {
+            echo "::error::Final APK lacks original Measure module scripts"; exit 1;
+          }
           unzip -p "$apk" lib/arm64-v8a/libGL.so > out/integrated-freecad-qtapk/apk-libGL.so
           readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
             | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'

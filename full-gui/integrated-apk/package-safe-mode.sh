@@ -13,6 +13,12 @@ mkdir -p "$OUT"
 for lib in FreeCADGui FreeCADApp FreeCADBase Coin GL GLU; do
     test -s "$STAGE/lib${lib}.so"
 done
+for module in Measure MeasureGui; do
+    test -s "$STAGE/$module.so" || {
+        echo "::error::Missing genuine ARM64 $module.so before APK assembly" >&2
+        exit 1
+    }
+done
 test -x "$SDK_BUILDTOOLS/zipalign"
 test -x "$SDK_BUILDTOOLS/apksigner"
 command -v zip >/dev/null
@@ -217,7 +223,7 @@ apk="$OUT/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
 unzip -Z1 "$apk" > "$OUT/apk-files.txt"
 # Standard FULL APK always requires _PartDesign and PartDesignGui.
 # Prebuilt LAB is strictly separate and marked experimental.
-workbench_ext=(Materials.so MatGui.so _PartDesign.so PartDesignGui.so)
+workbench_ext=(Materials.so MatGui.so _PartDesign.so PartDesignGui.so Measure.so MeasureGui.so)
 if [[ "${DRNAS_PARTIAL_GUI_LAB:-0}" == 1 ]]; then
     workbench_ext=()
     echo 'LAB ONLY: Part+Sketcher experimental APK; PartDesign unavailable.'
@@ -226,7 +232,7 @@ for needed in libFreeCADGui.so libFreeCADApp.so libFreeCADBase.so libCoin.so lib
     grep -Fx "lib/arm64-v8a/$needed" "$OUT/apk-files.txt"
 done
 echo "PASS: injected ${#names[@]} deferred ARM64 libraries; retained $skipped Qt/OCCT entries."
-for required_asset in assets/drnas/python314.zip assets/drnas/python-ext-manifest.txt assets/drnas/freecad-manifest.txt assets/drnas/freecad/Mod/Part/InitGui.py assets/drnas/freecad/Mod/Sketcher/InitGui.py assets/drnas/freecad/Mod/PartDesign/InitGui.py assets/drnas/freecad/data/Gui/Stylesheets/overlay/icons/taskshow.svg; do
+for required_asset in assets/drnas/python314.zip assets/drnas/python-ext-manifest.txt assets/drnas/freecad-manifest.txt assets/drnas/freecad/Mod/Part/InitGui.py assets/drnas/freecad/Mod/Sketcher/InitGui.py assets/drnas/freecad/Mod/PartDesign/InitGui.py assets/drnas/freecad/Mod/Measure/InitGui.py assets/drnas/freecad/lib/Measure.so assets/drnas/freecad/lib/MeasureGui.so assets/drnas/freecad/data/Gui/Stylesheets/overlay/icons/taskshow.svg; do
     grep -Fx "$required_asset" "$OUT/apk-files.txt"
 done
 # Verify nested zip Python packages: an APK containing only libpython can pass

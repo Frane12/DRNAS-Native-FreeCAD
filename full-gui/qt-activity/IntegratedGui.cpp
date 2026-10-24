@@ -1140,9 +1140,15 @@ void recordOriginalGuiStage(const char* stageName)
     // Older proven APK artifacts have no MeasureGui.so; keep those builds
     // operational and report absent functionality instead of loading stubs.
     if (stage == QStringLiteral("Original Gui::StartupPostProcess")) {
+        // Original CPython extension modules are also extracted to
+        // DRNAS_FREECAD_HOME/lib: Android may ignore .so files without 'lib'
+        // prefix when extracting native APK libraries.
         const QString nativeLibDir=QString::fromLocal8Bit(qgetenv("PATH_TO_FREECAD_LIBDIR"));
-        const bool hasMeasure=QFileInfo::exists(nativeLibDir+QStringLiteral("/Measure.so"));
-        const bool hasMeasureGui=QFileInfo::exists(nativeLibDir+QStringLiteral("/MeasureGui.so"));
+        const QString extractedLibDir=QString::fromLocal8Bit(qgetenv("DRNAS_FREECAD_HOME"))+QStringLiteral("/lib");
+        const bool hasMeasure=QFileInfo::exists(nativeLibDir+QStringLiteral("/Measure.so")) ||
+                              QFileInfo::exists(extractedLibDir+QStringLiteral("/Measure.so"));
+        const bool hasMeasureGui=QFileInfo::exists(nativeLibDir+QStringLiteral("/MeasureGui.so")) ||
+                                 QFileInfo::exists(extractedLibDir+QStringLiteral("/MeasureGui.so"));
         if (hasMeasure && hasMeasureGui) {
             QString error;
             const bool ready=runOriginalFreeCADPython(QStringLiteral(
