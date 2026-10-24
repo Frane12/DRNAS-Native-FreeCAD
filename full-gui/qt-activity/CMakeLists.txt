@@ -80,10 +80,10 @@ set_target_properties(drnas_freecad_qtgui PROPERTIES
 
 if(DRNAS_FREECAD_RUNTIME_DIR)
     set_target_properties(drnas_freecad_qtgui PROPERTIES
-        QT_ANDROID_PACKAGE_NAME "org.drnas.freecad.integrated"
-        QT_ANDROID_APP_NAME "DRNAS FreeCAD Native GUI Integration"
+        QT_ANDROID_PACKAGE_NAME "org.drnas.freecad.modelab"
+        QT_ANDROID_APP_NAME "DRNAS FreeCAD MODEL LAB"
         QT_ANDROID_VERSION_CODE 3
-        QT_ANDROID_VERSION_NAME "0.3.0-alpha"
+        QT_ANDROID_VERSION_NAME "0.3.0-modelab"
     )
 endif()
 

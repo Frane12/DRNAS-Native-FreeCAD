@@ -9,6 +9,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QInputDialog>
+#include <QMessageBox>
 #include <QLabel>
 #include <QMenu>
 #include <QToolButton>
@@ -78,11 +80,13 @@ class DrnasRenderLab final : public QObject {
     QTimer poll;
     QString directory;
     QByteArray previousDirty;
+    QString renderedDocument;
     int stage=0;
     bool watching=false, busy=false, axes=false, nativeStages=false;
     QActionGroup* stages;
     QAction* axesAction;
     int coinWindowChecks=0;
+    bool modelWire=false;
     void inspectCoinWindow(const QString& phase) {
         if (!upstream) return;
         auto* mdi=upstream->findChild<QMdiArea*>();
@@ -142,6 +146,41 @@ class DrnasRenderLab final : public QObject {
         if (status) status->setText(QStringLiteral("Prikaz nije osvježen; vidi log"));
         return false;
     }
+    void modelCommand(const QString& action, const QJsonArray& values=QJsonArray()) {
+        setStage(0);
+        QJsonArray args; args.append(action);
+        for (const auto& value:values) args.append(value);
+        QString error;
+        const QString code=QStringLiteral(
+            "import drnas_android_runtime as _drnas_runtime\n"
+            "_drnas_runtime._drnas_model_command(*%1)\n")
+            .arg(QString::fromUtf8(QJsonDocument(args).toJson(QJsonDocument::Compact)));
+        if (!python(code,error)) {
+            DrnasDiagnostics::note(QStringLiteral("MODEL_COMMAND ERROR ")+error);
+            QMessageBox::warning(upstream,QStringLiteral("MODEL LAB"),error);
+        }
+        tick(true);
+    }
+    void selectModelObject() {
+        tick(true);
+        QFile file(directory+QStringLiteral("/snapshot.json"));
+        if (!file.open(QIODevice::ReadOnly)) return;
+        const auto info=QJsonDocument::fromJson(file.readAll()).object();
+        const auto names=info.value(QStringLiteral("objects")).toArray();
+        const auto labels=info.value(QStringLiteral("labels")).toArray();
+        QStringList choices;
+        for (int i=0;i<names.size();++i)
+            choices.append(QStringLiteral("%1 [%2]").arg(labels.at(i).toString(),names.at(i).toString()));
+        if (choices.isEmpty()) {
+            QMessageBox::information(upstream,QStringLiteral("MODEL LAB"),QStringLiteral("Nema vidljivih BRep objekata. Dodaj kocku."));
+            return;
+        }
+        bool ok=false;
+        const QString chosen=QInputDialog::getItem(upstream,QStringLiteral("Odaberi objekt"),
+            QStringLiteral("FreeCAD objekt"),choices,0,false,&ok);
+        if (ok) { QJsonArray values; values.append(names.at(choices.indexOf(chosen)));
+            modelCommand(QStringLiteral("select"),values); }
+    }
     bool ensurePanel() {
         if (panel) return true;
         if (!upstream) return false;
@@ -172,13 +211,13 @@ class DrnasRenderLab final : public QObject {
             "import drnas_android_runtime as _drnas_runtime\n"
             "_drnas_runtime._drnas_render_watch(%1)\n").arg(argument()));
         if (!watching || !ensurePanel()) { busy=false; return; }
+        execute(QStringLiteral("_drnas_runtime._drnas_render_poll()\n"));
         panel->setGeometry(areaViewport->rect());
         panel->show(); panel->raise();
         QFile dirty(directory+QStringLiteral("/dirty"));
         QByteArray revision;
         if (dirty.open(QIODevice::ReadOnly)) revision=dirty.readAll();
         if (force || revision!=previousDirty) {
-            previousDirty=revision;
             DrnasDiagnostics::note(QStringLiteral("RENDER_BASELINE SNAPSHOT_BEGIN"));
             if (execute(QStringLiteral("_drnas_runtime._drnas_render_export(%1)\n").arg(argument()))) {
                 QFile metadata(directory+QStringLiteral("/snapshot.json"));
@@ -186,12 +225,14 @@ class DrnasRenderLab final : public QObject {
                     const auto info=QJsonDocument::fromJson(metadata.readAll()).object();
                     const int count=info.value(QStringLiteral("count")).toInt();
                     const QString name=info.value(QStringLiteral("document")).toString();
+                    previousDirty=revision;
                     // Never display old geometry as if it belonged to a new document.
                     reference->clearShape();
                     if (count==0) status->setText(QStringLiteral("Naš prikaz — dokument nema vidljivih BRep tijela"));
                     else if (reference->loadBrep(directory+QStringLiteral("/document.brep"))) {
-                        reference->fit();
-                        status->setText(QStringLiteral("Naš prikaz · %1 · tijela: %2 · trokuti: %3")
+                        if (renderedDocument!=name) reference->fit();
+                        renderedDocument=name;
+                        status->setText(QStringLiteral("MODEL LAB · %1 · tijela: %2 · trokuti: %3")
                             .arg(name).arg(count).arg(reference->triangleCount()));
                     } else status->setText(QStringLiteral("BRep se nije mogao prikazati; vidi log"));
                 }
@@ -240,6 +281,39 @@ public:
             QTimer::singleShot(350,this,[this]{inspectCoinWindow(QStringLiteral("foreground"));});
         });
         toolbar->addSeparator();
+        auto* modelMenu=new QMenu(toolbar);
+        auto* modelButton=new QToolButton(toolbar);
+        modelButton->setText(QStringLiteral("MODEL"));
+        modelButton->setObjectName(QStringLiteral("drnasModelCommands"));
+        modelButton->setMenu(modelMenu);
+        modelButton->setPopupMode(QToolButton::InstantPopup);
+        toolbar->addWidget(modelButton);
+        auto addModel=[this,modelMenu](const QString& title,const QString& command) {
+            auto* action=modelMenu->addAction(title);
+            QObject::connect(action,&QAction::triggered,this,[this,command]{modelCommand(command);});
+        };
+        addModel(QStringLiteral("Dodaj kocku 20 mm"),QStringLiteral("box"));
+        QObject::connect(modelMenu->addAction(QStringLiteral("Odaberi objekt")),&QAction::triggered,
+            this,[this]{selectModelObject();});
+        QObject::connect(modelMenu->addAction(QStringLiteral("Dimenzije odabrane kocke")),&QAction::triggered,
+            this,[this]{
+                QJsonArray dimensions;
+                for (const auto& label: {QStringLiteral("Duljina"),QStringLiteral("Širina"),QStringLiteral("Visina")}) {
+                    bool ok=false;
+                    const double value=QInputDialog::getDouble(upstream,QStringLiteral("Dimenzije kocke"),
+                        label+QStringLiteral(" (mm)"),20,0.01,1000000,2,&ok);
+                    if (!ok) return;
+                    dimensions.append(value);
+                }
+                QJsonArray args; args.append(dimensions); modelCommand(QStringLiteral("resize"),args);
+            });
+        addModel(QStringLiteral("Rupa kroz odabrano tijelo"),QStringLiteral("cut"));
+        addModel(QStringLiteral("Undo"),QStringLiteral("undo"));
+        addModel(QStringLiteral("Redo"),QStringLiteral("redo"));
+        QObject::connect(modelMenu->addAction(QStringLiteral("Fit našeg prikaza")),&QAction::triggered,
+            this,[this]{setStage(0);if(reference)reference->fit();});
+        QObject::connect(modelMenu->addAction(QStringLiteral("Bridovi")),&QAction::triggered,
+            this,[this]{if(reference){modelWire=!modelWire;reference->setWire(modelWire);}});
         stages=new QActionGroup(this);
         const bool supported=dlsym(RTLD_DEFAULT,"drnas_render_stages_version")!=nullptr;
         nativeStages=supported;
@@ -280,6 +354,10 @@ public:
         qputenv("DRNAS_RENDER_STAGE","0");
         qputenv("DRNAS_COIN_FBO_SYNC","0");
         qputenv("DRNAS_RENDER_AXES","0");
+        coinButton->setVisible(false);
+        gpuButton->setVisible(false);
+        axesAction->setVisible(false);
+        for (auto* action:stages->actions()) action->setVisible(false);
         poll.setInterval(750);
         QTimer::singleShot(2400,this,[this]{auditWarnings();inspectCoinWindow(QStringLiteral("startup"));});
         QObject::connect(&poll,&QTimer::timeout,this,[this]{tick();});
@@ -290,6 +368,8 @@ public:
         DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=reference").arg(supported));
     }
     void setStage(int value) {
+        // This branch exercises FreeCAD modeling through the native GLES BRep view.
+        if (value!=0) return;
         if (value==4) {
             DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE GUARD: stage=4 NaviCube blocked after confirmed segfault"));
             return;

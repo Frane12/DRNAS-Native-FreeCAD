@@ -45,7 +45,7 @@ public final class StartupActivity extends Activity {
         panel.setBackgroundColor(Color.rgb(17, 31, 49));
         scroll.addView(panel);
         TextView title = new TextView(this);
-        title.setText("DRNAS FreeCAD");
+        title.setText("DRNAS FreeCAD MODEL LAB");
         title.setTextColor(Color.WHITE);
         title.setTextSize(26);
         panel.addView(title);
