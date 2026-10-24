@@ -10,6 +10,9 @@ REQUIRED = {
     "Mod/Part/InitGui.py", "Mod/Sketcher/InitGui.py",
     "Mod/PartDesign/InitGui.py",
     "data/Gui/Stylesheets/overlay/icons/taskshow.svg",
+    "share/Mod/Material/Resources/Materials/Appearance/Default.FCMat",
+    "share/Mod/Material/Resources/Materials/Standard/Default.FCMat",
+    "share/Mod/Material/Resources/Models/Rendering/BasicRendering.yml",
 }
 
 

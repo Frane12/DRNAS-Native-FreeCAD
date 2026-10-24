@@ -111,6 +111,24 @@ jobs:
           name: DRNAS-Actual-Upstream-FreeCADGui-ARM64-${{ steps.upstream.outputs.run_id }}-${{ steps.upstream.outputs.attempt }}
           path: out/upstream-freecad-gui
 
+      - name: Checkout original material and icon resources matching the native FreeCAD revision
+        uses: actions/checkout@v4
+        with:
+          repository: FreeCAD/FreeCAD
+          ref: d4ffc7f725973e073907746e88d320d3e438fd34
+          path: .deps/freecad-runtime-resources
+          persist-credentials: false
+          sparse-checkout: |
+            src/Mod/Material
+            src/Mod/Part/Resources
+            src/Mod/Sketcher/Resources
+            src/Mod/PartDesign/Resources
+
+      - name: Stage and verify default material libraries before APK packaging
+        run: |
+          python3 full-gui/integrated-apk/stage-material-resources.py \
+            .deps/freecad-runtime-resources out/upstream-freecad-gui/resources
+
       - name: Require complete original FreeCAD GUI/workbench/overlay resources
         run: |
           set -euo pipefail

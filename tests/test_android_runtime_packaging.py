@@ -46,15 +46,28 @@ class AndroidPackagingTests(unittest.TestCase):
             app.Console = types.SimpleNamespace(PrintError=lambda text: None, PrintWarning=lambda text: None)
             app.getUserCachePath = lambda: str(root / 'cache')
             app.getTempPath = lambda: str(root / 'temp')
+            app.getResourceDir = lambda: str(root / 'share')
+            for relative in ('Materials/Appearance/Default.FCMat',
+                             'Materials/Standard/Default.FCMat',
+                             'Models/Rendering/BasicRendering.yml'):
+                file = root / 'share/Mod/Material/Resources' / relative
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text('original resource fixture')
+            materials = types.ModuleType('Materials')
+            requested = []
+            materials.MaterialManager = lambda: types.SimpleNamespace(
+                getMaterial=lambda uuid: requested.append(uuid))
             log = root / 'runtime.log'
             env = {'DRNAS_FREECAD_HOME': str(root), 'DRNAS_WB_LOG_PATH': str(log)}
             old_out, old_err, old_path = sys.stdout, sys.stderr, sys.path[:]
             try:
-                with patch.dict(sys.modules, {'FreeCAD': app}), patch.dict(os.environ, env), \
+                with patch.dict(sys.modules, {'FreeCAD': app, 'Materials': materials}), patch.dict(os.environ, env), \
                      patch('faulthandler.enable'), patch('importlib.util.find_spec', return_value=None):
                     runtime = runpy.run_path(str(RUNTIME))
                     app.Console.PrintError('missing binding test')
                     self.assertIn('STORAGE PASS cache', log.read_text())
+                    self.assertIn('MATERIAL PASS', log.read_text())
+                    self.assertEqual(requested, ['5dbb7be6-8b63-479b-ab4c-87be02ead973'])
                     self.assertIn('PrintError missing binding test', log.read_text())
                     self.assertIn(str(root / 'Mod/Part'), sys.path)
                     self.assertEqual(list((root / 'cache').iterdir()), [])

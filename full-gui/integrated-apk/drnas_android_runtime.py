@@ -70,6 +70,27 @@ def _drnas_storage_test():
             raise
 
 
+
+def _drnas_material_test():
+    # Use the real manager, not a placeholder material or suppressed exception.
+    root = os.path.join(App.getResourceDir(), 'Mod', 'Material', 'Resources')
+    _drnas_mark('MATERIAL BEGIN resource=' + repr(root))
+    try:
+        for relative in ('Materials/Appearance/Default.FCMat',
+                         'Materials/Standard/Default.FCMat',
+                         'Models/Rendering/BasicRendering.yml'):
+            path = os.path.join(root, relative)
+            if not os.path.isfile(path):
+                raise FileNotFoundError(path)
+        import Materials
+        manager = Materials.MaterialManager()
+        manager.getMaterial('5dbb7be6-8b63-479b-ab4c-87be02ead973')
+        _drnas_mark('MATERIAL PASS genuine default appearance resolved by UUID')
+    except Exception:
+        _drnas_mark('MATERIAL FAIL\\n' + traceback.format_exc())
+        raise
+
+
 def _drnas_part_commands():
     import FreeCADGui as Gui
     # These are the original imports from the pinned Part/InitGui.py. Its
@@ -136,3 +157,4 @@ if not getattr(App, '__drnas_runtime_installed__', False):
     faulthandler.enable(file=_drnas_fault_file, all_threads=True)
     App.__drnas_runtime_installed__ = True
     _drnas_storage_test()
+    _drnas_material_test()
