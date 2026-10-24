@@ -31,4 +31,25 @@ for source, checks in (
     for token in checks:
         assert token in source, f"Android layout contract missing: {token}"
 assert 'Std_DockOverlayToggleAll' not in gui, "Overlay toggling is not safe on repeated rotations"
-print("PASS: Android adaptive layout static integration gates")
+# Input fixes share the same Android QWindow as the native FreeCAD scene.
+# Enforce the regression contract before paying for the full Qt/ARM64 build.
+touch = (base / "qt-activity/DrnasTouchInput.h").read_text()
+for token in (
+    'MODAL_EMBED prepared',
+    'DlgActiveBody',
+    'QEvent::Polish',
+    'dialog->setParent(host,Qt::Widget)',
+    'drnasModalRestoring',
+    'layoutEmbeddedModal()',
+    'embeddedDialog && embeddedDialog->isVisible()',
+    'QPoint(0,zoomDeflection>0?120:-120)',
+    'Qt::NoScrollPhase',
+    'zoomTimer.setInterval(65)',
+    'TOUCH_VIEW_BEGIN',
+    'TOUCH_VIEW_RESIZE',
+):
+    assert token in touch, f"Android modal/touch navigation contract missing: {token}"
+assert 'queuedZoom' not in touch and 'previousZoom' not in touch, (
+    "Half-notch wheel flood must not return"
+)
+print("PASS: Android adaptive layout, modal and touch navigation integration gates")
