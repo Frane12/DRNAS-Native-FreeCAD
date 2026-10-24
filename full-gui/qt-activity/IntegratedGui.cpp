@@ -1133,45 +1133,17 @@ void recordOriginalGuiStage(const char* stageName)
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
     }
-    // Do not import MeasureGui inside early Gui::StartupPostProcess.
-    // On the physical Android device (2026-10-24T22:59:35.719), the
-    // early embedded-Python extension import caused SIGSEGV before the
-    // original FreeCAD MainWindow completed initialization.
-    // MeasureGui PyInit creates GUI view providers and QuickMeasure:
-    // their ABI and runtime lifecycle must be validated separately.
-    // Keep the dependency-first compile/stage/APK gates for genuine
-    // Measure + MeasureGui binaries; do not execute unsafe imports
-    // on the unconditional application startup path.
-    if (stage == QStringLiteral("Original Gui::StartupPostProcess")) {
-        const QString nativeDir=QString::fromLocal8Bit(qgetenv("PATH_TO_FREECAD_LIBDIR"));
-        const QString extractedDir=QString::fromLocal8Bit(qgetenv("DRNAS_FREECAD_HOME"))
-                                   +QStringLiteral("/lib");
-        auto exists=[&](const QString& name) {
-            return QFileInfo::exists(nativeDir+QLatin1Char('/')+name) ||
-                   QFileInfo::exists(extractedDir+QLatin1Char('/')+name);
-        };
-        // FreeCAD's authentic FreeCADGuiInit.py iterates App.__ModCache__
-        // and executes Mod/Measure/InitGui.py, which imports MeasureGui again.
-        // Disable only this unsafe *automatic GUI module registration*.
-        // Keep its native binaries + exact upstream Python resources packaged
-        // for later isolated opt-in crash diagnosis; do not ship stub modules.
-        QString isolationError;
-        const bool isolated=runOriginalFreeCADPython(QStringLiteral(
-            "import FreeCAD as App\n"
-            "_drnas_modcache=getattr(App,'__ModCache__',None)\n"
-            "if not isinstance(_drnas_modcache,list):\n"
-            "    raise RuntimeError('FreeCAD App module cache is not initialized')\n"
-            "_drnas_measure=[m for m in _drnas_modcache if getattr(m,'name','')=='Measure']\n"
-            "App.__ModCache__=[m for m in _drnas_modcache if getattr(m,'name','')!='Measure']\n"
-            "print('DRNAS MEASURE STARTUP SAFE: skipped native GUI autoload; matches=',len(_drnas_measure),flush=True)\n"
-        ),isolationError);
+    // Use upstream FreeCAD's unchanged module startup sequence:
+    // App::Application::init -> Gui::Application::initApplication ->
+    // Gui::StartupPostProcess::execute -> FreeCADGuiInit.py ->
+    // Mod/Measure/InitGui.py. The original GUI init script manages
+    // when/if MeasureGui is imported and registered.
+    // Do not manually import MeasureGui here or mutate App.__ModCache__.
+    // The full ARM64 dependency, staging, and signed APK gates remain active.
+    if (stage == QStringLiteral("Original Gui::StartupPostProcess"))
         DrnasDiagnostics::note(QStringLiteral(
-            "MEASURE STARTUP SAFE: Measure.so=%1 MeasureGui.so=%2 "
-            "GUI autoload isolated=%3 reason=%4")
-            .arg(exists(QStringLiteral("Measure.so")))
-            .arg(exists(QStringLiteral("MeasureGui.so")))
-            .arg(isolated).arg(isolationError));
-    }
+            "STARTUP ORIGINAL: FreeCADGuiInit.py owns MeasureGui init; "
+            "no DRNAS forced import or module-cache filtering"));
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
         stage.contains(QStringLiteral("OpenGL"), Qt::CaseInsensitive)) {
