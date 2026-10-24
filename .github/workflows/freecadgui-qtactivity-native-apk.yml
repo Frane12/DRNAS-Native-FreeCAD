@@ -10,6 +10,7 @@ on:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
       - 'full-gui/integrated-apk/**'
       - 'full-gui/qt-activity/**'
+      - 'full-gui/tests/test_mobile_layout.py'
   workflow_dispatch:
     inputs:
       upstream_run_id:
@@ -31,7 +32,7 @@ permissions:
 
 concurrency:
   group: drnas-real-freecadgui-qtapk
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   QT_VERSION: '6.8.3'
