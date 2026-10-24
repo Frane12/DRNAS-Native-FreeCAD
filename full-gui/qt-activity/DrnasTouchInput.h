@@ -141,6 +141,10 @@ class DrnasTouchInput final : public QObject {
     QPointer<QWidget> mouseReceiver;
     QPointF cursor,last,start;
     QElapsedTimer clock;
+    // Android Qt may deliver a synthesized mouse pair AFTER an already
+    // accepted touch sequence. Without de-duplication it replays a second
+    // press/release at a different logical target, looking like ghost taps.
+    QElapsedTimer lastViewportTouch;
     bool relative=false,moved=false,repairQueued=false;
     bool twoFingerPan=false,suppressAfterPan=false;
     QPointF panLast;
@@ -238,7 +242,13 @@ class DrnasTouchInput final : public QObject {
     void end(const QPointF& point) {
         if(!relative)return;move(point);relative=false;
         if(!moved && clock.elapsed()<350 && buttons==Qt::NoButton) {
-            mouseButton(Qt::LeftButton,true);mouseButton(Qt::LeftButton,false);
+            // A relative pointer may have crossed into a toolbar/dock while
+            // dragging. Never convert a viewport tap into a UI command.
+            if(inRender(target())) {
+                mouseButton(Qt::LeftButton,true);mouseButton(Qt::LeftButton,false);
+            } else {
+                DrnasDiagnostics::note(QStringLiteral("TOUCH_TAP_IGNORED pointer outside viewport"));
+            }
         }
         DrnasDiagnostics::note(QStringLiteral("TOUCH_VIEW_END moved=%1 cursor=%2,%3 held=%4")
             .arg(moved).arg(cursor.x()).arg(cursor.y()).arg(int(buttons)));
@@ -432,6 +442,7 @@ protected:
         if(!inRender(widget))return false;
         if(type==QEvent::TouchCancel){releaseAll();event->accept();return true;}
         if(type==QEvent::TouchBegin || type==QEvent::TouchUpdate || type==QEvent::TouchEnd) {
+            lastViewportTouch.start();
             // One finger: move the logical pointer, tap: select.
             // Two fingers: synthetic middle-button drag for native FreeCAD
             // CAD-navigation pan. No additional floating UI is needed.
@@ -480,6 +491,13 @@ protected:
             auto* mouse=static_cast<QMouseEvent*>(event);
             if(!event->spontaneous() && mouse->source()==Qt::MouseEventNotSynthesized)return false;
             if(mouse->source()!=Qt::MouseEventNotSynthesized) {
+                // Input was already delivered as Qt TouchBegin/Update/End.
+                // Do not convert its compatibility mouse events into a
+                // second independent press/release on the CAD viewport.
+                if(lastViewportTouch.isValid() && lastViewportTouch.elapsed()<650) {
+                    event->accept();
+                    return true;
+                }
                 if(touchId<0) {
                     if(type==QEvent::MouseButtonPress)begin(mouse->globalPosition());
                     else if(type==QEvent::MouseButtonRelease)end(mouse->globalPosition());else move(mouse->globalPosition());
