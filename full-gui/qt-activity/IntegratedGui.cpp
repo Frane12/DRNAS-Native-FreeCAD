@@ -1150,11 +1150,27 @@ void recordOriginalGuiStage(const char* stageName)
             return QFileInfo::exists(nativeDir+QLatin1Char('/')+name) ||
                    QFileInfo::exists(extractedDir+QLatin1Char('/')+name);
         };
+        // FreeCAD's authentic FreeCADGuiInit.py iterates App.__ModCache__
+        // and executes Mod/Measure/InitGui.py, which imports MeasureGui again.
+        // Disable only this unsafe *automatic GUI module registration*.
+        // Keep its native binaries + exact upstream Python resources packaged
+        // for later isolated opt-in crash diagnosis; do not ship stub modules.
+        QString isolationError;
+        const bool isolated=runOriginalFreeCADPython(QStringLiteral(
+            "import FreeCAD as App\n"
+            "_drnas_modcache=getattr(App,'__ModCache__',None)\n"
+            "if not isinstance(_drnas_modcache,list):\n"
+            "    raise RuntimeError('FreeCAD App module cache is not initialized')\n"
+            "_drnas_measure=[m for m in _drnas_modcache if getattr(m,'name','')=='Measure']\n"
+            "App.__ModCache__=[m for m in _drnas_modcache if getattr(m,'name','')!='Measure']\n"
+            "print('DRNAS MEASURE STARTUP SAFE: skipped native GUI autoload; matches=',len(_drnas_measure),flush=True)\n"
+        ),isolationError);
         DrnasDiagnostics::note(QStringLiteral(
-            "MEASURE STARTUP SAFE: Measure.so=%1 MeasureGui.so=%2; "
-            "early native MeasureGui import DISABLED after device SIGSEGV")
+            "MEASURE STARTUP SAFE: Measure.so=%1 MeasureGui.so=%2 "
+            "GUI autoload isolated=%3 reason=%4")
             .arg(exists(QStringLiteral("Measure.so")))
-            .arg(exists(QStringLiteral("MeasureGui.so"))));
+            .arg(exists(QStringLiteral("MeasureGui.so")))
+            .arg(isolated).arg(isolationError));
     }
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
