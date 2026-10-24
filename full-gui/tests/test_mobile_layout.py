@@ -5,8 +5,24 @@ Actual Qt geometry, Android safe area, touches and OpenGL still require
 an installable APK test on the phone. This gate catches integration omissions.
 """
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 base = Path(__file__).resolve().parents[1]
+# Landscape-only experimental release: never create/rotate Qt's EGLSurface
+# because of Android device rotation while Coin3D is active.
+android_manifest = ET.parse(base / "qt-activity/android/AndroidManifest.xml")
+android_ns = "{http://schemas.android.com/apk/res/android}"
+android_activities = {
+    activity.get(android_ns+"name"): activity.get(android_ns+"screenOrientation")
+    for activity in android_manifest.findall(".//activity")
+}
+assert android_activities.get("org.drnas.freecad.bootstrap.StartupActivity") == "landscape", (
+    "Splash activity must start in landscape before Qt creates its surface"
+)
+assert android_activities.get("org.qtproject.qt.android.bindings.QtActivity") == "landscape", (
+    "Native FreeCAD QtActivity must not rotate with sensor orientation"
+)
+
 gui = (base / "qt-activity/IntegratedGui.cpp").read_text()
 bridge = (base / "upstream/AndroidMainWindowBridge.cpp").read_text()
 for source, checks in (
