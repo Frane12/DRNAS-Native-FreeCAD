@@ -447,7 +447,7 @@ class DrnasMobileWorkspace final : public QObject {
             // our own addDockWidget/tabify/raise would otherwise invalidate
             // the signature and trigger another rebuild every 180ms.
             names.append(dock->objectName()+QLatin1Char(':')+
-                QString::number(reinterpret_cast<quintptr>(dock),16));
+                QString::number(static_cast<qulonglong>(reinterpret_cast<quintptr>(dock)),16));
         }
         const QString layout=QStringLiteral("%1/%2/%3/%4/%5")
             .arg(width).arg(height).arg(portrait).arg(narrow).arg(names.join(QLatin1Char(';')));
