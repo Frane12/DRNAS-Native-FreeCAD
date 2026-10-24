@@ -295,6 +295,47 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
     # This intentionally leaves the 3D viewport blank while isolating P03.
     quarter_path = root / "src/Gui/Quarter/QuarterWidget.cpp"
     quarter_source = quarter_path.read_text()
+    # Android EGL exposes GLES contexts. A desktop OpenGL compatibility
+    # request cannot be satisfied there; legacy Coin calls still use GL4ES.
+    quarter_source = once(quarter_source,
+        '''        surfaceFormat.setRenderableType(QSurfaceFormat::OpenGL);
+        surfaceFormat.setProfile(QSurfaceFormat::CompatibilityProfile);
+        surfaceFormat.setOption(QSurfaceFormat::DeprecatedFunctions, true);''',
+        '''#ifdef __ANDROID__
+        surfaceFormat.setRenderableType(QSurfaceFormat::OpenGLES);
+        surfaceFormat.setVersion(2, 0);
+        surfaceFormat.setProfile(QSurfaceFormat::NoProfile);
+        surfaceFormat.setOption(QSurfaceFormat::DeprecatedFunctions, false);
+        surfaceFormat.setStereo(false);
+        surfaceFormat.setSamples(0);
+        surfaceFormat.setDepthBufferSize(24);
+        surfaceFormat.setStencilBufferSize(8);
+        ::drnasDocumentPhase("EGL01 request GLES=2.0 profile=none depth=24 stencil=8 samples=0 stereo=0", "BEFORE_SET_FORMAT");
+#else
+        surfaceFormat.setRenderableType(QSurfaceFormat::OpenGL);
+        surfaceFormat.setProfile(QSurfaceFormat::CompatibilityProfile);
+        surfaceFormat.setOption(QSurfaceFormat::DeprecatedFunctions, true);
+#endif''')
+    quarter_source = once(quarter_source,
+        '        setFormat(surfaceFormat);',
+        '''        setFormat(surfaceFormat);
+#ifdef __ANDROID__
+        myFormat = surfaceFormat; // Preserve GLES when recreating the viewport.
+#endif''')
+    quarter_source = once(quarter_source,
+        'connect(this, &CustomGLWidget::resized, this, &CustomGLWidget::slotResized);',
+        '''connect(this, &CustomGLWidget::resized, this, &CustomGLWidget::slotResized);
+#ifdef __ANDROID__
+        const QSurfaceFormat actual = this->format();
+        char eglLine[384];
+        std::snprintf(eglLine, sizeof(eglLine),
+            "EGL02 actual valid=%d GLES=%d version=%d.%d profile=%d depth=%d stencil=%d samples=%d stereo=%d FBO=%u",
+            int(this->isValid()), int(actual.renderableType() == QSurfaceFormat::OpenGLES),
+            actual.majorVersion(), actual.minorVersion(), int(actual.profile()),
+            actual.depthBufferSize(), actual.stencilBufferSize(), actual.samples(),
+            int(actual.stereo()), this->defaultFramebufferObject());
+        ::drnasDocumentPhase(eglLine, "INITIALIZE_GL");
+#endif''')
     # Both variants use the same native library and genuine render path.
     # A leaves the desktop resize/DPR calculations unchanged. B derives Coin's
     # viewport from the actual QOpenGLWidget just before actualRedraw(), after
@@ -402,4 +443,4 @@ static void drnasViewportAbSnapshot(const char* phase, QOpenGLWidget* widget,
 
 if __name__ == "__main__":
     patch(Path(sys.argv[1]))
-    print("Render trace v5: Android axis-cross isolation, A/B viewport and native/wrapped GL diagnostics")
+    print("Render trace v6: Android GLES EGL format, axis-cross isolation and A/B GL diagnostics")
