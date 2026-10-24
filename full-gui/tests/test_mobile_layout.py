@@ -27,6 +27,9 @@ for source, checks in (
         'STARTUP_UI P6 stable; crash marker cleared',
         'nativeProbe/bootStamp',
         'drnasSuppressAutostart',
+        'STARTUP_FILES F1 copying Python stdlib and extension modules',
+        'F1 OK; F2 unpacking original FreeCAD resources',
+        'F2 OK; F3 initialize original FreeCAD GUI',
     )),
     (bridge, (
         '#include "OverlayManager.h"',
