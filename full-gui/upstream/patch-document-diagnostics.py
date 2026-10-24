@@ -212,6 +212,17 @@ private:
 
     viewer_path = root / "src/Gui/View3DInventorViewer.cpp"
     viewer_source = viewer_path.read_text()
+    # Device A and B both pass the main Coin scene and crash inside
+    # drawAxisCross(). Isolate only this auxiliary draw on Android; leave
+    # desktop drawing and the genuine scene renderer unchanged.
+    viewer_source = once(viewer_source, 'this->drawAxisCross();', r'''
+#ifdef __ANDROID__
+    if (_drnasTraceEnabled)
+        ::drnasDocumentPhase("RS05A axis cross", "SKIPPED_ANDROID_ISOLATION");
+#else
+    this->drawAxisCross();
+#endif
+''')
     gpu_probe = r'''
 #ifdef __ANDROID__
 #include <QOpenGLContext>
@@ -389,4 +400,4 @@ static void drnasViewportAbSnapshot(const char* phase, QOpenGLWidget* widget,
 
 if __name__ == "__main__":
     patch(Path(sys.argv[1]))
-    print("Render trace v4: A/B viewport sizing, simultaneous native/wrapped GL snapshots, post-scene checkpoints")
+    print("Render trace v5: Android axis-cross isolation, A/B viewport and native/wrapped GL diagnostics")
