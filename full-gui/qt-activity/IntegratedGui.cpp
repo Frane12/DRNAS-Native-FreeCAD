@@ -1242,6 +1242,15 @@ finally:
         });
         DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P5 touch controllers installed"));
     });
+    QTimer::singleShot(2900,shell,[hostGuard,cadGuard]{
+        if(!hostGuard || !cadGuard) return;
+        QSettings stable;
+        stable.setValue(QStringLiteral("nativeProbe/current"),
+                        QStringLiteral("STARTUP_UI P6 native workspace stable"));
+        stable.setValue(QStringLiteral("nativeProbe/pending"),false);
+        stable.sync();
+        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P6 stable; crash marker cleared"));
+    });
 }
 
 // Android QtActivity has one usable content surface. A second desktop-style
@@ -1553,15 +1562,25 @@ public:
             "QLabel{background:#20344a;color:#b9e7ce;padding:7px;}"));
         outer->addWidget(nativeStatus);
         QSettings diagnostics;
+        // A repeated native crash with THIS integration build must fall back
+        // to an inspectable UI instead of rebooting into the same crash loop.
+        // New APK integration revisions use a new stamp and get one clean
+        // automatic launch attempt; subsequent failures require manual retry.
+        constexpr auto kUiBootStamp = "native-ui-deferred-20261024-v1";
+        const bool previousCrash = diagnostics.value(QStringLiteral("nativeProbe/pending")).toBool();
+        const bool repeatedBuildCrash = previousCrash &&
+            diagnostics.value(QStringLiteral("nativeProbe/bootStamp")).toString() ==
+                QString::fromLatin1(kUiBootStamp);
+        setProperty("drnasSuppressAutostart",repeatedBuildCrash);
         QString lastStatus = diagnostics.value(
             QStringLiteral("nativeProbe/result"),
             QStringLiteral("SAFE MODE: Qt6 started. Native FreeCAD libraries are "
                            "included in the APK but have NOT been loaded.")).toString();
         if (diagnostics.value(QStringLiteral("nativeProbe/pending")).toBool()) {
             lastStatus = QStringLiteral(
-                "LAST NATIVE CRASH: Android killed the app while loading %1. "
-                "This information was saved before dlopen; no system crash "
-                "report is needed. Restart is safe until TEST is pressed.")
+                "PREVIOUS STARTUP DID NOT FINISH at %1. "
+                "This status was saved before native startup completed. "
+                "Use TEST then OPEN ORIGINAL FREECAD GUI for a manual retry.")
                 .arg(diagnostics.value(QStringLiteral("nativeProbe/current"),
                                         QStringLiteral("unknown")).toString());
             diagnostics.setValue(QStringLiteral("nativeProbe/result"), lastStatus);
@@ -1586,7 +1605,11 @@ public:
         launchOriginal->setEnabled(false);
         outer->addWidget(launchOriginal);
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
-        setProperty("drnasAutoStartPartDesign", qgetenv("DRNAS_AUTOSTART") != QByteArray("0"));
+        setProperty("drnasAutoStartPartDesign",
+                    qgetenv("DRNAS_AUTOSTART") != QByteArray("0") &&
+                    !property("drnasSuppressAutostart").toBool());
+        if(property("drnasSuppressAutostart").toBool())
+            DrnasDiagnostics::note(QStringLiteral("STARTUP_RECOVERY repeated crash: manual safe mode enabled"));
 #endif
         auto restoreStartupUi=[safe=QPointer<QWidget>(central)] {
             if(!safe)return;
@@ -1635,6 +1658,10 @@ public:
             currentFreeCADStartupStatus = nativeStatus;
             currentFreeCADAndroidShell = this;
             originalFreeCADEmbeddedBeforeShow = false;
+            QSettings bootSettings;
+            bootSettings.setValue(QStringLiteral("nativeProbe/bootStamp"),
+                                  QStringLiteral("native-ui-deferred-20261024-v1"));
+            bootSettings.sync();
             DrnasDebugCenter::recordSnapshot(
                 QStringLiteral("before risky original FreeCADGui startup"));
             recordOriginalGuiStage("Calling real Gui::MainWindow startup");
@@ -1644,7 +1671,9 @@ public:
             // Keep the Android qss: icon root valid after startup too.
             restoreOriginalFreeCADIconPaths();
             QSettings settings;
-            settings.setValue(QStringLiteral("nativeProbe/pending"), false);
+            // Do not clear the crash marker the moment the native API
+            // returns. The delayed Qt workspace/input setup may still crash.
+            settings.setValue(QStringLiteral("nativeProbe/pending"), result == 0);
             DrnasDebugCenter::recordSnapshot(
                 QStringLiteral("returned from original FreeCADGui startup"));
             DrnasDiagnostics::note(QStringLiteral("Original FreeCAD startup result code: %1")
@@ -1909,7 +1938,7 @@ public:
 
         setCentralWidget(central);
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
-        if(qgetenv("DRNAS_AUTOSTART")!=QByteArray("0")) {
+        if(property("drnasAutoStartPartDesign").toBool()) {
             for(auto* child:central->findChildren<QWidget*>(QString(),Qt::FindDirectChildrenOnly))child->hide();
             auto* splash=new QWidget(central);splash->setObjectName(QStringLiteral("drnasStartupSplash"));
             splash->setStyleSheet(QStringLiteral("background:#102337;color:#e8f2fa;"));
