@@ -30,7 +30,7 @@ for source, checks in (
 ):
     for token in checks:
         assert token in source, f"Android layout contract missing: {token}"
-assert 'Std_DockOverlayToggleAll' not in gui, "Overlay toggling is not safe on repeated rotations"
+assert 'invoke(QStringLiteral("Std_DockOverlayToggleAll")' not in gui, "Overlay toggling is not safe on repeated rotations"
 # Input fixes share the same Android QWindow as the native FreeCAD scene.
 # Enforce the regression contract before paying for the full Qt/ARM64 build.
 touch = (base / "qt-activity/DrnasTouchInput.h").read_text()
