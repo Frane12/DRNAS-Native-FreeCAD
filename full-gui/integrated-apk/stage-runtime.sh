@@ -25,6 +25,13 @@ for gl in GL GLU; do
         exit 1
     }
 done
+# Coin can complete a traversal while drawing into native framebuffer zero.
+# Reject old GL4ES artifacts before producing another signed, blank-view APK.
+readelf --dyn-syms --wide "$ARTIFACT/opengl-compat/lib/libGL.so" \
+    | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }' || {
+    echo "::error::GL4ES lacks the Qt default framebuffer bridge; rebuild the OpenGL compatibility payload." >&2
+    exit 1
+}
 test -d "$QT_LIB"
 test -d "$ROOT/out/occt-android/lib"
 copy_sos() {

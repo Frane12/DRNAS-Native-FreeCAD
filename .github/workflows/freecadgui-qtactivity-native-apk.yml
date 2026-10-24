@@ -4,6 +4,12 @@ name: DRNAS FreeCADGui QtActivity APK Integration
 # The main-branch workflow_run controller still dispatches packaging after a
 # genuinely new successful native GUI build.
 on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
+      - 'full-gui/integrated-apk/**'
+      - 'full-gui/qt-activity/**'
   workflow_dispatch:
     inputs:
       upstream_run_id:
@@ -36,7 +42,7 @@ jobs:
   package-real-gui:
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    if: github.ref == 'refs/heads/feature/full-freecad-android'
+    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -247,6 +253,37 @@ jobs:
           cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
           python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
 
+      # The native GUI artifact may predate the Qt default-FBO bridge.
+      # Apply AFTER integrate-bindings.py, which includes its older GL pair.
+      # Rebuild only GL4ES/GLU from current integration sources, retaining
+      # the verified FreeCAD/Coin binaries and all dependency caches.
+      - name: Remove artifact OpenGL payload before restoring current bridge
+        run: rm -rf out/upstream-freecad-gui/opengl-compat
+      - name: Restore GL4ES with Qt default framebuffer bridge
+        id: qt_fbo_gl
+        uses: actions/cache/restore@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+      - name: Build and require exported Qt framebuffer bridge
+        run: |
+          set -euo pipefail
+          gl=out/upstream-freecad-gui/opengl-compat/lib/libGL.so
+          if ! readelf --dyn-syms --wide "$gl" 2>/dev/null | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'; then
+            bash full-gui/upstream/build-android-gl4es-glu.sh
+          fi
+          readelf --dyn-syms --wide "$gl" | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'
+          for name in GL GLU; do
+            readelf -h "out/upstream-freecad-gui/opengl-compat/lib/lib${name}.so" | grep -q AArch64
+          done
+          echo 'PASS: current Android GL4ES exports Qt default framebuffer bridge'
+      - name: Cache verified GL4ES Qt framebuffer bridge
+        if: steps.qt_fbo_gl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+
       - name: Resolve successful NumPy wheel workflow run
         id: numpy
         env:
@@ -328,6 +365,10 @@ jobs:
           for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
             grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
           done
+          unzip -p "$apk" lib/arm64-v8a/libGL.so > out/integrated-freecad-qtapk/apk-libGL.so
+          readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
+            | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'
+          rm out/integrated-freecad-qtapk/apk-libGL.so
           # Verify transitive dependencies for EVERY arm64 library, not only
           # FreeCADGui/Base/App. Prior signed APK crashed instantly because
           # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.
