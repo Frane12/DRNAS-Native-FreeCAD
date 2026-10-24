@@ -2,10 +2,11 @@
 // Desktop Qt event routing regression checks; no FreeCAD/GL dependencies.
 #include "../DrnasTouchInput.h"
 #include <QTest>
+#include <QMenu>
 #include <iostream>
 namespace DrnasDiagnostics { void note(const QString& s) { qWarning().noquote()<<s; } }
 struct Viewport : QWidget {
-    int presses=0, releases=0, moves=0;
+    int presses=0, releases=0, moves=0, rightPresses=0, rightReleases=0;
     QPointF pressPosition;
     Qt::KeyboardModifiers pressModifiers;
     bool eventFilter(QObject*,QEvent* e) override {
@@ -15,9 +16,15 @@ struct Viewport : QWidget {
     bool event(QEvent* e) override {
         if(e->type()==QEvent::MouseButtonPress) {
             auto* m=static_cast<QMouseEvent*>(e); ++presses;
-            pressPosition=m->position(); pressModifiers=m->modifiers(); e->accept();return true;
+            if(m->button()==Qt::RightButton) ++rightPresses;
+            else {pressPosition=m->position(); pressModifiers=m->modifiers();}
+            e->accept();return true;
         }
-        if(e->type()==QEvent::MouseButtonRelease) {++releases;e->accept();return true;}
+        if(e->type()==QEvent::MouseButtonRelease) {
+            ++releases;
+            if(static_cast<QMouseEvent*>(e)->button()==Qt::RightButton) ++rightReleases;
+            e->accept();return true;
+        }
         if(e->type()==QEvent::MouseMove) {++moves;e->accept();return true;}
         return QWidget::event(e);
     }
@@ -115,7 +122,18 @@ int main(int argc,char** argv) {
     check(viewport->pressModifiers.testFlag(Qt::ControlModifier),"multi-selection must add Ctrl to selection");
     check(multi->isChecked(),"multi-selection must stay enabled across taps");
     auto* cancelButton=host.findChild<QPushButton*>("drnasTouchCancel");
-    check(cancelButton && cancelButton->isVisible(),"cancel must remain visible with panel closed");
+    check(cancelButton && cancelButton->isVisible() && cancelButton->text()=="Esc",
+          "Esc must remain visible with panel closed");
+    auto* rmbButton=host.findChild<QPushButton*>("drnasTouchContext");
+    check(rmbButton && rmbButton->isVisible(),"RMB must remain visible with panel closed");
+    QTest::mouseClick(rmbButton,Qt::LeftButton);drain();
+    check(viewport->rightPresses==1 && viewport->rightReleases==1,
+          "direct RMB must send a balanced context click without a relative cursor");
+    QMenu popup(&host); popup.addAction("Test action");
+    popup.popup(host.mapToGlobal(QPoint(150,90)));drain();
+    check(popup.isVisible(),"test popup should open");
+    QTest::keyClick(&popup,Qt::Key_Back);drain();
+    check(!popup.isVisible(),"Android Back must dismiss active Qt popup");
     std::cout<<"Direct touch routing checks passed\n";
     host.takeCentralWidget(); // stack-owned cad
 }

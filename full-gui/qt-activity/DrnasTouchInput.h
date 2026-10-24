@@ -63,6 +63,7 @@ class DrnasTouchInput final : public QObject {
     QPushButton* toolMode;
     QPushButton* multiSelect;
     QPushButton* cancelButton;
+    QPushButton* contextButton;
     DrnasPointerMark* mark;
 
     QSlider* zoom;
@@ -120,6 +121,10 @@ class DrnasTouchInput final : public QObject {
     }
     QWidget* keyboardTarget() const {
         QWidget* focus=QApplication::focusWidget();
+        if (QWidget* popup=QApplication::activePopupWidget()) {
+            if (focus && (focus==popup || popup->isAncestorOf(focus))) return focus;
+            return popup;
+        }
         if (QWidget* modal=QApplication::activeModalWidget()) {
             if (focus && (focus==modal || modal->isAncestorOf(focus))) return focus;
             return modal;
@@ -357,6 +362,32 @@ if _drnas_doc:
             flushCamera(); resetGesture();
         }
     }
+    void cancelInput() {
+        // Android Back closes the native Qt popup first, then falls back to
+        // FreeCAD's normal Escape semantics for active sketch/task commands.
+        resetGesture();
+        if (QWidget* popup=QApplication::activePopupWidget()) {
+            popup->close();
+            DrnasDiagnostics::note(QStringLiteral("INPUT: popup dismissed by Esc/Back"));
+            return;
+        }
+        sendKey(Qt::Key_Escape);
+    }
+    void openContextMenu() {
+        // No relative cursor or touchpad: invoke the original FreeCAD RMB
+        // exactly at the last finger position (or the viewport center).
+        if (QApplication::activeModalWidget()) return;
+        if (QWidget* popup=QApplication::activePopupWidget()) { popup->close(); return; }
+        QWidget* target=lastViewport.data();
+        if (!target || !target->isVisible()) return;
+        if (!target->rect().contains(target->mapFromGlobal(globalPoint())))
+            setPosition(target->mapToGlobal(target->rect().center()));
+        resetGesture();
+        mouseReceiver=target;
+        mouseButton(Qt::RightButton,true);
+        mouseButton(Qt::RightButton,false);
+        DrnasDiagnostics::note(QStringLiteral("INPUT: direct RMB at logical viewport position"));
+    }
     void zoomStep() {
         if (QApplication::activeModalWidget()) { queuedZoom=0; zoomTimer.stop(); return; }
         QWidget* target=lastViewport;
@@ -387,9 +418,11 @@ if _drnas_doc:
         panel->setFixedHeight(std::max(60,std::min(350,host->height()-80)));
         panel->move(std::clamp(panel->x(),0,std::max(0,host->width()-panel->width())),
                     std::clamp(panel->y(),0,std::max(0,host->height()-panel->height())));
-        launcher->setGeometry(std::max(0,host->width()-77),std::max(0,host->height()-90),72,34);
-        cancelButton->setGeometry(std::max(0,host->width()-160),std::max(0,host->height()-90),78,34);
-        panel->raise(); launcher->raise(); cancelButton->raise();
+        const int bottom=std::max(0,host->height()-90);
+        launcher->setGeometry(std::max(0,host->width()-77),bottom,72,34);
+        cancelButton->setGeometry(std::max(0,host->width()-160),bottom,78,34);
+        contextButton->setGeometry(std::max(0,host->width()-231),bottom,66,34);
+        panel->raise(); launcher->raise(); cancelButton->raise(); contextButton->raise();
     }
     void repairWindows() {
         if (!cad || repairing) return;
@@ -454,6 +487,14 @@ protected:
             qApp->removeEventFilter(this); return false;
         }
         if (injectedEvents.contains(event)) return false;
+        if (event->type()==QEvent::KeyPress) {
+            auto* key=static_cast<QKeyEvent*>(event);
+            if (key->key()==Qt::Key_Back ||
+                (key->key()==Qt::Key_Escape && QApplication::activePopupWidget())) {
+                cancelInput();
+                event->accept(); return true;
+            }
+        }
         if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
             event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick) {
             auto* mouse=static_cast<QMouseEvent*>(event);
@@ -555,12 +596,6 @@ public:
             modifier(Qt::ControlModifier,Qt::Key_Control,on);
         });
 
-        auto* context=button(QStringLiteral("Izbornik odabira")); body->addWidget(context);
-        connect(context,&QPushButton::clicked,this,[this]{
-            if (!lastViewport || QApplication::activeModalWidget()) return;
-            mouseReceiver=lastViewport;
-            mouseButton(Qt::RightButton,true); mouseButton(Qt::RightButton,false);
-        });
         auto* help=new QLabel(QStringLiteral("Dodir: odabir · povuci: orbita\n"
             "Dva prsta: pomak i zoom\nZadrži prst: precizni križić\n"
             "Skica/zadatak: jedan prst koristi alat"),content);
@@ -585,7 +620,7 @@ public:
         }
         for (auto pair : {std::pair<const char*,int>{"Esc",Qt::Key_Escape},{"Enter",Qt::Key_Return}}) {
             auto* b=button(QString::fromLatin1(pair.first)); mods->addWidget(b);
-            connect(b,&QPushButton::clicked,this,[this,pair]{if(pair.second==Qt::Key_Escape)resetGesture();sendKey(pair.second);});
+            connect(b,&QPushButton::clicked,this,[this,pair]{if(pair.second==Qt::Key_Escape)cancelInput();else sendKey(pair.second);});
         }
         body->addLayout(mods);
         auto* keys=new QHBoxLayout;
@@ -605,11 +640,17 @@ public:
         launcher=new QPushButton(QStringLiteral("Geste"),host); launcher->setObjectName(QStringLiteral("drnasTouchInputLauncher"));
         launcher->setFocusPolicy(Qt::NoFocus); launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
         connect(launcher,&QPushButton::clicked,this,[this]{panel->setVisible(!panel->isVisible());constrain();});
-        cancelButton=new QPushButton(QStringLiteral("Odustani"),host);
+        cancelButton=new QPushButton(QStringLiteral("Esc"),host);
         cancelButton->setObjectName(QStringLiteral("drnasTouchCancel"));
         cancelButton->setFocusPolicy(Qt::NoFocus);
         cancelButton->setStyleSheet(launcher->styleSheet());
-        connect(cancelButton,&QPushButton::clicked,this,[this]{resetGesture();sendKey(Qt::Key_Escape);});
+        connect(cancelButton,&QPushButton::clicked,this,[this]{cancelInput();});
+        contextButton=new QPushButton(QStringLiteral("RMB"),host);
+        contextButton->setObjectName(QStringLiteral("drnasTouchContext"));
+        contextButton->setFocusPolicy(Qt::NoFocus);
+        contextButton->setToolTip(QStringLiteral("Desni klik na zadnjem odabiru u 3D prikazu"));
+        contextButton->setStyleSheet(launcher->styleSheet());
+        connect(contextButton,&QPushButton::clicked,this,[this]{openContextMenu();});
         mark=new DrnasPointerMark(host); mark->hide();
         precisionTimer.setSingleShot(true); precisionTimer.setInterval(500); precisionTimer.setTimerType(Qt::PreciseTimer);
         connect(&precisionTimer,&QTimer::timeout,this,[this]{
