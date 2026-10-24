@@ -95,6 +95,8 @@ class DrnasTouchInput final : public QObject {
     QMainWindow* host;
     QPointer<QMainWindow> cad;
     QWidget* panel;
+    QPointer<QWidget> commandsPanel;
+    QPointer<QWidget> commandsLauncher;
     QLabel* grip;
     QPushButton* launcher;
     QPushButton* hold;
@@ -388,10 +390,17 @@ protected:
         const bool inApp=inputWidget && (inputWidget==host || host->isAncestorOf(inputWidget) ||
             (modal && (inputWidget==modal || modal->isAncestorOf(inputWidget))) ||
             (popup && (inputWidget==popup || popup->isAncestorOf(inputWidget))));
-        // Keep the compact mouse/key panel directly operable. Everywhere
-        // else is a relative touchpad; lifting a finger never warps the cursor.
+        // Native Qt menus, the mouse panel AND the floating Tools overlay
+        // need physical finger events. The relative touchpad is for CAD content,
+        // never for actual buttons, sliders or scroll areas in these overlays.
+        const bool inPopup=inputWidget && popup &&
+            (inputWidget==popup || popup->isAncestorOf(inputWidget));
+        const bool inCommands=inputWidget &&
+            (inputWidget==commandsLauncher || inputWidget==commandsPanel ||
+             (commandsPanel && commandsPanel->isAncestorOf(inputWidget)));
         const bool directControl=inputWidget &&
-            (inputWidget==panel || panel->isAncestorOf(inputWidget) || inputWidget==launcher);
+            (inputWidget==panel || panel->isAncestorOf(inputWidget) ||
+             inputWidget==launcher || inCommands || inPopup);
         if (inApp && !directControl) {
             if (event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate || event->type()==QEvent::TouchEnd) {
                 auto* touch=static_cast<QTouchEvent*>(event);
@@ -540,6 +549,14 @@ public:
         cursor=QPointF(host->width()/2.0,host->height()/2.0);
         panel->move(int(settings.value(QStringLiteral("touch/panelX"),0.02).toDouble()*host->width()),
                     int(settings.value(QStringLiteral("touch/panelY"),0.15).toDouble()*host->height()));
+        // These child widgets were installed by DrnasFloatingCommands before
+        // this global input filter. Cache them to route Tools taps directly.
+        commandsPanel=host->findChild<QWidget*>(
+            QStringLiteral("drnasFloatingCommands"),Qt::FindDirectChildrenOnly);
+        commandsLauncher=host->findChild<QWidget*>(
+            QStringLiteral("drnasFloatingCommandsLauncher"),Qt::FindDirectChildrenOnly);
+        DrnasDiagnostics::note(QStringLiteral("INPUT: Tools direct touch routes panel=%1 launcher=%2")
+            .arg(bool(commandsPanel)).arg(bool(commandsLauncher)));
         // Fix a useful initial scroll area height without reserving CAD layout space.
         scroll->setMinimumHeight(0);
         constrain(); panel->hide(); launcher->show();
