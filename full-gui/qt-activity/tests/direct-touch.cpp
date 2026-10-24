@@ -142,7 +142,11 @@ int main(int argc,char** argv) {
     int newTriggers=0;
     QObject::connect(originalNew,&QAction::triggered,[&]{++newTriggers;});
     originalToolbar->show();drain();
-    auto* newButton=originalToolbar->findChild<QToolButton*>();
+    QToolButton* newButton=nullptr;
+    // QToolBar also owns a hidden overflow/extension QToolButton.
+    // Find the actual New action instead of the first child button.
+    for (auto* candidate : originalToolbar->findChildren<QToolButton*>())
+        if (candidate->defaultAction()==originalNew) {newButton=candidate;break;}
     check(newButton && newButton->isVisible(),"original upstream New must be a visible toolbutton");
     const QPoint center=newButton->rect().center();
     // Android: touch delivered to QToolButton itself.
