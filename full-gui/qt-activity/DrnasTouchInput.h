@@ -253,7 +253,7 @@ class DrnasTouchInput final : public QObject {
         }
         if(std::abs(zoomDeflection)<6){zoomTimer.stop();return;}
         QWidget* view=nullptr;
-        if(auto* mdi=cad->findChild<QMdiArea>())
+        if(auto* mdi=cad->findChild<QMdiArea*>())
             if(auto* active=mdi->activeSubWindow()) {
                 for(auto* candidate:active->findChildren<QGraphicsView*>())
                     if(candidate->isVisible()) {view=candidate->viewport();break;}
