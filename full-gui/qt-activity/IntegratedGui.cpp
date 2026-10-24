@@ -1634,6 +1634,19 @@ public:
                 launchOriginal->setEnabled(true);
                 return;
             }
+            // Persist the exact file-loading boundary before each potentially
+            // fatal native/Qt operation. A screenshot of the generic splash
+            // does not distinguish resource extraction from GUI initialization.
+            auto markStartupFiles=[](const QString& phase) {
+                DrnasDiagnostics::note(QStringLiteral("STARTUP_FILES ") + phase);
+                QSettings state;
+                state.setValue(QStringLiteral("nativeProbe/current"), phase);
+                state.setValue(QStringLiteral("nativeProbe/pending"),true);
+                state.setValue(QStringLiteral("nativeProbe/bootStamp"),
+                               QStringLiteral("native-ui-deferred-20261024-v1"));
+                state.sync();
+            };
+            markStartupFiles(QStringLiteral("F1 copying Python stdlib and extension modules"));
             QString pythonError;
             if (!configureBundledPython(pythonError)) {
                 const QString message = QStringLiteral("Python bootstrap failed: %1")
@@ -1641,20 +1654,26 @@ public:
                 nativeStatus->setText(message);
                 QSettings settings;
                 settings.setValue(QStringLiteral("nativeProbe/result"), message);
+                settings.setValue(QStringLiteral("nativeProbe/pending"), false);
                 settings.sync();
+                DrnasDiagnostics::note(QStringLiteral("STARTUP_FILES F1 FAILED: ") + message);
                 launchOriginal->setEnabled(true);
                 return;
             }
+            markStartupFiles(QStringLiteral("F1 OK; F2 unpacking original FreeCAD resources"));
             QString resourceError;
             if (!configureBundledFreeCADHome(resourceError)) {
                 const QString failed = QStringLiteral("Original FreeCAD resources: %1").arg(resourceError);
                 nativeStatus->setText(failed);
                 QSettings settings;
                 settings.setValue(QStringLiteral("nativeProbe/result"), failed);
+                settings.setValue(QStringLiteral("nativeProbe/pending"), false);
                 settings.sync();
+                DrnasDiagnostics::note(QStringLiteral("STARTUP_FILES F2 FAILED: ") + failed);
                 launchOriginal->setEnabled(true);
                 return;
             }
+            markStartupFiles(QStringLiteral("F2 OK; F3 initialize original FreeCAD GUI"));
             currentFreeCADStartupStatus = nativeStatus;
             currentFreeCADAndroidShell = this;
             originalFreeCADEmbeddedBeforeShow = false;
