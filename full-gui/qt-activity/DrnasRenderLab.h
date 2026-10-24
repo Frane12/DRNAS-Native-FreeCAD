@@ -162,6 +162,23 @@ public:
                    std::function<bool(const QString&,QString&)> bridge)
         :QObject(owner),upstream(cad),python(std::move(bridge)),
          directory(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+QStringLiteral("/render-lab")) {
+        // Two one-tap renderer controls, placed BEFORE the diagnostic stage actions.
+        // They remain directly accessible without opening the stage menu.
+        auto* drnasButton=toolbar->addAction(QStringLiteral("DRNAS RENDER"));
+        drnasButton->setObjectName(QStringLiteral("drnasOneTapReferenceRenderer"));
+        drnasButton->setToolTip(QStringLiteral("Show the working DRNAS diagnostic BRep renderer"));
+        QObject::connect(drnasButton,&QAction::triggered,this,[this] {
+            DrnasDiagnostics::note(QStringLiteral("ONE_TAP DRNAS_RENDER requested"));
+            setStage(0);
+        });
+        auto* coinButton=toolbar->addAction(QStringLiteral("COIN3D FULL"));
+        coinButton->setObjectName(QStringLiteral("drnasOneTapCoin3D"));
+        coinButton->setToolTip(QStringLiteral("Enable genuine FreeCAD Coin3D scene and appearance; known crashing NaviCube remains isolated"));
+        QObject::connect(coinButton,&QAction::triggered,this,[this] {
+            DrnasDiagnostics::note(QStringLiteral("ONE_TAP COIN3D_FULL requested (stage 3; NaviCube crash guard retained)"));
+            setStage(3);
+        });
+        toolbar->addSeparator();
         stages=new QActionGroup(this);
         const bool supported=dlsym(RTLD_DEFAULT,"drnas_render_stages_version")!=nullptr;
         nativeStages=supported;
