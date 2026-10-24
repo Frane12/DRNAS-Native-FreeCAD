@@ -1,0 +1,58 @@
+name: DRNAS NumPy Android ARM64 CPython 3.14
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - '.github/workflows/numpy-android-arm64.yml'
+permissions:
+  contents: read
+jobs:
+  numpy-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout pinned NumPy release
+        uses: actions/checkout@v4
+        with:
+          repository: numpy/numpy
+          ref: v2.5.4
+          persist-credentials: false
+      - name: Host build tools
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install 'cibuildwheel>=3.2,<4'
+      - name: Cross-build CPython 3.14 Android ARM64 NumPy wheel
+        env:
+          CIBW_PLATFORM: android
+          CIBW_BUILD: cp314-android_arm64_v8a
+          CIBW_ARCHS_ANDROID: arm64_v8a
+          CIBW_ENVIRONMENT_ANDROID: 'NPY_DISABLE_SVML=1'
+          CIBW_BUILD_VERBOSITY: '1'
+        run: python3 -m cibuildwheel --platform android --archs arm64_v8a --output-dir wheelhouse
+      - name: Verify wheel tag and binary ABI
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          wheels=list(Path('wheelhouse').glob('numpy-*.whl'))
+          assert len(wheels)==1, f'Expected one NumPy wheel: {wheels}'
+          wheel=wheels[0]
+          assert 'cp314' in wheel.name and 'android' in wheel.name and 'arm64' in wheel.name, wheel.name
+          with zipfile.ZipFile(wheel) as z:
+              so=[p for p in z.namelist() if p.startswith('numpy/') and p.endswith('.so')]
+              assert so, 'NumPy missing native extensions'
+              assert any('_multiarray_umath' in p for p in so), 'Missing core extension'
+              for name in so:
+                  data=z.read(name)
+                  assert data[:4]==b'\\x7fELF', name
+                  assert int.from_bytes(data[18:20],'little')==183, f'Not AArch64: {name}'
+              print('PASS:',wheel.name,'ARM64 native extensions:',len(so))
+          PY
+      - name: Upload genuine Android NumPy wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: drnas-numpy-cp314-android-arm64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
