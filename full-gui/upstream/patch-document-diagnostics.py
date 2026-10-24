@@ -405,12 +405,68 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
         std::snprintf(stageLabel, sizeof(stageLabel), "RENDER_STAGE phase=%s", stage ? stage : "legacy");
         ::drnasDocumentPhase(stageLabel, "DRAW_BEGIN");
         ::drnasDocumentPhase("P03 Coin scene render", "REAL_REDRAW_BEGIN");
-        this->actualRedraw();
+        const bool diagnosticColor = stage && stage[1] == 0 && (stage[0] == '6' || stage[0] == '7');
+        const bool diagnosticPixel = stage && stage[1] == 0 && stage[0] == '8';
+        // Stages 6/7 use the original Coin 3D widget, but NOT its scene graph.
+        // Stage 8 measures the framebuffer after real Coin render.
+        if (!diagnosticColor) this->actualRedraw();
+        if (diagnosticColor || diagnosticPixel) {
+            QOpenGLContext* current = QOpenGLContext::currentContext();
+            bool valid = w && current && current->isValid() && current == w->context();
+            QOpenGLFunctions* qt = valid ? current->functions() : nullptr;
+            const GLuint qtFbo = w ? w->defaultFramebufferObject() : 0;
+            const int pxWidth = w ? qRound(w->width() * w->devicePixelRatioF()) : 0;
+            const int pxHeight = w ? qRound(w->height() * w->devicePixelRatioF()) : 0;
+            valid = valid && qt && qtFbo && pxWidth > 0 && pxHeight > 0;
+            int bridge = -3;
+            GLint qtBound = -1, coinBound = -1;
+            unsigned char sample[4] = {};
+            GLenum qtError = GL_NO_ERROR, coinError = GL_NO_ERROR;
+            if (valid) {
+                qt->glGetError(); // Remove errors from prior frame for this diagnostic.
+                glGetError();
+                if (stage[0] == '6') {
+                    using BindBridge = int (*)(unsigned int);
+                    auto* bindBridge = reinterpret_cast<BindBridge>(
+                        dlsym(RTLD_DEFAULT, "drnas_gl4es_bind_qt_default_fbo"));
+                    bridge = bindBridge ? bindBridge(qtFbo) : -2;
+                    glViewport(0, 0, pxWidth, pxHeight);
+                    glClearColor(0.10f, 0.82f, 0.90f, 1.f); // CYAN: GL4ES
+                    glClear(GL_COLOR_BUFFER_BIT);
+                }
+                if (stage[0] == '7') {
+                    qt->glBindFramebuffer(GL_FRAMEBUFFER, qtFbo);
+                    qt->glViewport(0, 0, pxWidth, pxHeight);
+                    qt->glClearColor(0.12f, 0.88f, 0.18f, 1.f); // GREEN: GLES
+                    qt->glClear(GL_COLOR_BUFFER_BIT);
+                }
+                qt->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &qtBound);
+                glGetIntegerv(GL_FRAMEBUFFER_BINDING, &coinBound);
+                qt->glReadPixels(pxWidth/2, pxHeight/2, 1, 1,
+                                 GL_RGBA, GL_UNSIGNED_BYTE, sample);
+                coinError = glGetError();
+                qtError = qt->glGetError();
+            }
+            static char previousMode = 0;
+            static unsigned int reported = 0;
+            if (previousMode != stage[0]) { previousMode = stage[0]; reported = 0; }
+            if (reported++ < 18 || !valid || qtError || coinError) {
+                char line[512];
+                std::snprintf(line, sizeof(line),
+                    "GPU_PIXEL mode=%c valid=%d qtFbo=%u GLESbound=%d GL4ESbound=%d bridge=%d physical=%dx%d pixel=%u,%u,%u,%u glesError=0x%x gl4esError=0x%x",
+                    stage[0], int(valid), qtFbo, int(qtBound), int(coinBound),
+                    bridge, pxWidth, pxHeight, unsigned(sample[0]),
+                    unsigned(sample[1]), unsigned(sample[2]), unsigned(sample[3]),
+                    unsigned(qtError), unsigned(coinError));
+                ::drnasDocumentPhase(line, valid && !qtError && !coinError ? "SAMPLE" : "WARNING");
+            }
+        }
         ::drnasDocumentPhase("P03 Coin scene render", "REAL_REDRAW_END");
         ::drnasDocumentPhase(stageLabel, "DRAW_END");
     } else {
         ::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");
     }''')
+    quarter_source = '#include <dlfcn.h>\nextern "C" __attribute__((visibility("default"))) int drnas_gpu_color_version() { return 1; }\n' + quarter_source
     quarter_path.write_text(quarter_source)
 
     # Independent, session-only Coin stages for comparison with the GLES
@@ -423,7 +479,7 @@ int drnas_render_stages_version() { return 1; }
 static int drnasRenderStage()
 {
     const char* stage = std::getenv("DRNAS_RENDER_STAGE");
-    return stage && stage[0] >= '0' && stage[0] <= '4' && stage[1] == '\0'
+    return stage && stage[0] >= '0' && stage[0] <= '8' && stage[1] == '\0'
         ? stage[0] - '0' : 4;
 }
 #else

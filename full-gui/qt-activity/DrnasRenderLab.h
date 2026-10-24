@@ -10,6 +10,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QMenu>
+#include <QToolButton>
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
 #include <QOpenGLContext>
@@ -211,6 +213,15 @@ public:
                    std::function<bool(const QString&,QString&)> bridge)
         :QObject(owner),upstream(cad),python(std::move(bridge)),
          directory(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)+QStringLiteral("/render-lab")) {
+        // Compact popup keeps all GPU trials reachable on a narrow phone.
+        auto* gpuMenu = new QMenu(toolbar);
+        auto* gpuButton = new QToolButton(toolbar);
+        gpuButton->setText(QStringLiteral("GPU TEST"));
+        gpuButton->setObjectName(QStringLiteral("drnasGpuExperiments"));
+        gpuButton->setMenu(gpuMenu);
+        gpuButton->setPopupMode(QToolButton::InstantPopup);
+        toolbar->addWidget(gpuButton);
+        toolbar->addSeparator();
         // Two one-tap renderer controls, placed BEFORE the diagnostic stage actions.
         // They remain directly accessible without opening the stage menu.
         auto* drnasButton=toolbar->addAction(QStringLiteral("DRNAS RENDER"));
@@ -243,6 +254,22 @@ public:
             if (i==0) action->setChecked(true);
             QObject::connect(action,&QAction::triggered,this,[this,i]{setStage(i);});
         }
+        const bool gpuReady = dlsym(RTLD_DEFAULT, "drnas_gpu_color_version") != nullptr;
+        const QStringList gpuModes = {
+            QStringLiteral("6 GL4ES cijan (Qt most)"),
+            QStringLiteral("7 GLES zelen (native)"),
+            QStringLiteral("8 Coin3D (pixel readback)")
+        };
+        for (int i=6; i<=8; ++i) {
+            auto* action = gpuMenu->addAction(gpuModes[i-6]);
+            action->setCheckable(true);
+            action->setData(i);
+            action->setObjectName(QStringLiteral("drnasGpuProbe%1").arg(i));
+            action->setEnabled(gpuReady);
+            stages->addAction(action);
+            QObject::connect(action,&QAction::triggered,this,[this,i]{setStage(i);});
+        }
+        DrnasDiagnostics::note(QStringLiteral("GPU_TEST installed native=%1 modes=6,7,8").arg(gpuReady));
         auto* refresh=toolbar->addAction(QStringLiteral("Osvježi naš prikaz"));
         QObject::connect(refresh,&QAction::triggered,this,[this]{setStage(0);tick(true);});
         axesAction=toolbar->addAction(QStringLiteral("Osi (test)"));
@@ -275,7 +302,7 @@ public:
         qputenv("DRNAS_RENDER_STAGE",QByteArray::number(stage));
         qputenv("DRNAS_RENDER_AXES",axes && stage==4 ? "1" : "0");
         qputenv("DRNAS_ENABLE_COIN_REDRAW",(stage==0 || stage==5) ? "0" : "1");
-        qputenv("DRNAS_COIN_FBO_SYNC",(stage==0 || stage==5) ? "0" : "1");
+        qputenv("DRNAS_COIN_FBO_SYNC",((stage>=1 && stage<=3) || stage==8) ? "1" : "0");
         if (fboProbe) fboProbe->hide();
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 axes=%2 BEGIN").arg(stage).arg(axes));
         if (stage==0) tick(true);
@@ -300,7 +327,7 @@ public:
             // dismissing the Tools popup. This does not modify the OCCT renderer.
             const int requestedStage=stage;
             QTimer::singleShot(180,this,[this,requestedStage] {
-                if (stage!=requestedStage || stage<1 || stage>3) return;
+                if (stage!=requestedStage || stage<1 || stage>8 || stage==5) return;
                 if (upstream) {
                     const auto views=upstream->findChildren<QOpenGLWidget*>();
                     DrnasDiagnostics::note(QStringLiteral("COIN_REPAINT_AB stage=%1 views=%2 activePopup=%3")
@@ -317,7 +344,7 @@ public:
             });
         }
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 QUEUED").arg(stage));
-        if (stage>=1 && stage<=3)
+        if ((stage>=1 && stage<=3) || stage>=6)
             QTimer::singleShot(450,this,[this,value]{if(stage==value) inspectCoinWindow(QStringLiteral("foreground"));});
     }
 };
