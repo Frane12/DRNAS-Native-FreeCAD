@@ -12,7 +12,7 @@ bridge = (base / "upstream/AndroidMainWindowBridge.cpp").read_text()
 for source, checks in (
     (gui, (
         'class DrnasMobileWorkspace final : public QObject',
-        'new DrnasMobileWorkspace(shell,freecad)',
+        'new DrnasMobileWorkspace(hostGuard.data(),cadGuard.data())',
         'height>width',
         'Qt::BottomDockWidgetArea',
         'Qt::LeftDockWidgetArea',
@@ -21,6 +21,12 @@ for source, checks in (
         'QApplication::activeModalWidget()',
         'MOBILE_LAYOUT',
         'drnasPortraitRestore',
+        'STARTUP_UI P0 early native embed; controls deferred',
+        'STARTUP_UI N1 native FreeCADGui returned; install command controls',
+        'STARTUP_UI P5 touch controllers installed',
+        'STARTUP_UI P6 stable; crash marker cleared',
+        'nativeProbe/bootStamp',
+        'drnasSuppressAutostart',
     )),
     (bridge, (
         '#include "OverlayManager.h"',
@@ -31,6 +37,16 @@ for source, checks in (
     for token in checks:
         assert token in source, f"Android layout contract missing: {token}"
 assert 'invoke(QStringLiteral("Std_DockOverlayToggleAll")' not in gui, "Overlay toggling is not safe on repeated rotations"
+# Early integration must not install event filters before native startup
+# finishes: the upstream stage callback calls processEvents() recursively.
+early_embed = gui.split('bool embedOriginalFreeCADWindow(', 1)[1].split(
+    'void recordOriginalGuiStage(', 1
+)[0]
+assert 'installOriginalFreeCADTouchControls(shell, window)' not in early_embed
+assert 'installOriginalFreeCADTouchControls(this,freecadWindow)' in gui
+assert 'settings.setValue(QStringLiteral("nativeProbe/pending"), result == 0)' in gui
+assert 'if(property("drnasAutoStartPartDesign").toBool())' in gui
+
 # Input fixes share the same Android QWindow as the native FreeCAD scene.
 # Enforce the regression contract before paying for the full Qt/ARM64 build.
 touch = (base / "qt-activity/DrnasTouchInput.h").read_text()
