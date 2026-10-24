@@ -1133,33 +1133,28 @@ void recordOriginalGuiStage(const char* stageName)
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
     }
-    // Upstream StdWorkbench inserts Std_Measure/Std_MassProperties into
-    // menus and toolbars. They are defined by the genuine MeasureGui module,
-    // not by FreeCADGui: its PyInit explicitly registers both commands.
-    // Load it before StartupPostProcess assembles the original UI.
-    // Older proven APK artifacts have no MeasureGui.so; keep those builds
-    // operational and report absent functionality instead of loading stubs.
+    // Do not import MeasureGui inside early Gui::StartupPostProcess.
+    // On the physical Android device (2026-10-24T22:59:35.719), the
+    // early embedded-Python extension import caused SIGSEGV before the
+    // original FreeCAD MainWindow completed initialization.
+    // MeasureGui PyInit creates GUI view providers and QuickMeasure:
+    // their ABI and runtime lifecycle must be validated separately.
+    // Keep the dependency-first compile/stage/APK gates for genuine
+    // Measure + MeasureGui binaries; do not execute unsafe imports
+    // on the unconditional application startup path.
     if (stage == QStringLiteral("Original Gui::StartupPostProcess")) {
-        // Original CPython extension modules are also extracted to
-        // DRNAS_FREECAD_HOME/lib: Android may ignore .so files without 'lib'
-        // prefix when extracting native APK libraries.
-        const QString nativeLibDir=QString::fromLocal8Bit(qgetenv("PATH_TO_FREECAD_LIBDIR"));
-        const QString extractedLibDir=QString::fromLocal8Bit(qgetenv("DRNAS_FREECAD_HOME"))+QStringLiteral("/lib");
-        const bool hasMeasure=QFileInfo::exists(nativeLibDir+QStringLiteral("/Measure.so")) ||
-                              QFileInfo::exists(extractedLibDir+QStringLiteral("/Measure.so"));
-        const bool hasMeasureGui=QFileInfo::exists(nativeLibDir+QStringLiteral("/MeasureGui.so")) ||
-                                 QFileInfo::exists(extractedLibDir+QStringLiteral("/MeasureGui.so"));
-        if (hasMeasure && hasMeasureGui) {
-            QString error;
-            const bool ready=runOriginalFreeCADPython(QStringLiteral(
-                "import MeasureGui\n"
-                "import FreeCADGui as Gui\n"
-                "assert all(name in Gui.listCommands() for name in ('Std_Measure','Std_MassProperties'))\n"),error);
-            DrnasDiagnostics::note(ready ? QStringLiteral("MEASURE: native MeasureGui loaded; both Std_ commands registered")
-                                         : QStringLiteral("MEASURE: native command registration failed: ")+error);
-        } else {
-            DrnasDiagnostics::note(QStringLiteral("MEASURE: original Measure/MeasureGui native module absent; StdWorkbench commands unavailable"));
-        }
+        const QString nativeDir=QString::fromLocal8Bit(qgetenv("PATH_TO_FREECAD_LIBDIR"));
+        const QString extractedDir=QString::fromLocal8Bit(qgetenv("DRNAS_FREECAD_HOME"))
+                                   +QStringLiteral("/lib");
+        auto exists=[&](const QString& name) {
+            return QFileInfo::exists(nativeDir+QLatin1Char('/')+name) ||
+                   QFileInfo::exists(extractedDir+QLatin1Char('/')+name);
+        };
+        DrnasDiagnostics::note(QStringLiteral(
+            "MEASURE STARTUP SAFE: Measure.so=%1 MeasureGui.so=%2; "
+            "early native MeasureGui import DISABLED after device SIGSEGV")
+            .arg(exists(QStringLiteral("Measure.so")))
+            .arg(exists(QStringLiteral("MeasureGui.so"))));
     }
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
