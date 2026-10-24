@@ -306,17 +306,18 @@ class DrnasTouchInput final : public QObject {
         touchOwner.clear(); cameraOwner.clear(); mark->hide();
         releaseAll();
     }
-    bool editingTool() {
+    bool editingTool() const {
+        // Never call embedded FreeCAD/Python while handling Qt touch dispatch.
+        // Device crash 2026-10-24T22:28:51: native abort inside
+        // getInEdit()/Control.activeDialog()/setProperty on touch begin.
+        // A native abort cannot be caught by Python exception handling.
+        // Keep the explicit "Alat / povlacenje" switch and an optional
+        // read-only Qt property for edit-mode integration.
         if (!cad) return true;
-        // Fail closed: if the bridge fails, a one-finger drag must never orbit
-        // a sketch or task. Camera gestures with two fingers remain available.
-        cad->setProperty("drnasTouchToolActive",true);
-        command(QStringLiteral(
-            "import FreeCADGui as Gui\n"
-            "_drnas_doc=Gui.activeDocument()\n"
-            "Gui.getMainWindow().setProperty('drnasTouchToolActive', bool("
-            "(_drnas_doc and _drnas_doc.getInEdit()) or Gui.Control.activeDialog()))\n"));
-        return toolMode->isChecked() || cad->property("drnasTouchToolActive").toBool();
+        const bool editing = toolMode->isChecked() ||
+            cad->property("drnasTouchToolActive").toBool() ||
+            QApplication::activeModalWidget() || QApplication::activePopupWidget();
+        return editing;
     }
     void flushCamera() {
         if (!cameraOwner || !cameraOwner->isVisible() ||
@@ -342,7 +343,7 @@ if _drnas_doc:
     _p=App.Vector(*_c.position.getValue().getValue())
     _f=max(1e-9,float(_c.focalDistance.getValue()))
     _center=_p-_r.multVec(App.Vector(0,0,_f))
-    if (%1 or %2) and not (_drnas_doc.getInEdit() or Gui.Control.activeDialog()):
+    if (%1 or %2):
         _r=_r.multiply(App.Rotation(App.Vector(0,1,0),%1)).multiply(App.Rotation(App.Vector(1,0,0),%2))
         _v.setCameraOrientation(_r.Q)
         _p=_center+_r.multVec(App.Vector(0,0,_f))

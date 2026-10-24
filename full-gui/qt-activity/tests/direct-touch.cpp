@@ -41,10 +41,13 @@ int main(int argc,char** argv) {
     QStringList cameraScripts;
     bool tool=false;
     auto* input=new DrnasTouchInput(&host,&cad,[&](const QString& code){
-        if(code.contains("setProperty")) cad.setProperty("drnasTouchToolActive",tool);
-        else cameraScripts.append(code);
+        // Finger dispatch must never call embedded Python to query edit mode.
+        check(!code.contains("getInEdit") && !code.contains("activeDialog"),
+              "touch/camera must not use unsafe FreeCAD Python edit probes");
+        cameraScripts.append(code);
     });
     Q_UNUSED(input);
+    Q_UNUSED(tool);
     viewport->installEventFilter(viewport);
     host.show(); QTest::qWait(20);
     auto point=[&](int id,QEventPoint::State state,QPoint p){
@@ -85,6 +88,7 @@ int main(int argc,char** argv) {
     check(viewport->presses==1,"pinch and remaining finger must not click");
     check(!cameraScripts.isEmpty(),"two-finger pan/pinch must update camera");
     tool=true;
+    cad.setProperty("drnasTouchToolActive", true);
     const int scriptsBefore=cameraScripts.size();
     touch(QEvent::TouchBegin,{point(1,QEventPoint::Pressed,{120,140})});
     touch(QEvent::TouchUpdate,{point(1,QEventPoint::Updated,{180,170})});
@@ -96,6 +100,7 @@ int main(int argc,char** argv) {
     QEvent cancel(QEvent::TouchCancel); QCoreApplication::sendEvent(viewport,&cancel);drain();
     check(viewport->presses==3 && viewport->releases==3,"TouchCancel must release a tool drag");
     tool=false;
+    cad.setProperty("drnasTouchToolActive", false);
     touch(QEvent::TouchBegin,{point(1,QEventPoint::Pressed,{120,140})});
     QTest::qWait(600);
     touch(QEvent::TouchEnd,{point(1,QEventPoint::Released,{120,140})});drain();
