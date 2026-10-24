@@ -241,15 +241,8 @@ class DrnasTouchInput final : public QObject {
     }
     void end(const QPointF& point) {
         if(!relative)return;move(point);relative=false;
-        if(!moved && clock.elapsed()<350 && buttons==Qt::NoButton) {
-            // A relative pointer may have crossed into a toolbar/dock while
-            // dragging. Never convert a viewport tap into a UI command.
-            if(inRender(target())) {
-                mouseButton(Qt::LeftButton,true);mouseButton(Qt::LeftButton,false);
-            } else {
-                DrnasDiagnostics::note(QStringLiteral("TOUCH_TAP_IGNORED pointer outside viewport"));
-            }
-        }
+        // The viewport is a touchpad. Only the explicit L/R keys click;
+        // a short pointer movement must never also select or start a command.
         DrnasDiagnostics::note(QStringLiteral("TOUCH_VIEW_END moved=%1 cursor=%2,%3 held=%4")
             .arg(moved).arg(cursor.x()).arg(cursor.y()).arg(int(buttons)));
     }
@@ -436,6 +429,10 @@ protected:
                 });
             }
         }
+        // Claim raw touch before the first gesture. Otherwise QOpenGLWidget
+        // can receive compatibility mouse events alongside the touchpad path.
+        if(widget && (type==QEvent::Show || type==QEvent::Polish) && inRender(widget))
+            widget->setAttribute(Qt::WA_AcceptTouchEvents);
         if(!widget || isControl(widget))return false;
         // Ordinary Qt controls, especially dialog buttons, keep direct touch.
         // Only the 3D surface behaves as a relative touchpad.
@@ -532,8 +529,11 @@ public:
             zoomDeflection=0;zoomTicks=0;zoomTimer.stop();
         });
         zoomTimer.setInterval(65);connect(&zoomTimer,&QTimer::timeout,this,[this]{zoomStep();});
+        for(auto* surface:cad->findChildren<QOpenGLWidget*>())
+            surface->setAttribute(Qt::WA_AcceptTouchEvents);
         qApp->installEventFilter(this);scheduleRepair();showPointer();
-        DrnasDiagnostics::note(QStringLiteral("INPUT minimal: movable L/R + zoom; direct dialogs; relative CAD viewport"));
+        DrnasDiagnostics::note(QStringLiteral("INPUT minimal: movable L/R + zoom; direct dialogs; raw viewport touch; L/R clicks only"));
     }
 };
+
 

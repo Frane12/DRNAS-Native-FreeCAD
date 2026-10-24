@@ -1217,6 +1217,28 @@ finally:
     menus->setPopupMode(QToolButton::InstantPopup); clean->addWidget(menus);
     auto* diagnostics=new QMenu(clean);
     diagnostics->addAction(copyLog);
+    auto* cubeProbe=diagnostics->addAction(QStringLiteral("Test kocka"));
+    QObject::connect(cubeProbe,&QAction::triggered,shell,[invoke] {
+        invoke(QStringLiteral(R"DRNAS(
+import FreeCAD as App, FreeCADGui as Gui, Part
+_drnas_mark('SCENE_PROBE BEGIN create separate test document')
+_probe_doc = App.newDocument('DrnasSceneProbe')
+_probe_obj = _probe_doc.addObject('Part::Box', 'TestCube')
+_probe_obj.Length = _probe_obj.Width = _probe_obj.Height = 20
+_probe_doc.recompute()
+_probe_obj.ViewObject.Visibility = True
+_probe_obj.ViewObject.ShapeColor = (1.0, 0.65, 0.15)
+_probe_view = Gui.activeDocument().activeView()
+_probe_view.viewAxonometric()
+_probe_view.fitAll()
+_probe_view.redraw()
+_drnas_mark('SCENE_PROBE object=%s visible=%s null=%s solids=%d volume=%s bbox=%s camera=%s' % (
+    _probe_obj.Name, _probe_obj.ViewObject.Visibility, _probe_obj.Shape.isNull(),
+    len(_probe_obj.Shape.Solids), _probe_obj.Shape.Volume,
+    _probe_obj.Shape.BoundBox, _probe_view.getCameraOrientation()))
+_drnas_mark('SCENE_PROBE END geometry confirmed; phone image still requires visual validation')
+)DRNAS"),QStringLiteral("Test kocka"));
+    });
     auto* debug=diagnostics->addAction(QStringLiteral("Dijagnostički izvještaj"));
     QObject::connect(debug,&QAction::triggered,shell,[shell] {
         if(auto* button=shell->findChild<QPushButton*>(QStringLiteral("drnasDebugLauncher"))) button->click();
@@ -2056,4 +2078,5 @@ extern "C" __attribute__((visibility("default")))
 void* drnas_create_qt_gui_shell_after_qt_android_bootstrap() {
     return new DrnasQtCADShell();
 }
+
 

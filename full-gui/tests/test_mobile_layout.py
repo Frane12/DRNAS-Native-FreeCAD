@@ -104,10 +104,11 @@ for token in (
     'suppressAfterPan',
     'lastViewportTouch.start()',
     'lastViewportTouch.elapsed()<650',
-    'TOUCH_TAP_IGNORED pointer outside viewport',
+    'Qt::WA_AcceptTouchEvents',
 ):
     assert token in touch, f"Android modal/touch navigation contract missing: {token}"
 assert 'queuedZoom' not in touch and 'previousZoom' not in touch, (
     "Half-notch wheel flood must not return"
 )
 print("PASS: Android adaptive layout, modal and touch navigation integration gates")
+
