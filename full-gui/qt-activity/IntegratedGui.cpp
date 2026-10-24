@@ -1563,7 +1563,7 @@ public:
         // to an inspectable UI instead of rebooting into the same crash loop.
         // New APK integration revisions use a new stamp and get one clean
         // automatic launch attempt; subsequent failures require manual retry.
-        constexpr auto kUiBootStamp = "native-ui-deferred-20261024-v1";
+        constexpr auto kUiBootStamp = "measuregui-isolated-20261024-v2";
         const bool previousCrash = diagnostics.value(QStringLiteral("nativeProbe/pending")).toBool();
         const bool repeatedBuildCrash = previousCrash &&
             diagnostics.value(QStringLiteral("nativeProbe/bootStamp")).toString() ==
@@ -1640,7 +1640,7 @@ public:
                 state.setValue(QStringLiteral("nativeProbe/current"), phase);
                 state.setValue(QStringLiteral("nativeProbe/pending"),true);
                 state.setValue(QStringLiteral("nativeProbe/bootStamp"),
-                               QStringLiteral("native-ui-deferred-20261024-v1"));
+                               QStringLiteral("measuregui-isolated-20261024-v2"));
                 state.sync();
             };
             markStartupFiles(QStringLiteral("F1 copying Python stdlib and extension modules"));
@@ -1676,7 +1676,7 @@ public:
             originalFreeCADEmbeddedBeforeShow = false;
             QSettings bootSettings;
             bootSettings.setValue(QStringLiteral("nativeProbe/bootStamp"),
-                                  QStringLiteral("native-ui-deferred-20261024-v1"));
+                                  QStringLiteral("measuregui-isolated-20261024-v2"));
             bootSettings.sync();
             DrnasDebugCenter::recordSnapshot(
                 QStringLiteral("before risky original FreeCADGui startup"));
