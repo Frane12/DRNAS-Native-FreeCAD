@@ -27,6 +27,7 @@
 #include <QComboBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMenuBar>
@@ -393,50 +394,203 @@ void compactOriginalAndroidFreeCADChrome(QMainWindow* window)
     normalizeAndroidFreeCADDocks(window);
 }
 
-// Keep model space usable when rotating a phone; docks remain normal child widgets.
+// Android adaptive workspace: FreeCAD's own overlay manager is normalized
+// by the native bridge, then the genuine Qt docks are laid out INSIDE the
+// single embedded MainWindow. Do not move/reparent the OpenGL viewport.
 class DrnasMobileWorkspace final : public QObject {
-    QPointer<QMainWindow> window;
+    QPointer<QMainWindow> host;
+    QPointer<QMainWindow> cad;
     QTimer settle;
-    int lastOrientation=-1, lastDockCount=-1;
+    bool applying=false;
+    QString previousLayout;
+
+    static bool isTask(QDockWidget* dock) {
+        const QString name=dock->objectName().toLower();
+        const QString title=dock->windowTitle().toLower();
+        // Upstream uses objectName "Tasks", even when the UI says "Zadaci".
+        return name==QStringLiteral("tasks") || name.contains(QStringLiteral("task")) ||
+            title.contains(QStringLiteral("tasks")) || title.contains(QStringLiteral("zadac"));
+    }
+    static bool isSystemDock(QDockWidget* dock) {
+        const QString name=dock->objectName().toLower();
+        const QString title=dock->windowTitle().toLower();
+        return name.contains(QStringLiteral("report")) || name.contains(QStringLiteral("console")) ||
+            title.contains(QStringLiteral("izvješ")) || title.contains(QStringLiteral("console"));
+    }
+    void schedule() {
+        if (!applying && !settle.isActive()) settle.start();
+    }
     void apply() {
-        if (!window || window->width()<1 || window->height()<1) return;
-        if(QApplication::activeModalWidget() || QApplication::activePopupWidget())return;
-        const bool portrait=window->height()>window->width();
-        const int dockCount=window->findChildren<QDockWidget*>().size();
-        if (lastOrientation==int(portrait) && lastDockCount==dockCount) return;
-        lastOrientation=int(portrait); lastDockCount=dockCount;
-        QList<QDockWidget*> docks;
-        for(auto* dock:window->findChildren<QDockWidget*>()) {
-            const QString name=dock->objectName().toLower();
-            if(name.contains(QStringLiteral("report")) || name.contains(QStringLiteral("console"))) continue;
-            const bool shown=dock->isVisible();
-            dock->setMinimumWidth(0); dock->setMinimumHeight(0);
-            window->addDockWidget(portrait ? Qt::BottomDockWidgetArea :
-                (name.contains(QStringLiteral("task")) ? Qt::RightDockWidgetArea : Qt::LeftDockWidgetArea),dock);
-            dock->setVisible(shown);
-            docks.append(dock);
+        if (!cad || !host || applying || cad->width()<1 || cad->height()<1) return;
+        // Never remodel the dock graph while a real FreeCAD modal editor is open.
+        if (QApplication::activeModalWidget() || QApplication::activePopupWidget()) {
+            settle.start(350);
+            return;
         }
-        if(portrait && !docks.isEmpty()) {
-            for(int i=1;i<docks.size();++i) window->tabifyDockWidget(docks.first(),docks[i]);
-            window->resizeDocks(docks,QList<int>(docks.size(),std::clamp(window->height()/4,100,210)),Qt::Vertical);
-        } else if(!docks.isEmpty()) {
-            window->resizeDocks(docks,QList<int>(docks.size(),std::clamp(window->width()/5,130,230)),Qt::Horizontal);
+        applying=true;
+        const int width=cad->width(), height=cad->height();
+        const bool portrait=height>width;
+        // On a narrow landscape screen, tabify instead of stealing half the
+        // viewport with a left model pane AND a right tasks pane.
+        const bool narrow=portrait || width<720 || width-2*std::min(260,width/4)<width/2;
+        QList<QDockWidget*> model, tasks;
+        QStringList names;
+        bool needsDockRepair=false;
+        for (auto* dock:cad->findChildren<QDockWidget*>()) {
+            if (!dock || isSystemDock(dock)) continue;
+            (isTask(dock) ? tasks : model).append(dock);
+            const Qt::DockWidgetArea area=cad->dockWidgetArea(dock);
+            if (dock->isFloating() || area==Qt::NoDockWidgetArea) needsDockRepair=true;
+            names.append(dock->objectName()+QLatin1Char(':')+
+                QString::number(int(area))+QLatin1Char(':')+
+                QString::number(dock->isHidden())+QLatin1Char(':')+
+                QString::number(dock->isFloating()));
         }
-        if(auto* mdi=window->findChild<QMdiArea*>())
-            if(auto* active=mdi->activeSubWindow()) active->showMaximized();
-        DrnasDiagnostics::note(QStringLiteral("CLEAN_WORKSPACE orientation=%1 docks=%2").arg(portrait?"portrait":"landscape").arg(docks.size()));
+        const QString layout=QStringLiteral("%1/%2/%3/%4/%5")
+            .arg(width).arg(height).arg(portrait).arg(narrow).arg(names.join(QLatin1Char(';')));
+        if (layout==previousLayout && !needsDockRepair) {
+            applying=false;
+            return;
+        }
+
+        // Deterministic operation, unlike "Std_DockOverlayToggleAll", which
+        // might ENABLE overlays on the second orientation change.
+        using DisableOverlays=int (*)();
+        const auto disable=reinterpret_cast<DisableOverlays>(
+            dlsym(RTLD_DEFAULT,"drnas_freecad_android_disable_overlays"));
+        const int overlayResult=disable ? disable() : -2;
+        if (overlayResult!=0) {
+            DrnasDiagnostics::note(QStringLiteral("MOBILE_LAYOUT overlay disable unavailable=%1").arg(overlayResult));
+            applying=false;
+            // During upstream StartupPostProcess the window exists before the
+            // bridge has finished initializing. Retry after it completes.
+            if(overlayResult==-1) settle.start(400);
+            return;
+        }
+        // Never turn an upstream hidden panel on merely because of rotation.
+        QHash<QDockWidget*,bool> hidden;
+        for(auto* dock:model+tasks) {
+            hidden.insert(dock,dock->isHidden());
+            dock->setFeatures(dock->features() & ~QDockWidget::DockWidgetFloatable);
+            dock->setMinimumSize(0,0);
+            if(dock->isFloating()) dock->setFloating(false);
+        }
+        const auto all=model+tasks;
+        if (portrait) {
+            // The *entire* bottom band is capped to ~one third of the phone;
+            // tabs preserve access to Model and Zadaci without covering CAD.
+            QDockWidget* first=nullptr;
+            for(auto* dock:all) {
+                cad->addDockWidget(Qt::BottomDockWidgetArea,dock);
+                if(first) cad->tabifyDockWidget(first,dock);
+                else first=dock;
+            }
+            if(first && !all.isEmpty()) {
+                cad->resizeDocks({first},{std::clamp(height*32/100,120,std::max(120,height/2))},Qt::Vertical);
+                QDockWidget* active=nullptr;
+                for(auto* dock:tasks) if(!hidden.value(dock)) {active=dock;break;}
+                if(!active) for(auto* dock:model) if(!hidden.value(dock)) {active=dock;break;}
+                if(active) active->raise();
+            }
+        } else if(narrow) {
+            QDockWidget* first=nullptr;
+            for(auto* dock:all) {
+                cad->addDockWidget(Qt::LeftDockWidgetArea,dock);
+                if(first) cad->tabifyDockWidget(first,dock);
+                else first=dock;
+            }
+            if(first) {
+                cad->resizeDocks({first},{std::min(240,std::max(120,width*32/100))},Qt::Horizontal);
+                QDockWidget* active=nullptr;
+                for(auto* dock:tasks) if(!hidden.value(dock)) {active=dock;break;}
+                if(!active) for(auto* dock:model) if(!hidden.value(dock)) {active=dock;break;}
+                if(active) active->raise();
+            }
+        } else {
+            // Wide landscape: model left, Tasks right, >= half the width for CAD.
+            for(auto* dock:model) cad->addDockWidget(Qt::LeftDockWidgetArea,dock);
+            for(auto* dock:tasks) cad->addDockWidget(Qt::RightDockWidgetArea,dock);
+            const int panelWidth=std::min(260,width*23/100);
+            if(!model.isEmpty()) cad->resizeDocks({model.first()},{panelWidth},Qt::Horizontal);
+            if(!tasks.isEmpty()) cad->resizeDocks({tasks.first()},{panelWidth},Qt::Horizontal);
+        }
+        for(auto* dock:all) {
+            dock->setVisible(!hidden.value(dock));
+        }
+
+        // Desktop FreeCAD workbench bars can eat the whole PORTRAIT screen.
+        // Their commands remain in the genuine Menu; restore them in landscape.
+        for(auto* bar:cad->findChildren<QToolBar*>()) {
+            if(bar->property("drnasFloatingOverlay").toBool())continue;
+            bar->setIconSize(QSize(18,18));
+            if(portrait) {
+                if(!bar->property("drnasPortraitHidden").toBool()) {
+                    bar->setProperty("drnasPortraitRestore",!bar->isHidden());
+                    bar->setProperty("drnasPortraitHidden",true);
+                }
+                bar->hide();
+            } else if(bar->property("drnasPortraitHidden").toBool()) {
+                bar->setProperty("drnasPortraitHidden",false);
+                if(bar->property("drnasPortraitRestore").toBool())bar->show();
+            }
+        }
+        // FreeCAD's viewport remains in the same MainWindow/EGL surface.
+        if(auto* mdi=cad->findChild<QMdiArea*>())
+            if(auto* active=mdi->activeSubWindow())
+                if(!active->isMaximized())active->showMaximized();
+
+        QStringList result;
+        for(auto* dock:all) {
+            const QRect g(dock->mapToGlobal(QPoint()),dock->size());
+            const QRect screen(host->mapToGlobal(QPoint()),host->size());
+            result.append(QStringLiteral("%1[%2] area=%3 rect=%4,%5:%6x%7 inHost=%8")
+                .arg(dock->objectName(),dock->windowTitle())
+                .arg(int(cad->dockWidgetArea(dock)))
+                .arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height())
+                .arg(screen.contains(g)));
+        }
+        DrnasDiagnostics::note(QStringLiteral("MOBILE_LAYOUT %1 %2x%3 narrow=%4 docks=%5")
+            .arg(portrait ? QStringLiteral("portrait") : QStringLiteral("landscape"))
+            .arg(width).arg(height).arg(narrow).arg(result.join(QStringLiteral(" | "))));
+        // Save final layout signature; geometry changes should not recursively
+        // trigger a fresh Qt dock rebuild.
+        previousLayout.clear();
+        QStringList updated;
+        for(auto* dock:all) updated.append(dock->objectName()+QLatin1Char(':')+
+            QString::number(int(cad->dockWidgetArea(dock)))+QLatin1Char(':')+
+            QString::number(dock->isHidden())+QLatin1Char(':')+
+            QString::number(dock->isFloating()));
+        previousLayout=QStringLiteral("%1/%2/%3/%4/%5")
+            .arg(width).arg(height).arg(portrait).arg(narrow).arg(updated.join(QLatin1Char(';')));
+        applying=false;
     }
 protected:
     bool eventFilter(QObject* object,QEvent* event) override {
-        if(object==window && (event->type()==QEvent::Resize || event->type()==QEvent::Show || event->type()==QEvent::ChildAdded)) settle.start();
-        if(event->type()==QEvent::Hide && (qobject_cast<QDialog*>(object) || qobject_cast<QMenu*>(object)))settle.start();
-        return QObject::eventFilter(object,event);
+        if(applying) return false;
+        const auto type=event->type();
+        if((object==host || object==cad) &&
+           (type==QEvent::Resize || type==QEvent::Show || type==QEvent::LayoutRequest || type==QEvent::ChildAdded))
+            schedule();
+        if(auto* dock=qobject_cast<QDockWidget*>(object))
+            if(cad && (cad==dock->parentWidget() || cad->isAncestorOf(dock)) &&
+               (type==QEvent::Show || type==QEvent::Hide || type==QEvent::ParentChange))
+                schedule();
+        // FreeCAD may reload overlays after switching workbenches.
+        if(auto* widget=qobject_cast<QWidget*>(object))
+            if(cad && (cad==widget->parentWidget() || cad->isAncestorOf(widget)) &&
+               widget->objectName().startsWith(QStringLiteral("Overlay")) &&
+               (type==QEvent::Show || type==QEvent::LayoutRequest))
+                schedule();
+        return false;
     }
 public:
-    explicit DrnasMobileWorkspace(QMainWindow* owner):QObject(owner),window(owner) {
-        settle.setSingleShot(true); settle.setInterval(180);
+    DrnasMobileWorkspace(QMainWindow* shell,QMainWindow* workspace)
+        :QObject(shell),host(shell),cad(workspace) {
+        settle.setSingleShot(true);settle.setInterval(180);
         connect(&settle,&QTimer::timeout,this,[this]{apply();});
-        qApp->installEventFilter(this); settle.start();
+        qApp->installEventFilter(this);
+        settle.start();
+        QTimer::singleShot(850,this,[this]{schedule();});
     }
 };
 
@@ -1066,7 +1220,7 @@ finally:
     options->setPopupMode(QToolButton::InstantPopup); clean->addWidget(options);
     new DrnasFloatingCommands(shell, clean);
     if(auto* debugButton=shell->findChild<QPushButton*>(QStringLiteral("drnasDebugLauncher"))) debugButton->hide();
-    new DrnasMobileWorkspace(freecad);
+    new DrnasMobileWorkspace(shell,freecad);
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });

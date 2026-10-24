@@ -317,6 +317,8 @@ jobs:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
         run: bash full-gui/integrated-apk/stage-runtime.sh
 
+      - name: Preflight adaptive portrait/landscape layout contract
+        run: python3 full-gui/tests/test_mobile_layout.py
       - name: Configure Android QtActivity and real FreeCAD native GUI integration
         run: |
           set -euo pipefail
