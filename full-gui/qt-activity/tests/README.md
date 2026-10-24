@@ -7,6 +7,8 @@ cmake -S full-gui/qt-activity/tests -B build/touch-tests
 cmake --build build/touch-tests
 ctest --test-dir build/touch-tests --output-on-failure
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
+python3 full-gui/qt-activity/tests/first-shape.py
 ```
 
 The harness delivers touchscreen sequences through Qt's platform test interface.
@@ -20,7 +22,7 @@ not establish Coin rendering correctness or Android device behavior.
 
 ## Phone acceptance checks
 
-1. Start in landscape and create a cube in the existing Coin view.
+1. Start in portrait (marker **DRNAS P06**) and create a sphere/cube in the existing Coin view.
 2. Tap faces and edges at the touched location. No persistent mouse cursor appears.
 3. Drag one finger to orbit; no selection click occurs when lifting it.
 4. Pan and pinch with two fingers, then lift one followed by the other. No extra
@@ -39,6 +41,12 @@ not establish Coin rendering correctness or Android device behavior.
 9. Interrupt a drag by backgrounding the app, then return. No held click should
    remain. **Odustani** must cancel an active tool with the gesture panel closed.
 
-This change retains the landscape lock, the existing Qt/Coin/GL4ES rendering
-path, and the previously built ARM64 native libraries. Gesture navigation alters
-the existing Coin camera; it does not create another GL context or surface.
+The app locks both activities to portrait. Model, Properties and Tasks share
+bottom dock tabs, with desktop hover overlays disabled before GUI construction.
+Internal dialogs stay on QtActivity's surface while keeping exec/done results;
+file pickers and dialogs containing GL widgets retain their platform behavior.
+The portrait-modal test covers repeated and nested modal prompts, all close
+choices, blocked background commands, actual native-window touch entry, and
+toolbar input after dismissal at DPR 1 and 2. Deferred framing fits the first
+real shape once per document, without replacing geometry or resetting later
+camera changes. Coin/GL4ES and verified ARM64 dependencies remain in use.

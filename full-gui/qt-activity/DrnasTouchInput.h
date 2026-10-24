@@ -8,13 +8,19 @@
 #include <cmath>
 #include <QLineF>
 #include <QApplication>
+#include <QAbstractButton>
+#include <QComboBox>
 #include <QDialog>
+#include <QFileDialog>
 #include <QEvent>
 #include <QFrame>
 #include <QGraphicsView>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMainWindow>
+#include <QMenu>
+#include <QMessageBox>
+#include <QDialogButtonBox>
 #include <QMdiArea>
 #include <QMdiSubWindow>
 #include <QMouseEvent>
@@ -33,6 +39,11 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include "StartupDiagnostics.h"
+
+class DrnasPostedMouseEvent final : public QMouseEvent {
+public:
+    using QMouseEvent::QMouseEvent;
+};
 
 class DrnasPointerMark final : public QWidget {
 public:
@@ -86,17 +97,53 @@ class DrnasTouchInput final : public QObject {
     double zoomLog=0;
     QPointer<QWidget> cameraOwner;
     QPointer<QWidget> lastViewport;
-    QPointer<QToolButton> toolbarTouchButton;
-    QPointF toolbarTouchStart;
-    int toolbarTouchId = -1;
-    bool toolbarTouchCancelled = false;
+    QPointer<QWidget> uiTouchTarget;
+    QPointF uiTouchStart;
+    int uiTouchId = -1;
+    bool uiTouchCancelled = false;
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
     QSet<const QEvent*> injectedEvents;
+    QList<QPointer<QDialog>> embeddedDialogs;
     bool dragging=false, repairing=false, repairQueued=false;
     int queuedZoom=0, previousZoom=0;
     std::function<void(const QString&)> command;
+
+    QWidget* activeDialog() const {
+        if (auto* native=QApplication::activeModalWidget();native && native->isVisible()) return native;
+        for (auto i=embeddedDialogs.crbegin();i!=embeddedDialogs.crend();++i)
+            if (*i && (*i)->isVisible() && (*i)->property("drnasEmbeddedModal").toBool())
+                return i->data();
+        return nullptr;
+    }
+    void embedDialog(QDialog* dialog) {
+        if (!dialog || qobject_cast<QFileDialog*>(dialog)) return;
+        QWidget* owner=dialog->parentWidget();
+        if (!owner || (owner!=host && !host->isAncestorOf(owner))) return;
+        const bool modal=dialog->isModal() || dialog->testAttribute(Qt::WA_ShowModal);
+        if (!dialog->property("drnasEmbeddedDialog").toBool()) {
+            // Android may deliver to QtActivity while Qt blocks that native
+            // window behind QDialog::exec(). Such input is dropped before
+            // application filters run. Keep internal dialogs on the SAME
+            // surface, before show creates a QWindow. exec()/done()/result()
+            // keep their normal nested-loop semantics.
+            if (dialog->isVisible()) return;
+            for (auto* child:dialog->findChildren<QWidget*>())
+                if (child->inherits("QOpenGLWidget")) return;
+            dialog->setParent(host,Qt::Widget);
+            dialog->setProperty("drnasEmbeddedDialog",true);
+            embeddedDialogs.append(dialog);
+            connect(dialog,&QObject::destroyed,this,[this]{
+                embeddedDialogs.removeAll(QPointer<QDialog>());
+                host->setProperty("drnasEmbeddedModalActive",activeDialog()!=nullptr);
+            });
+            DrnasDiagnostics::note(QStringLiteral("INPUT UI: internal dialog embedded on QtActivity surface"));
+        }
+        if (modal) dialog->setProperty("drnasEmbeddedModal",true);
+        dialog->setWindowModality(Qt::NonModal);
+        dialog->setAttribute(Qt::WA_ShowModal,false);
+    }
 
     QPoint globalPoint() const { return host->mapToGlobal(cursor.toPoint()); }
     void deliverEvent(QWidget* target,QEvent* event) {
@@ -110,7 +157,7 @@ class DrnasTouchInput final : public QObject {
         // Resolve the actual button/viewport at the last direct-touch position,
         // including modal dialogs, menus and the shell's own tool controls.
         QWidget* root=QApplication::activePopupWidget();
-        if (!root) root=QApplication::activeModalWidget();
+        if (!root) root=activeDialog();
         if (root) {
             const QPoint p=root->mapFromGlobal(globalPoint());
             // QMenu must receive outside clicks too, so it can dismiss its
@@ -131,7 +178,7 @@ class DrnasTouchInput final : public QObject {
             if (focus && (focus==popup || popup->isAncestorOf(focus))) return focus;
             return popup;
         }
-        if (QWidget* modal=QApplication::activeModalWidget()) {
+        if (QWidget* modal=activeDialog()) {
             if (focus && (focus==modal || modal->isAncestorOf(focus))) return focus;
             return modal;
         }
@@ -148,7 +195,7 @@ class DrnasTouchInput final : public QObject {
         // Posting lets both press and release be queued BEFORE a tool button
         // enters QMenu::exec(). A synchronous press could otherwise suspend
         // mouseButton(false) and leave an emulated button pressed.
-        QCoreApplication::postEvent(target.data(),new QMouseEvent(
+        QCoreApplication::postEvent(target.data(),new DrnasPostedMouseEvent(
             type,local,window,global,button,buttons,modifiers));
     }
     void mouseButton(Qt::MouseButton button, bool down) {
@@ -203,83 +250,94 @@ class DrnasTouchInput final : public QObject {
     // Qt/Android may not reliably turn into mouse clicks when the embedded
     // FreeCAD MainWindow shares a native surface with QtActivity. Opt these
     // actual upstream controls in, without making the whole host touch-accepting.
-    void prepareFreeCADToolbars() {
+    void prepareUiTouch() {
         if (!cad) return;
         for (QToolBar* bar : cad->findChildren<QToolBar*>()) {
             bar->setAttribute(Qt::WA_AcceptTouchEvents, true);
             for (QToolButton* button : bar->findChildren<QToolButton*>())
                 button->setAttribute(Qt::WA_AcceptTouchEvents, true);
         }
+        // Explicit taps also cover the shell controls and modal Save/Discard/
+        // Cancel buttons. Accept touch at their window root so Android can
+        // deliver a sequence even when it picked the parent, not the button.
+        for (QWidget* top:QApplication::topLevelWidgets()) {
+            if (top!=host && !host->isAncestorOf(top)) continue;
+            if (qobject_cast<QDialog*>(top) || qobject_cast<QMenu*>(top))
+                top->setAttribute(Qt::WA_AcceptTouchEvents,true);
+            for (auto* button:top->findChildren<QAbstractButton*>())
+                button->setAttribute(Qt::WA_AcceptTouchEvents,true);
+            for (auto* combo:top->findChildren<QComboBox*>())
+                combo->setAttribute(Qt::WA_AcceptTouchEvents,true);
+        }
     }
-    QToolButton* toolbarAtFinger(const QPointF& global) const {
-        if (!cad || QApplication::activeModalWidget() || QApplication::activePopupWidget())
-            return nullptr;
-        // A real touch panel, native popup or lower shell control wins over
-        // CAD toolbar fallback routing. No coordinate scaling (logical pixels).
-        for (QWidget* overlay : std::initializer_list<QWidget*>{
-                panel, commandsPanel.data(), commandsLauncher.data(),
-                launcher, cancelButton, contextButton}) {
-            if (overlay && overlay->isVisible() &&
-                overlay->rect().contains(overlay->mapFromGlobal(global.toPoint())))
-                return nullptr;
+    QWidget* controlAtFinger(const QPointF& global) const {
+        QWidget* root=QApplication::activePopupWidget();
+        if (!root) root=activeDialog();
+        if (!root) root=host;
+        const QPoint p=root->mapFromGlobal(global.toPoint());
+        // Outside popup taps belong to QMenu, so it can release its grab.
+        if (!root->rect().contains(p))
+            return qobject_cast<QMenu*>(root) ? root : nullptr;
+        QWidget* hit=root->childAt(p);
+        if (!hit) hit=root;
+        for (QWidget* w=hit;w;w=w->parentWidget()) {
+            if (w->isVisible() && w->isEnabled() &&
+                (qobject_cast<QAbstractButton*>(w) || qobject_cast<QComboBox*>(w) ||
+                 qobject_cast<QMenu*>(w))) return w;
+            if (w==root) break;
         }
-        for (QToolBar* bar : cad->findChildren<QToolBar*>()) {
-            if (!bar->isVisible() || !bar->isEnabled()) continue;
-            if (!bar->rect().contains(bar->mapFromGlobal(global.toPoint()))) continue;
-            for (QToolButton* button : bar->findChildren<QToolButton*>()) {
-                if (button->isVisible() && button->isEnabled() &&
-                    button->rect().contains(button->mapFromGlobal(global.toPoint())))
-                    return button;
-            }
-        }
+        // Never fall through a modal window into a CAD command underneath it.
         return nullptr;
     }
-    void clickFreeCADToolButton(QToolButton* button,const QPointF& global) {
+    void postUiClick(QWidget* button,const QPointF& global) {
         if (!button || !button->isVisible() || !button->isEnabled()) return;
         const QPointF local=button->mapFromGlobal(global.toPoint());
         const QPointF window=button->window()->mapFromGlobal(global.toPoint());
         // Both events are queued before executing QAction/QMenu handlers.
         // Avoid QMenu::exec() reentrancy inside QTouchEvent dispatch.
-        QCoreApplication::postEvent(button,new QMouseEvent(QEvent::MouseButtonPress,
+        QCoreApplication::postEvent(button,new DrnasPostedMouseEvent(QEvent::MouseMove,
+            local,window,global,Qt::NoButton,Qt::NoButton,Qt::NoModifier));
+        QCoreApplication::postEvent(button,new DrnasPostedMouseEvent(QEvent::MouseButtonPress,
             local,window,global,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier));
-        QCoreApplication::postEvent(button,new QMouseEvent(QEvent::MouseButtonRelease,
+        QCoreApplication::postEvent(button,new DrnasPostedMouseEvent(QEvent::MouseButtonRelease,
             local,window,global,Qt::LeftButton,Qt::NoButton,Qt::NoModifier));
-        DrnasDiagnostics::note(QStringLiteral("INPUT TOOLBAR touch click action=%1 logical=%2,%3 dpr=%4")
-            .arg(button->defaultAction() ? button->defaultAction()->text() : button->objectName())
+        DrnasDiagnostics::note(QStringLiteral("INPUT UI touch click target=%1/%2 logical=%3,%4 dpr=%5")
+            .arg(QString::fromLatin1(button->metaObject()->className()),button->objectName())
             .arg(int(global.x())).arg(int(global.y())).arg(button->devicePixelRatioF()));
     }
-    bool handleFreeCADToolbarTouch(QTouchEvent* event) {
-        if (event->type()==QEvent::TouchBegin && toolbarTouchId<0) {
+    bool handleUiTouch(QTouchEvent* event) {
+        if (event->type()==QEvent::TouchBegin && uiTouchId<0) {
             if (event->points().size()!=1) return false;
             const QEventPoint& p=event->points().first();
-            QToolButton* button=toolbarAtFinger(p.globalPosition());
+            QWidget* button=controlAtFinger(p.globalPosition());
             if (!button) return false;
-            toolbarTouchButton=button;
-            toolbarTouchId=p.id();
-            toolbarTouchStart=p.globalPosition();
-            toolbarTouchCancelled=false;
-            DrnasDiagnostics::note(QStringLiteral("INPUT TOOLBAR touch begin target=%1")
-                .arg(button->defaultAction()?button->defaultAction()->text():button->objectName()));
+            uiTouchTarget=button;
+            uiTouchId=p.id();
+            uiTouchStart=p.globalPosition();
+            uiTouchCancelled=false;
+            DrnasDiagnostics::note(QStringLiteral("INPUT UI touch begin target=%1/%2 modal=%3")
+                .arg(QString::fromLatin1(button->metaObject()->className()),button->objectName())
+                .arg(activeDialog()!=nullptr));
             event->accept();
             return true;
         }
-        if (toolbarTouchId<0) return false;
-        if (event->points().size()>1) toolbarTouchCancelled=true;
+        if (uiTouchId<0) return false;
+        if (event->points().size()>1) uiTouchCancelled=true;
         const QEventPoint* tracked=nullptr;
         for (const QEventPoint& p:event->points())
-            if (p.id()==toolbarTouchId) {tracked=&p;break;}
+            if (p.id()==uiTouchId) {tracked=&p;break;}
         const bool finishing=event->type()==QEvent::TouchEnd ||
             (tracked && tracked->state()==QEventPoint::State::Released);
-        if (tracked && (tracked->globalPosition()-toolbarTouchStart).manhattanLength() >
+        if (tracked && (tracked->globalPosition()-uiTouchStart).manhattanLength() >
             std::max(18,QApplication::startDragDistance()*2))
-            toolbarTouchCancelled=true;
+            uiTouchCancelled=true;
         if (finishing) {
-            QPointer<QToolButton> target=toolbarTouchButton;
-            const QPointF release=tracked ? tracked->globalPosition():toolbarTouchStart;
-            const bool sameButton=target && toolbarAtFinger(release)==target;
-            const bool click=!toolbarTouchCancelled && sameButton;
-            toolbarTouchButton.clear();toolbarTouchId=-1;toolbarTouchCancelled=false;
-            if (click) clickFreeCADToolButton(target.data(),release);
+            QPointer<QWidget> target=uiTouchTarget;
+            const QPointF release=tracked ? tracked->globalPosition():uiTouchStart;
+            const bool sameButton=target && controlAtFinger(release)==target;
+            const bool click=!uiTouchCancelled && sameButton;
+            uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
+            if (click) postUiClick(target.data(),release);
         }
         event->accept();
         return true;
@@ -316,12 +374,12 @@ class DrnasTouchInput final : public QObject {
         if (!cad) return true;
         const bool editing = toolMode->isChecked() ||
             cad->property("drnasTouchToolActive").toBool() ||
-            QApplication::activeModalWidget() || QApplication::activePopupWidget();
+            activeDialog() || QApplication::activePopupWidget();
         return editing;
     }
     void flushCamera() {
         if (!cameraOwner || !cameraOwner->isVisible() ||
-            QApplication::activeModalWidget() || QApplication::activePopupWidget()) {
+            activeDialog() || QApplication::activePopupWidget()) {
             orbitDelta=QPointF(); panDelta=QPointF(); zoomLog=0; return;
         }
         const double h=std::max(1,cameraOwner->height());
@@ -468,7 +526,7 @@ if _drnas_doc:
     void openContextMenu() {
         // No relative cursor or touchpad: invoke the original FreeCAD RMB
         // exactly at the last finger position (or the viewport center).
-        if (QApplication::activeModalWidget()) return;
+        if (activeDialog()) return;
         if (QWidget* popup=QApplication::activePopupWidget()) { popup->close(); return; }
         QWidget* target=lastViewport.data();
         if (!target || !target->isVisible()) return;
@@ -481,7 +539,7 @@ if _drnas_doc:
         DrnasDiagnostics::note(QStringLiteral("INPUT: direct RMB at logical viewport position"));
     }
     void zoomStep() {
-        if (QApplication::activeModalWidget()) { queuedZoom=0; zoomTimer.stop(); return; }
+        if (activeDialog()) { queuedZoom=0; zoomTimer.stop(); return; }
         QWidget* target=lastViewport;
         if (!target && cad) for (auto* view : cad->findChildren<QGraphicsView*>()) {
             if (isCadView(view) && view->isVisible() && view->width()>50 && view->height()>50) { target=view->viewport(); break; }
@@ -515,10 +573,35 @@ if _drnas_doc:
         cancelButton->setGeometry(std::max(0,host->width()-160),bottom,78,34);
         contextButton->setGeometry(std::max(0,host->width()-231),bottom,66,34);
         panel->raise(); launcher->raise(); cancelButton->raise(); contextButton->raise();
+        if (auto* modal=activeDialog();modal && modal->property("drnasEmbeddedDialog").toBool())
+            modal->raise();
     }
     void repairWindows() {
         if (!cad || repairing) return;
         repairing=true;
+        for (const auto& ptr:embeddedDialogs) {
+            auto* dialog=ptr.data();
+            if (!dialog || !dialog->isVisible()) continue;
+            const QSize available=host->size()-QSize(12,12);
+            if (qobject_cast<QMessageBox*>(dialog)) {
+                // QMessageBox uses desktop screen width when computing a
+                // fixed size. Give its text the actual phone column width.
+                for (auto* label:dialog->findChildren<QLabel*>()) {
+                    label->setMinimumWidth(0);
+                    label->setMaximumWidth(std::max(60,available.width()-100));
+                    label->setWordWrap(true);
+                }
+                if (auto* box=dialog->findChild<QDialogButtonBox*>())
+                    if (box->sizeHint().width()>available.width()-24)
+                        box->setOrientation(Qt::Vertical);
+                if (dialog->layout()) dialog->layout()->setSizeConstraint(QLayout::SetNoConstraint);
+            }
+            dialog->setMinimumSize(0,0);dialog->setMaximumSize(available);
+            dialog->resize(dialog->size().boundedTo(available));
+            dialog->move(std::max(0,(host->width()-dialog->width())/2),
+                         std::max(0,(host->height()-dialog->height())/2));
+            dialog->raise();
+        }
         for (auto* area : cad->findChildren<QMdiArea*>()) {
             // Desktop cascade positions are relative to the MDI viewport,
             // not to the screen. New documents must fill this viewport.
@@ -554,7 +637,7 @@ if _drnas_doc:
         }
         for (auto* view:cad->findChildren<QGraphicsView*>())
             if (isCadView(view)) view->viewport()->setAttribute(Qt::WA_AcceptTouchEvents);
-        prepareFreeCADToolbars();
+        prepareUiTouch();
         const QRect bounds(host->mapToGlobal(QPoint()),host->size());
         for (QWidget* top : QApplication::topLevelWidgets()) {
             auto* dialog=qobject_cast<QDialog*>(top);
@@ -580,6 +663,43 @@ protected:
             qApp->removeEventFilter(this); return false;
         }
         if (injectedEvents.contains(event)) return false;
+        auto* dialog=qobject_cast<QDialog*>(obj);
+        if (dialog && (event->type()==QEvent::Polish || event->type()==QEvent::ShowToParent))
+            embedDialog(dialog);
+        if (dialog && event->type()==QEvent::Show && dialog->property("drnasEmbeddedDialog").toBool()) {
+            embedDialog(dialog); // exec() may have set WA_ShowModal on a reused dialog.
+            embeddedDialogs.removeAll(dialog);embeddedDialogs.append(dialog);
+            dialog->setMinimumSize(0,0);dialog->setMaximumSize(host->size()-QSize(12,12));
+            dialog->resize(dialog->size().boundedTo(host->size()-QSize(12,12)));
+            dialog->move(std::max(0,(host->width()-dialog->width())/2),
+                         std::max(0,(host->height()-dialog->height())/2));
+            dialog->raise();
+        }
+        if (dialog && event->type()==QEvent::Hide)
+            dialog->setProperty("drnasEmbeddedModal",false);
+        if (dialog && (event->type()==QEvent::Show || event->type()==QEvent::Hide))
+            host->setProperty("drnasEmbeddedModalActive",activeDialog()!=nullptr);
+        // A modal can interrupt a CAD drag or a menu-button press. Its queued
+        // release still has to clear the old receiver's pressed state.
+        if (event->type()==QEvent::MouseButtonRelease && dynamic_cast<DrnasPostedMouseEvent*>(event))
+            return false;
+        // Embedded modal widgets do not enter Qt's native window-block list.
+        // Enforce modality here for mouse, touch, wheel and keyboard input.
+        if (QWidget* modal=activeDialog();modal && modal->property("drnasEmbeddedDialog").toBool()) {
+            auto* widget=qobject_cast<QWidget*>(obj);
+            const bool inside=widget && (widget==modal || modal->isAncestorOf(widget));
+            const auto type=event->type();
+            const bool mouse=type==QEvent::MouseButtonPress || type==QEvent::MouseButtonRelease ||
+                type==QEvent::MouseButtonDblClick || type==QEvent::MouseMove;
+            if (widget && !inside && (mouse || type==QEvent::Wheel || type==QEvent::KeyPress || type==QEvent::KeyRelease)) {
+                event->accept();return true;
+            }
+            if (type==QEvent::Shortcut) {
+                QObject* owner=obj;
+                while (owner && owner!=modal) owner=owner->parent();
+                if (!owner) {event->accept();return true;}
+            }
+        }
         if (event->type()==QEvent::KeyPress) {
             auto* key=static_cast<QKeyEvent*>(event);
             if (key->key()==Qt::Key_Back ||
@@ -599,13 +719,27 @@ protected:
         auto* inputWidget=qobject_cast<QWidget*>(obj);
         const bool touchEvent=event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate ||
                               event->type()==QEvent::TouchEnd;
+        const bool dialogTransition=inputWidget && qobject_cast<QDialog*>(inputWidget) &&
+            (event->type()==QEvent::Show || event->type()==QEvent::Hide);
+        if (dialogTransition) {
+            uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
+            prepareUiTouch();
+            if (event->type()==QEvent::Hide) QTimer::singleShot(0,this,[this]{
+                if (activeDialog() || QApplication::activePopupWidget()) return;
+                if (auto* grabber=QWidget::mouseGrabber()) grabber->releaseMouse();
+                host->activateWindow();
+                scheduleRepair();
+                DrnasDiagnostics::note(QStringLiteral("INPUT UI: modal closed; host input restored"));
+            });
+        }
         if (event->type()==QEvent::ApplicationDeactivate ||
             (obj==host && (event->type()==QEvent::Hide || event->type()==QEvent::WindowDeactivate)) ||
             (obj==touchOwner && (event->type()==QEvent::Hide || event->type()==QEvent::FocusOut)) ||
-            (inputWidget && (inputWidget->windowType()==Qt::Popup || qobject_cast<QDialog*>(inputWidget)) &&
+            dialogTransition ||
+            (inputWidget && inputWidget->windowType()==Qt::Popup &&
              event->type()==QEvent::Show)) resetGesture();
-        if (event->type()==QEvent::TouchCancel && toolbarTouchId>=0) {
-            toolbarTouchButton.clear();toolbarTouchId=-1;toolbarTouchCancelled=false;
+        if (event->type()==QEvent::TouchCancel && uiTouchId>=0) {
+            uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
             event->accept();return true;
         }
         if (event->type()==QEvent::TouchCancel && touchOwner) {
@@ -614,13 +748,13 @@ protected:
         // Toolbars use direct absolute-position tap routing, separately from
         // CAD gestures. Even if Android delivers a touch to the embedded main
         // window rather than its QToolButton, hit-test the original toolbar.
-        if (touchEvent && handleFreeCADToolbarTouch(static_cast<QTouchEvent*>(event)))
+        if (touchEvent && handleUiTouch(static_cast<QTouchEvent*>(event)))
             return true;
         // UI widgets keep normal Qt hit testing, focus, scrolling and modality.
         // Only a sequence which begins inside a CAD viewport belongs to us.
         const bool mouseEvent=event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
                               event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick;
-        if ((touchEvent || mouseEvent) && !QApplication::activeModalWidget() && !QApplication::activePopupWidget()) {
+        if ((touchEvent || mouseEvent) && !activeDialog() && !QApplication::activePopupWidget()) {
             QWidget* viewport=viewportFor(inputWidget);
             if (touchEvent && viewport && (!touchOwner || viewport==touchOwner)) {
                 handleTouch(touchOwner ? touchOwner.data() : viewport,static_cast<QTouchEvent*>(event));
@@ -643,9 +777,11 @@ protected:
             cursor=QPointF(host->width()/2.0,host->height()/2.0); scheduleRepair();
         }
         if (event->type()==QEvent::Show &&
-            (qobject_cast<QToolBar*>(obj) || qobject_cast<QToolButton*>(obj)))
-            prepareFreeCADToolbars();
-        if ((event->type()==QEvent::Show || event->type()==QEvent::Move || event->type()==QEvent::Resize) &&
+            (qobject_cast<QToolBar*>(obj) || qobject_cast<QAbstractButton*>(obj) ||
+             qobject_cast<QMenu*>(obj) || qobject_cast<QComboBox*>(obj)))
+            prepareUiTouch();
+        if ((event->type()==QEvent::Show || event->type()==QEvent::Move || event->type()==QEvent::Resize ||
+             event->type()==QEvent::LayoutRequest) &&
             (qobject_cast<QMdiSubWindow*>(obj) || qobject_cast<QDialog*>(obj) || qobject_cast<QMdiArea*>(obj))) scheduleRepair();
         if (obj==panel && event->type()==QEvent::Hide) { releaseAll(); savePosition(); }
         if (obj==grip) {
@@ -760,7 +896,7 @@ public:
         precisionTimer.setSingleShot(true); precisionTimer.setInterval(500); precisionTimer.setTimerType(Qt::PreciseTimer);
         connect(&precisionTimer,&QTimer::timeout,this,[this]{
             if (gesture==Gesture::Pending && touchOwner &&
-                !QApplication::activeModalWidget() && !QApplication::activePopupWidget()) {
+                !activeDialog() && !QApplication::activePopupWidget()) {
                 gesture=Gesture::Precision; precisionPosition(touchLast);
             }
         });

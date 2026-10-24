@@ -111,6 +111,14 @@ int main(int argc,char** argv) {
     dialog.hide();drain();
     touch(QEvent::TouchEnd,{point(1,QEventPoint::Released,{120,140})});drain();
     check(viewport->presses==4,"opening a dialog must cancel pending selection");
+    cad.setProperty("drnasTouchToolActive",true);
+    touch(QEvent::TouchBegin,{point(1,QEventPoint::Pressed,{120,140})});
+    touch(QEvent::TouchUpdate,{point(1,QEventPoint::Updated,{180,170})});drain();
+    dialog.setModal(true);dialog.show();drain();
+    check(viewport->presses==5 && viewport->releases==5,"modal interruption must release an already pressed CAD drag");
+    dialog.hide();drain();
+    touch(QEvent::TouchEnd,{point(1,QEventPoint::Released,{180,170})});drain();
+    cad.setProperty("drnasTouchToolActive",false);
     auto* button=new QPushButton("native",&cad);button->setGeometry(5,5,80,40);button->show();
     int clicks=0;QObject::connect(button,&QPushButton::clicked,[&]{++clicks;});
     QTest::mouseClick(button,Qt::LeftButton);check(clicks==1,"native buttons must stay directly operable");

@@ -120,6 +120,32 @@ def _drnas_part_commands():
 # Render Lab exports actual document BReps. No primitive substitutes and no
 # changes to the document, ViewProviders, or saved material properties.
 _drnas_render_observer = None
+_drnas_framed_documents = {}
+
+
+def _drnas_mobile_view_tick():
+    """Frame the first real shape after the portrait viewport has settled."""
+    import FreeCADGui as Gui
+    doc = App.ActiveDocument
+    gui_doc = Gui.activeDocument()
+    if doc is None or gui_doc is None:
+        return
+    visible = [obj for obj in doc.Objects
+               if getattr(obj, 'ViewObject', None) is not None
+               and obj.ViewObject.Visibility and hasattr(obj, 'Shape')
+               and not obj.Shape.isNull()]
+    view = gui_doc.activeView()
+    if not visible or not hasattr(view, 'fitAll'):
+        return
+    # Do this once per document, not on each camera gesture or recompute.
+    # Preserve real ViewProviders, visibility, materials and subsequent views.
+    if _drnas_framed_documents.get(doc.Name) is not doc:
+        view.viewAxonometric()
+        view.fitAll()
+        _drnas_framed_documents[doc.Name] = doc
+        _drnas_mark('PORTRAIT FIRST_SHAPE framed doc=' + doc.Name
+                    + ' visible=' + repr([obj.Name for obj in visible]))
+    view.redraw()
 
 
 def _drnas_render_watch(directory):
@@ -142,8 +168,11 @@ def _drnas_render_watch(directory):
         slotDeletedObject = dirty
         slotRecomputedDocument = dirty
         slotCreatedDocument = dirty
-        slotDeletedDocument = dirty
         slotActivateDocument = dirty
+
+        def slotDeletedDocument(self, doc):
+            _drnas_framed_documents.pop(doc.Name, None)
+            self.dirty()
 
     _drnas_render_observer = Observer()
     App.addDocumentObserver(_drnas_render_observer)

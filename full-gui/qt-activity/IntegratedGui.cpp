@@ -7,6 +7,7 @@
 #include "StartupDiagnostics.h"
 #include "DrnasDebugCenter.h"
 #include "DrnasTouchInput.h"
+#include "DrnasPortraitLayout.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -756,8 +757,10 @@ finally:
         ? QStringLiteral("B") : QStringLiteral("A");
     auto* abStatus = new QLabel(QStringLiteral("A/B: ") + initialAb, toolbar);
     const bool abAvailable = dlsym(RTLD_DEFAULT, "drnas_viewport_ab_version") != nullptr;
-    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; render remains off")
-        .arg(initialAb).arg(abAvailable));
+    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; CoinEnabled=%3 stage=%4")
+        .arg(initialAb).arg(abAvailable)
+        .arg(QString::fromLatin1(qgetenv("DRNAS_ENABLE_COIN_REDRAW")))
+        .arg(QString::fromLatin1(qgetenv("DRNAS_RENDER_STAGE"))));
     for (const char mode : {'A', 'B'}) {
         auto* action = toolbar->addAction(QStringLiteral("TEST %1").arg(QChar(mode)));
         action->setObjectName(QStringLiteral("drnasViewportTest%1").arg(QChar(mode)));
@@ -1075,6 +1078,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         shell->setCentralWidget(window);
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
         installOriginalFreeCADTouchControls(shell, window);
+        new DrnasPortraitLayout(shell,window);
         if (!beforeFirstShow) {
             window->show();
         }
@@ -1082,7 +1086,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // which is visible even when Android incorrectly overlays the menus.
         if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
                 QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05"), window->statusBar());
+            auto* marker = new QLabel(QStringLiteral("DRNAS P06"), window->statusBar());
             marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
             marker->setStyleSheet(QStringLiteral(
                 "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
@@ -1129,6 +1133,14 @@ void recordOriginalGuiStage(const char* stageName)
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"
+                "# Phone panels use ordinary dock tabs, without desktop hover overlays.\n"
+                "for _side in ('Left', 'Right', 'Top', 'Bottom'):\n"
+                "    _group = App.ParamGet('User parameter:BaseApp/MainWindow/DockWindows/Overlay' + _side)\n"
+                "    _group.SetString('Widgets', '')\n"
+                "    _group.SetBool('Transparent', False)\n"
+                "    _group.SetBool('AutoHide', False)\n"
+                "    _group.SetBool('TaskShow', False)\n"
+                "_drnas_mark('PORTRAIT: desktop hover dock overlays disabled before GUI construction')\n"
                 "_drnas_mark('RA11 ISOLATION: ShowNaviCube=False before viewer construction; main scene renderer unchanged')\n"), runtimeError)) {
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }

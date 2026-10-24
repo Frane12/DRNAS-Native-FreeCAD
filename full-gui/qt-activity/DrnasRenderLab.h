@@ -136,6 +136,8 @@ class DrnasRenderLab final : public QObject {
         return QString::fromUtf8(json.mid(1,json.size()-2));
     }
     bool execute(const QString& script) {
+        if (QApplication::activeModalWidget() ||
+            (upstream && upstream->window()->property("drnasEmbeddedModalActive").toBool())) return false;
         QString error;
         if (python(script,error)) return true;
         DrnasDiagnostics::note(QStringLiteral("RENDER_LAB ERROR: ")+error);
@@ -163,7 +165,9 @@ class DrnasRenderLab final : public QObject {
         return true;
     }
     void tick(bool force=false) {
-        if (busy || stage!=0 || !upstream || !upstream->updatesEnabled() ||
+        if (busy || (stage!=0 && stage!=3) || !upstream || !upstream->updatesEnabled() ||
+            QApplication::activeModalWidget() || QApplication::activePopupWidget() ||
+            upstream->window()->property("drnasEmbeddedModalActive").toBool() ||
             QGuiApplication::applicationState()!=Qt::ApplicationActive ||
             !upstream->window()->windowHandle() ||
             !upstream->window()->windowHandle()->isExposed()) return;
@@ -171,12 +175,27 @@ class DrnasRenderLab final : public QObject {
         if (!watching) watching=execute(QStringLiteral(
             "import drnas_android_runtime as _drnas_runtime\n"
             "_drnas_runtime._drnas_render_watch(%1)\n").arg(argument()));
-        if (!watching || !ensurePanel()) { busy=false; return; }
-        panel->setGeometry(areaViewport->rect());
-        panel->show(); panel->raise();
+        if (!watching) { busy=false; return; }
         QFile dirty(directory+QStringLiteral("/dirty"));
         QByteArray revision;
         if (dirty.open(QIODevice::ReadOnly)) revision=dirty.readAll();
+        if (stage==3) {
+            // Run only after document notifications have returned to Qt's
+            // event loop, never inside finger dispatch or QDialog::exec().
+            if (force || revision!=previousDirty) {
+                bool ready=false;
+                for (auto* gl:upstream->findChildren<QOpenGLWidget*>())
+                    if (gl->isVisible() && gl->isValid() && gl->width()>32 && gl->height()>32)
+                        ready=true;
+                if (ready && execute(QStringLiteral("_drnas_runtime._drnas_mobile_view_tick()\n")))
+                    previousDirty=revision;
+            }
+            busy=false;
+            return;
+        }
+        if (!ensurePanel()) { busy=false; return; }
+        panel->setGeometry(areaViewport->rect());
+        panel->show(); panel->raise();
         if (force || revision!=previousDirty) {
             previousDirty=revision;
             DrnasDiagnostics::note(QStringLiteral("RENDER_BASELINE SNAPSHOT_BEGIN"));
@@ -307,6 +326,7 @@ public:
             return;
         }
         stage=value;
+        previousDirty.clear();
         if (stage!=4) axes=false;
         axesAction->setEnabled(false);
         for (auto* action:stages->actions()) action->setChecked(action->data().toInt()==stage);
