@@ -27,13 +27,11 @@
 #include <QComboBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
-#include <QHash>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QPushButton>
 #include <QPointer>
-#include <QPixmap>
 #include <QScreen>
 #include <QOpenGLContext>
 #include <QOpenGLWidget>
@@ -394,217 +392,6 @@ void compactOriginalAndroidFreeCADChrome(QMainWindow* window)
     normalizeAndroidFreeCADDocks(window);
 }
 
-// Android adaptive workspace: FreeCAD's own overlay manager is normalized
-// by the native bridge, then the genuine Qt docks are laid out INSIDE the
-// single embedded MainWindow. Do not move/reparent the OpenGL viewport.
-class DrnasMobileWorkspace final : public QObject {
-    QPointer<QMainWindow> host;
-    QPointer<QMainWindow> cad;
-    QTimer settle;
-    bool applying=false;
-    QString previousLayout;
-
-    static bool isTask(QDockWidget* dock) {
-        const QString name=dock->objectName().toLower();
-        const QString title=dock->windowTitle().toLower();
-        // Upstream uses objectName "Tasks", even when the UI says "Zadaci".
-        return name==QStringLiteral("tasks") || name.contains(QStringLiteral("task")) ||
-            title.contains(QStringLiteral("tasks")) || title.contains(QStringLiteral("zadac"));
-    }
-    static bool isSystemDock(QDockWidget* dock) {
-        const QString name=dock->objectName().toLower();
-        const QString title=dock->windowTitle().toLower();
-        // FreeCAD's auxiliary Selection view is sometimes a floating 100x30
-        // placeholder on Android. Never treat it as a modelling dock or
-        // repeatedly pull it into the layout graph on every Show event.
-        return name.contains(QStringLiteral("report")) || name.contains(QStringLiteral("console")) ||
-            name.contains(QStringLiteral("selection")) || title.contains(QStringLiteral("pogled odabira")) ||
-            title.contains(QStringLiteral("izvješ")) || title.contains(QStringLiteral("console"));
-    }
-    void schedule() {
-        if (!applying && !settle.isActive()) settle.start();
-    }
-    void apply() {
-        if (!cad || !host || applying || cad->width()<1 || cad->height()<1) return;
-        // Never remodel the dock graph while a real FreeCAD modal editor is open.
-        if (QApplication::activeModalWidget() || QApplication::activePopupWidget()) {
-            settle.start(350);
-            return;
-        }
-        applying=true;
-        const int width=cad->width(), height=cad->height();
-        const bool portrait=height>width;
-        // On a narrow landscape screen, tabify instead of stealing half the
-        // viewport with a left model pane AND a right tasks pane.
-        const bool narrow=portrait || width<720 || width-2*std::min(260,width/4)<width/2;
-        QList<QDockWidget*> model, tasks;
-        QStringList names;
-        for (auto* dock:cad->findChildren<QDockWidget*>()) {
-            if (!dock || isSystemDock(dock)) continue;
-            (isTask(dock) ? tasks : model).append(dock);
-            const Qt::DockWidgetArea area=cad->dockWidgetArea(dock);
-            // Identity and set of actual docks, NOT their visibility/area:
-            // our own addDockWidget/tabify/raise would otherwise invalidate
-            // the signature and trigger another rebuild every 180ms.
-            names.append(dock->objectName()+QLatin1Char(':')+
-                QString::number(static_cast<qulonglong>(reinterpret_cast<quintptr>(dock)),16));
-        }
-        const QString layout=QStringLiteral("%1/%2/%3/%4/%5")
-            .arg(width).arg(height).arg(portrait).arg(narrow).arg(names.join(QLatin1Char(';')));
-        if (layout==previousLayout) {
-            applying=false;
-            return;
-        }
-
-        // Deterministic operation, unlike "Std_DockOverlayToggleAll", which
-        // might ENABLE overlays on the second orientation change.
-        using DisableOverlays=int (*)();
-        const auto disable=reinterpret_cast<DisableOverlays>(
-            dlsym(RTLD_DEFAULT,"drnas_freecad_android_disable_overlays"));
-        const int overlayResult=disable ? disable() : -2;
-        if (overlayResult!=0) {
-            DrnasDiagnostics::note(QStringLiteral("MOBILE_LAYOUT overlay disable unavailable=%1").arg(overlayResult));
-            applying=false;
-            // During upstream StartupPostProcess the window exists before the
-            // bridge has finished initializing. Retry after it completes.
-            if(overlayResult==-1) settle.start(400);
-            return;
-        }
-        // Save the requested state BEFORE manipulating Qt docks. A Dock
-        // LayoutRequest caused by this pass must be a no-op on the next tick.
-        previousLayout=layout;
-        // Never turn an upstream hidden panel on merely because of rotation.
-        QHash<QDockWidget*,bool> hidden;
-        for(auto* dock:model+tasks) {
-            hidden.insert(dock,dock->isHidden());
-            dock->setFeatures(dock->features() & ~QDockWidget::DockWidgetFloatable);
-            dock->setMinimumSize(0,0);
-            if(dock->isFloating()) dock->setFloating(false);
-        }
-        const auto all=model+tasks;
-        if (portrait) {
-            // The *entire* bottom band is capped to ~one third of the phone;
-            // tabs preserve access to Model and Zadaci without covering CAD.
-            QDockWidget* first=nullptr;
-            for(auto* dock:all) {
-                cad->addDockWidget(Qt::BottomDockWidgetArea,dock);
-                if(first) cad->tabifyDockWidget(first,dock);
-                else first=dock;
-            }
-            if(first && !all.isEmpty()) {
-                cad->resizeDocks({first},{std::clamp(height*32/100,120,std::max(120,height/2))},Qt::Vertical);
-                QDockWidget* active=nullptr;
-                for(auto* dock:tasks) if(!hidden.value(dock)) {active=dock;break;}
-                if(!active) for(auto* dock:model) if(!hidden.value(dock)) {active=dock;break;}
-                if(active) active->raise();
-            }
-        } else if(narrow) {
-            QDockWidget* first=nullptr;
-            for(auto* dock:all) {
-                cad->addDockWidget(Qt::LeftDockWidgetArea,dock);
-                if(first) cad->tabifyDockWidget(first,dock);
-                else first=dock;
-            }
-            if(first) {
-                cad->resizeDocks({first},{std::min(240,std::max(120,width*32/100))},Qt::Horizontal);
-                QDockWidget* active=nullptr;
-                for(auto* dock:tasks) if(!hidden.value(dock)) {active=dock;break;}
-                if(!active) for(auto* dock:model) if(!hidden.value(dock)) {active=dock;break;}
-                if(active) active->raise();
-            }
-        } else {
-            // Wide landscape: model left, Tasks right, >= half the width for CAD.
-            for(auto* dock:model) cad->addDockWidget(Qt::LeftDockWidgetArea,dock);
-            for(auto* dock:tasks) cad->addDockWidget(Qt::RightDockWidgetArea,dock);
-            const int panelWidth=std::min(260,width*23/100);
-            if(!model.isEmpty()) cad->resizeDocks({model.first()},{panelWidth},Qt::Horizontal);
-            if(!tasks.isEmpty()) cad->resizeDocks({tasks.first()},{panelWidth},Qt::Horizontal);
-        }
-        for(auto* dock:all) {
-            // Only restore visibility if a reparent operation actually
-            // changed it; redundant show/hide can invalidate the GL surface.
-            if(dock->isHidden()!=hidden.value(dock))
-                dock->setVisible(!hidden.value(dock));
-        }
-
-        // Desktop FreeCAD workbench bars can eat the whole PORTRAIT screen.
-        // Their commands remain in the genuine Menu; restore them in landscape.
-        for(auto* bar:cad->findChildren<QToolBar*>()) {
-            if(bar->property("drnasFloatingOverlay").toBool())continue;
-            bar->setIconSize(QSize(18,18));
-            if(portrait) {
-                // Keep the genuine workbench selector accessible in portrait.
-                // Other bulky desktop bars remain available through the
-                // compact Tools menu; do not leave users with zero toolbar.
-                const bool essential=!bar->findChildren<QComboBox*>().isEmpty();
-                if(essential) {
-                    if(bar->property("drnasPortraitHidden").toBool()) {
-                        bar->setProperty("drnasPortraitHidden",false);
-                        if(bar->property("drnasPortraitRestore").toBool())bar->show();
-                    }
-                    continue;
-                }
-                if(!bar->property("drnasPortraitHidden").toBool()) {
-                    bar->setProperty("drnasPortraitRestore",!bar->isHidden());
-                    bar->setProperty("drnasPortraitHidden",true);
-                }
-                if(!bar->isHidden())bar->hide();
-            } else if(bar->property("drnasPortraitHidden").toBool()) {
-                bar->setProperty("drnasPortraitHidden",false);
-                if(bar->property("drnasPortraitRestore").toBool())bar->show();
-            }
-        }
-        // FreeCAD's viewport remains in the same MainWindow/EGL surface.
-        if(auto* mdi=cad->findChild<QMdiArea*>())
-            if(auto* active=mdi->activeSubWindow())
-                if(!active->isMaximized())active->showMaximized();
-
-        QStringList result;
-        for(auto* dock:all) {
-            const QRect g(dock->mapToGlobal(QPoint()),dock->size());
-            const QRect screen(host->mapToGlobal(QPoint()),host->size());
-            result.append(QStringLiteral("%1[%2] area=%3 rect=%4,%5:%6x%7 inHost=%8")
-                .arg(dock->objectName(),dock->windowTitle())
-                .arg(int(cad->dockWidgetArea(dock)))
-                .arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height())
-                .arg(screen.contains(g)));
-        }
-        DrnasDiagnostics::note(QStringLiteral("MOBILE_LAYOUT %1 %2x%3 narrow=%4 docks=%5")
-            .arg(portrait ? QStringLiteral("portrait") : QStringLiteral("landscape"))
-            .arg(width).arg(height).arg(narrow).arg(result.join(QStringLiteral(" | "))));
-        DrnasDiagnostics::note(QStringLiteral("MOBILE_LAYOUT_STABLE: layout applied once per orientation/dock set"));
-        applying=false;
-    }
-protected:
-    bool eventFilter(QObject* object,QEvent* event) override {
-        if(applying) return false;
-        const auto type=event->type();
-        if((object==host || object==cad) &&
-           (type==QEvent::Resize || type==QEvent::Show || type==QEvent::LayoutRequest || type==QEvent::ChildAdded))
-            schedule();
-        if(auto* dock=qobject_cast<QDockWidget*>(object))
-            if(cad && (cad==dock->parentWidget() || cad->isAncestorOf(dock)) &&
-               (type==QEvent::Show || type==QEvent::Hide || type==QEvent::ParentChange))
-                schedule();
-        // FreeCAD may reload overlays after switching workbenches.
-        if(auto* widget=qobject_cast<QWidget*>(object))
-            if(cad && (cad==widget->parentWidget() || cad->isAncestorOf(widget)) &&
-               widget->objectName().startsWith(QStringLiteral("Overlay")) &&
-               (type==QEvent::Show || type==QEvent::LayoutRequest))
-                schedule();
-        return false;
-    }
-public:
-    DrnasMobileWorkspace(QMainWindow* shell,QMainWindow* workspace)
-        :QObject(shell),host(shell),cad(workspace) {
-        settle.setSingleShot(true);settle.setInterval(180);
-        connect(&settle,&QTimer::timeout,this,[this]{apply();});
-        qApp->installEventFilter(this);
-        settle.start();
-        QTimer::singleShot(850,this,[this]{schedule();});
-    }
-};
-
 // The stock FreeCAD startup bridge intentionally requests NoneWorkbench.
 // Upstream NoneWorkbench contains no CAD toolbar and only Quit/Preferences/
 // Workbench/Help menu entries. On Android the embedded desktop menu bar may be
@@ -669,12 +456,9 @@ class DrnasFloatingCommands : public QObject {
         panel->adjustSize();
         panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
                     std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
-        if(launcher->parentWidget()==host)
-            launcher->setGeometry(std::max(0,host->width()/2-28),std::max(0,host->height()-40),56,34);
-        if(!QApplication::activeModalWidget() && !QApplication::activePopupWidget()) {
-            if(panel->isVisible())panel->raise();
-            if(launcher->isVisible())launcher->raise();
-        }
+        launcher->setGeometry(std::max(0, host->width()/2-28),
+                              std::max(0, host->height()-40), 56, 34);
+        panel->raise(); launcher->raise();
     }
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override {
@@ -716,11 +500,7 @@ public:
         toolbar->setParent(panel);
         toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         layout->addWidget(toolbar);
-        auto* cadWindow=qobject_cast<QMainWindow*>(host->centralWidget());
-        QWidget* launcherParent=cadWindow ? static_cast<QWidget*>(cadWindow->statusBar()) : host;
-        launcher = new QPushButton(QStringLiteral("Alati"),launcherParent);
-        launcher->setFixedSize(56,28);
-        if(cadWindow)cadWindow->statusBar()->addPermanentWidget(launcher);
+        launcher = new QPushButton(QStringLiteral("Tools"), host);
         launcher->setObjectName(QStringLiteral("drnasFloatingCommandsLauncher"));
         launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
         connect(launcher, &QPushButton::clicked, this, [this] {
@@ -955,7 +735,7 @@ finally:
         ? QStringLiteral("B") : QStringLiteral("A");
     auto* abStatus = new QLabel(QStringLiteral("A/B: ") + initialAb, toolbar);
     const bool abAvailable = dlsym(RTLD_DEFAULT, "drnas_viewport_ab_version") != nullptr;
-    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; default Coin3D enabled")
+    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; render remains off")
         .arg(initialAb).arg(abAvailable));
     for (const char mode : {'A', 'B'}) {
         auto* action = toolbar->addAction(QStringLiteral("TEST %1").arg(QChar(mode)));
@@ -1196,93 +976,10 @@ finally:
     });
     toolbar->addSeparator();
     toolbar->addWidget(resultLabel);
-    // Retain diagnostic actions, but keep the working interface compact.
-    toolbar->hide();
-    auto* clean=new QToolBar(QStringLiteral("FreeCAD"),shell);
-    clean->setObjectName(QStringLiteral("drnasCleanCommands"));
-    clean->setProperty("drnasFloatingOverlay",true);
-    clean->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    clean->setStyleSheet(toolbar->styleSheet());
-    clean->addAction(newDoc); newDoc->setText(QStringLiteral("Novi"));
-    auto* fit=clean->addAction(QStringLiteral("Prikaži sve"));
-    QObject::connect(fit,&QAction::triggered,shell,[invoke] {
-        invoke(QStringLiteral("import FreeCADGui as Gui\nif Gui.activeDocument(): Gui.activeDocument().activeView().fitAll()\n"),QStringLiteral("Fit all"));
-    });
-    auto* iso=clean->addAction(QStringLiteral("3D pogled"));
-    QObject::connect(iso,&QAction::triggered,shell,[invoke] {
-        invoke(QStringLiteral("import FreeCADGui as Gui\nif Gui.activeDocument(): Gui.activeDocument().activeView().viewAxonometric()\n"),QStringLiteral("Axonometric view"));
-    });
-    auto* menus=new QToolButton(clean);
-    menus->setText(QStringLiteral("Izbornik")); menus->setMenu(touchMenu);
-    menus->setPopupMode(QToolButton::InstantPopup); clean->addWidget(menus);
-    auto* diagnostics=new QMenu(clean);
-    diagnostics->addAction(copyLog);
-    auto* cubeProbe=diagnostics->addAction(QStringLiteral("Test kocka"));
-    QObject::connect(cubeProbe,&QAction::triggered,shell,[invoke] {
-        invoke(QStringLiteral(R"DRNAS(
-import FreeCAD as App, FreeCADGui as Gui, Part
-_drnas_mark('SCENE_PROBE BEGIN create separate test document')
-_probe_doc = App.newDocument('DrnasSceneProbe')
-_probe_obj = _probe_doc.addObject('Part::Box', 'TestCube')
-_probe_obj.Length = _probe_obj.Width = _probe_obj.Height = 20
-_probe_doc.recompute()
-_probe_obj.ViewObject.Visibility = True
-_probe_obj.ViewObject.ShapeColor = (1.0, 0.65, 0.15)
-_probe_view = Gui.activeDocument().activeView()
-_probe_view.viewAxonometric()
-_probe_view.fitAll()
-_probe_view.redraw()
-_drnas_mark('SCENE_PROBE object=%s visible=%s null=%s solids=%d volume=%s bbox=%s camera=%s' % (
-    _probe_obj.Name, _probe_obj.ViewObject.Visibility, _probe_obj.Shape.isNull(),
-    len(_probe_obj.Shape.Solids), _probe_obj.Shape.Volume,
-    _probe_obj.Shape.BoundBox, _probe_view.getCameraOrientation()))
-_drnas_mark('SCENE_PROBE END geometry confirmed; phone image still requires visual validation')
-)DRNAS"),QStringLiteral("Test kocka"));
-    });
-    auto* debug=diagnostics->addAction(QStringLiteral("Dijagnostički izvještaj"));
-    QObject::connect(debug,&QAction::triggered,shell,[shell] {
-        if(auto* button=shell->findChild<QPushButton*>(QStringLiteral("drnasDebugLauncher"))) button->click();
-    });
-    if(auto* gpu=toolbar->findChild<QToolButton*>(QStringLiteral("drnasGpuExperiments"))) {
-        gpu->menu()->setTitle(QStringLiteral("GPU testovi")); diagnostics->addMenu(gpu->menu());
-    }
-    for(const QString& name:{QStringLiteral("drnasOneTapReferenceRenderer"),QStringLiteral("drnasOneTapCoin3D")})
-        if(auto* action=toolbar->findChild<QAction*>(name)) diagnostics->addAction(action);
-    auto* options=new QToolButton(clean);
-    options->setText(QStringLiteral("Postavke")); options->setMenu(diagnostics);
-    options->setPopupMode(QToolButton::InstantPopup); clean->addWidget(options);
-    new DrnasFloatingCommands(shell, clean);
-    if(auto* debugButton=shell->findChild<QPushButton*>(QStringLiteral("drnasDebugLauncher"))) debugButton->hide();
-    // FreeCADGui's startup calls processEvents() from native stage callbacks.
-    // Registering global event filters or changing the upstream dock tree in
-    // that nested loop can crash before the first CAD workspace is displayed.
-    // Install the optional workspace/input layers only AFTER native startup
-    // has returned, the first event-loop turn has finished, and the viewport
-    // has had a chance to receive its first Qt Show/Resize events.
-    const QPointer<QMainWindow> hostGuard(shell), cadGuard(freecad);
-    DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P1 command bar ready; defer adaptive workspace"));
-    QTimer::singleShot(900,shell,[hostGuard,cadGuard,invoke]{
-        if(!hostGuard || !cadGuard) return;
-        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P2 before mobile workspace"));
-        new DrnasMobileWorkspace(hostGuard.data(),cadGuard.data());
-        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P3 mobile workspace installed"));
-    });
-    QTimer::singleShot(1500,shell,[hostGuard,cadGuard,invoke]{
-        if(!hostGuard || !cadGuard) return;
-        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P4 before touch controllers"));
-        new DrnasTouchInput(hostGuard.data(),cadGuard.data(),[invoke](const QString& script){
-            invoke(script,QStringLiteral("Mouse / keyboard controls"));
-        });
-        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P5 touch controllers installed"));
-    });
-    QTimer::singleShot(2900,shell,[hostGuard,cadGuard]{
-        if(!hostGuard || !cadGuard) return;
-        QSettings stable;
-        stable.setValue(QStringLiteral("nativeProbe/current"),
-                        QStringLiteral("STARTUP_UI P6 native workspace stable"));
-        stable.setValue(QStringLiteral("nativeProbe/pending"),false);
-        stable.sync();
-        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P6 stable; crash marker cleared"));
+    toolbar->setVisible(true);
+    new DrnasFloatingCommands(shell, toolbar);
+    new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
+        invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });
 }
 
@@ -1354,12 +1051,21 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (shell->statusBar()) shell->statusBar()->hide();
         shell->setCentralWidget(window);
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
-        // Critical Android lifecycle ordering: early embed MUST stay as plain
-        // Qt::Widget reparenting. Do not create more toolbars/event filters or
-        // run a dock geometry repair while native FreeCADGui startup is active.
-        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI P0 early native embed; controls deferred"));
+        installOriginalFreeCADTouchControls(shell, window);
         if (!beforeFirstShow) {
             window->show();
+        }
+        // Show a recognizable version in the genuine FreeCAD status bar,
+        // which is visible even when Android incorrectly overlays the menus.
+        if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
+                QStringLiteral("drnasAndroidBridgeMarker"))) {
+            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05"), window->statusBar());
+            marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
+            marker->setStyleSheet(QStringLiteral(
+                "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
+                "border-radius:3px;font-size:11px;}"));
+            window->statusBar()->addPermanentWidget(marker);
+            marker->show();
         }
         // QtActivity shell is already shown; don't showMaximized/raise it
         // during GL startup because that may recreate Android's EGLSurface.
@@ -1403,20 +1109,6 @@ void recordOriginalGuiStage(const char* stageName)
                 "_drnas_mark('RA11 ISOLATION: ShowNaviCube=False before viewer construction; main scene renderer unchanged')\n"), runtimeError)) {
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
-    }
-    // Device trace 2026-10-24T18:13:53Z: the eager import of native
-    // MeasureGui from this callback SIGSEGVs in Python's ExtensionFileLoader
-    // create_module(), *after* libCoin/FreeCADGui, Python stdlib, resource
-    // extraction, and the native App::Application bootstrap succeed.
-    // This callback executes inside FreeCAD's GUI startup before its
-    // Gui::MainWindow exists. Never dlopen/import a GUI Python extension
-    // from here: a segfault cannot be caught by try/catch or Python except.
-    // Measure/Std_MassProperties commands are intentionally NOT registered
-    // by DRNAS until a separate, isolated activation path is verified.
-    if (stage == QStringLiteral("Original Gui::MainWindow constructor")) {
-        DrnasDiagnostics::note(QStringLiteral(
-            "MEASURE ISOLATED: skip unsafe early MeasureGui native import; "
-            "continue with original FreeCADGui MainWindow construction"));
     }
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
@@ -1592,25 +1284,15 @@ public:
             "QLabel{background:#20344a;color:#b9e7ce;padding:7px;}"));
         outer->addWidget(nativeStatus);
         QSettings diagnostics;
-        // A repeated native crash with THIS integration build must fall back
-        // to an inspectable UI instead of rebooting into the same crash loop.
-        // New APK integration revisions use a new stamp and get one clean
-        // automatic launch attempt; subsequent failures require manual retry.
-        constexpr auto kUiBootStamp = "measuregui-isolated-20261024-v2";
-        const bool previousCrash = diagnostics.value(QStringLiteral("nativeProbe/pending")).toBool();
-        const bool repeatedBuildCrash = previousCrash &&
-            diagnostics.value(QStringLiteral("nativeProbe/bootStamp")).toString() ==
-                QString::fromLatin1(kUiBootStamp);
-        setProperty("drnasSuppressAutostart",repeatedBuildCrash);
         QString lastStatus = diagnostics.value(
             QStringLiteral("nativeProbe/result"),
             QStringLiteral("SAFE MODE: Qt6 started. Native FreeCAD libraries are "
                            "included in the APK but have NOT been loaded.")).toString();
         if (diagnostics.value(QStringLiteral("nativeProbe/pending")).toBool()) {
             lastStatus = QStringLiteral(
-                "PREVIOUS STARTUP DID NOT FINISH at %1. "
-                "This status was saved before native startup completed. "
-                "Use TEST then OPEN ORIGINAL FREECAD GUI for a manual retry.")
+                "LAST NATIVE CRASH: Android killed the app while loading %1. "
+                "This information was saved before dlopen; no system crash "
+                "report is needed. Restart is safe until TEST is pressed.")
                 .arg(diagnostics.value(QStringLiteral("nativeProbe/current"),
                                         QStringLiteral("unknown")).toString());
             diagnostics.setValue(QStringLiteral("nativeProbe/result"), lastStatus);
@@ -1635,18 +1317,8 @@ public:
         launchOriginal->setEnabled(false);
         outer->addWidget(launchOriginal);
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
-        setProperty("drnasAutoStartPartDesign",
-                    qgetenv("DRNAS_AUTOSTART") != QByteArray("0") &&
-                    !property("drnasSuppressAutostart").toBool());
-        if(property("drnasSuppressAutostart").toBool())
-            DrnasDiagnostics::note(QStringLiteral("STARTUP_RECOVERY repeated crash: manual safe mode enabled"));
+        setProperty("drnasAutoStartPartDesign", qgetenv("DRNAS_AUTOSTART") != QByteArray("0"));
 #endif
-        auto restoreStartupUi=[safe=QPointer<QWidget>(central)] {
-            if(!safe)return;
-            if(auto* splash=safe->findChild<QWidget*>(QStringLiteral("drnasStartupSplash")))splash->hide();
-            for(auto* child:safe->findChildren<QWidget*>(QString(),Qt::FindDirectChildrenOnly))
-                if(child->objectName()!=QStringLiteral("drnasStartupSplash"))child->show();
-        };
         connect(launchOriginal, &QPushButton::clicked, this,
                 [this, launchOriginal, nativeStatus] {
             launchOriginal->setEnabled(false);
@@ -1664,19 +1336,6 @@ public:
                 launchOriginal->setEnabled(true);
                 return;
             }
-            // Persist the exact file-loading boundary before each potentially
-            // fatal native/Qt operation. A screenshot of the generic splash
-            // does not distinguish resource extraction from GUI initialization.
-            auto markStartupFiles=[](const QString& phase) {
-                DrnasDiagnostics::note(QStringLiteral("STARTUP_FILES ") + phase);
-                QSettings state;
-                state.setValue(QStringLiteral("nativeProbe/current"), phase);
-                state.setValue(QStringLiteral("nativeProbe/pending"),true);
-                state.setValue(QStringLiteral("nativeProbe/bootStamp"),
-                               QStringLiteral("measuregui-isolated-20261024-v2"));
-                state.sync();
-            };
-            markStartupFiles(QStringLiteral("F1 copying Python stdlib and extension modules"));
             QString pythonError;
             if (!configureBundledPython(pythonError)) {
                 const QString message = QStringLiteral("Python bootstrap failed: %1")
@@ -1684,33 +1343,23 @@ public:
                 nativeStatus->setText(message);
                 QSettings settings;
                 settings.setValue(QStringLiteral("nativeProbe/result"), message);
-                settings.setValue(QStringLiteral("nativeProbe/pending"), false);
                 settings.sync();
-                DrnasDiagnostics::note(QStringLiteral("STARTUP_FILES F1 FAILED: ") + message);
                 launchOriginal->setEnabled(true);
                 return;
             }
-            markStartupFiles(QStringLiteral("F1 OK; F2 unpacking original FreeCAD resources"));
             QString resourceError;
             if (!configureBundledFreeCADHome(resourceError)) {
                 const QString failed = QStringLiteral("Original FreeCAD resources: %1").arg(resourceError);
                 nativeStatus->setText(failed);
                 QSettings settings;
                 settings.setValue(QStringLiteral("nativeProbe/result"), failed);
-                settings.setValue(QStringLiteral("nativeProbe/pending"), false);
                 settings.sync();
-                DrnasDiagnostics::note(QStringLiteral("STARTUP_FILES F2 FAILED: ") + failed);
                 launchOriginal->setEnabled(true);
                 return;
             }
-            markStartupFiles(QStringLiteral("F2 OK; F3 initialize original FreeCAD GUI"));
             currentFreeCADStartupStatus = nativeStatus;
             currentFreeCADAndroidShell = this;
             originalFreeCADEmbeddedBeforeShow = false;
-            QSettings bootSettings;
-            bootSettings.setValue(QStringLiteral("nativeProbe/bootStamp"),
-                                  QStringLiteral("measuregui-isolated-20261024-v2"));
-            bootSettings.sync();
             DrnasDebugCenter::recordSnapshot(
                 QStringLiteral("before risky original FreeCADGui startup"));
             recordOriginalGuiStage("Calling real Gui::MainWindow startup");
@@ -1720,9 +1369,7 @@ public:
             // Keep the Android qss: icon root valid after startup too.
             restoreOriginalFreeCADIconPaths();
             QSettings settings;
-            // Do not clear the crash marker the moment the native API
-            // returns. The delayed Qt workspace/input setup may still crash.
-            settings.setValue(QStringLiteral("nativeProbe/pending"), result == 0);
+            settings.setValue(QStringLiteral("nativeProbe/pending"), false);
             DrnasDebugCenter::recordSnapshot(
                 QStringLiteral("returned from original FreeCADGui startup"));
             DrnasDiagnostics::note(QStringLiteral("Original FreeCAD startup result code: %1")
@@ -1754,10 +1401,6 @@ public:
                     }
                     if (embedded) {
                         auto* freecadWindow = qobject_cast<QMainWindow*>(centralWidget());
-                        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI N1 native FreeCADGui returned; install command controls"));
-                        if(freecadWindow)
-                            installOriginalFreeCADTouchControls(this,freecadWindow);
-                        DrnasDiagnostics::note(QStringLiteral("STARTUP_UI N2 command controls returned"));
                         compactOriginalAndroidFreeCADChrome(freecadWindow);
                         auto* commandBar = findChild<QToolBar*>(
                             QStringLiteral("drnasAndroidFreeCADCommands"));
@@ -1898,7 +1541,7 @@ public:
         if (property("drnasAutoStartPartDesign").toBool()) {
             // Wait until the QtActivity surface and event loop are ready.
             // Reuse actual button handlers; never fabricate PASS results.
-            QTimer::singleShot(350, this, [this, runProbe, launchOriginal, restoreStartupUi] {
+            QTimer::singleShot(350, this, [this, runProbe, launchOriginal] {
                 DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 BEGIN: load genuine FreeCAD libraries; QT_SCALE_FACTOR=%1")
                     .arg(QString::fromLatin1(qgetenv("QT_SCALE_FACTOR"))));
                 if (auto* screen = QGuiApplication::primaryScreen()) {
@@ -1910,13 +1553,11 @@ public:
                 if (!launchOriginal->isEnabled()) {
                     setProperty("drnasAutoStartPartDesign", false);
                     DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 FAILED: GUI launch remains disabled"));
-                    restoreStartupUi();
                     return;
                 }
                 DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 PASS: libraries loaded"));
                 DrnasDiagnostics::note(QStringLiteral("AUTO 2/3 BEGIN: original FreeCAD GUI"));
                 launchOriginal->click();
-                if(!originalFreeCADEmbeddedBeforeShow)restoreStartupUi();
             });
         }
         auto* plainStatus = new QLabel(
@@ -1986,23 +1627,6 @@ public:
 #endif
 
         setCentralWidget(central);
-#ifdef DRNAS_FREECAD_FULL_INTEGRATION
-        if(property("drnasAutoStartPartDesign").toBool()) {
-            for(auto* child:central->findChildren<QWidget*>(QString(),Qt::FindDirectChildrenOnly))child->hide();
-            auto* splash=new QWidget(central);splash->setObjectName(QStringLiteral("drnasStartupSplash"));
-            splash->setStyleSheet(QStringLiteral("background:#102337;color:#e8f2fa;"));
-            central->setStyleSheet(QStringLiteral("background:#102337;"));
-            auto* branding=new QVBoxLayout(splash);branding->addStretch();
-            auto* logo=new QLabel(splash);logo->setAlignment(Qt::AlignCenter);
-            logo->setPixmap(QPixmap(QStringLiteral("assets:/drnas-splash.png")).scaled(132,132,Qt::KeepAspectRatio,Qt::SmoothTransformation));
-            branding->addWidget(logo);
-            auto* title=new QLabel(QStringLiteral("DRNAS FreeCAD"),splash);title->setAlignment(Qt::AlignCenter);
-            title->setStyleSheet(QStringLiteral("font-size:28px;font-weight:bold;padding:12px;"));branding->addWidget(title);
-            auto* loading=new QLabel(QStringLiteral("Pokretanje radnog prostora…"),splash);loading->setAlignment(Qt::AlignCenter);
-            loading->setStyleSheet(QStringLiteral("color:#94cddd;font-size:14px;"));branding->addWidget(loading);branding->addStretch();
-            outer->addWidget(splash,10);splash->show();
-        }
-#endif
 #ifndef DRNAS_FREECAD_FULL_INTEGRATION
         auto* fileMenu=menuBar()->addMenu(QStringLiteral("File"));
         auto* save=fileMenu->addAction(QStringLiteral("Save FCStd (integration pending)"));
@@ -2078,5 +1702,3 @@ extern "C" __attribute__((visibility("default")))
 void* drnas_create_qt_gui_shell_after_qt_android_bootstrap() {
     return new DrnasQtCADShell();
 }
-
-

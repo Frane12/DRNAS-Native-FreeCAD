@@ -18,16 +18,6 @@ int main(int argc, char** argv)
     QCoreApplication::setOrganizationName(QStringLiteral("DRNAS"));
     QCoreApplication::setApplicationName(QStringLiteral("FreeCADNativeProbe"));
     QApplication app(argc, argv);
-#ifdef DRNAS_FREECAD_FULL_INTEGRATION
-    QSettings workspaceSettings;
-    if(workspaceSettings.value(QStringLiteral("workspace/cleanVersion"),0).toInt()<1) {
-        workspaceSettings.setValue(QStringLiteral("drnasDebug/fullscreen"),true);
-        workspaceSettings.setValue(QStringLiteral("drnasDebug/immersive"),true);
-        workspaceSettings.setValue(QStringLiteral("workspace/cleanVersion"),1);
-        workspaceSettings.sync();
-    }
-#endif
-
     // Begin private, persistent startup logging before any FreeCAD dlopen.
     DrnasDiagnostics::start();
     DrnasDiagnostics::note(QStringLiteral("Creating Android GUI bootstrap shell"));
@@ -44,7 +34,7 @@ int main(int argc, char** argv)
     // A child widget overlay only: never creates another Android surface.
     new DrnasDebugCenter(window);
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
-    // Live layout experiments are no longer part of the working workspace.
+    new DrnasLiveGuiLab(window);
 #endif
     DrnasDiagnostics::note(QStringLiteral("Qt GUI visible; entering event loop"));
     return app.exec();

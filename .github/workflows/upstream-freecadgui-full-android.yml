@@ -29,6 +29,8 @@ concurrency:
 
 jobs:
   upstream-freecadgui:
+    # Restore packaging reuses the phone-tested native artifact; no recompilation.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[restore-working]')
     name: Compile REAL upstream FreeCADGui, FreeCADApp, FreeCADBase Android arm64
     runs-on: ubuntu-24.04
     timeout-minutes: 150
@@ -237,7 +239,7 @@ jobs:
         id: build
         run: bash full-gui/upstream/build-real-freecadgui.sh
 
-      - name: Stage native FreeCAD Part, Sketcher, PartDesign and Measure workbench resources
+      - name: Stage real native FreeCAD Part, Sketcher, PartDesign workbench UI and icons
         if: ${{ steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
@@ -311,7 +313,7 @@ jobs:
             fi
           done < <(find "$builddir/Mod" -type f -name '*.so' -print0 | sort -z)
           if [[ "${{ steps.build.outcome }}" == success ]]; then
-            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Materials.so MatGui.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so Measure.so MeasureGui.so; do
+            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Materials.so MatGui.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so; do
               test -s "$stage/$required" || {
                 echo "::error::Missing real upstream $required after successful build"
                 exit 1

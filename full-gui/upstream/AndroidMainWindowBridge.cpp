@@ -6,7 +6,6 @@
 #include <Base/Exception.h>
 #include "Application.h"
 #include "MainWindow.h"
-#include "OverlayManager.h"
 #include "StartupProcess.h"
 #include <QApplication>
 #include <QCoreApplication>
@@ -37,23 +36,6 @@ extern "C" __attribute__((visibility("default")))
 const char* drnas_freecad_android_last_error() noexcept
 {
     return startupError.c_str();
-}
-
-// Called on the same Android QApplication thread from the QtActivity layout
-// controller. Use FreeCAD's original overlay API: a toggle is NOT idempotent.
-extern "C" __attribute__((visibility("default")))
-int drnas_freecad_android_disable_overlays() noexcept
-{
-    if (!originalMainWindow || !qApp || QThread::currentThread()!=qApp->thread())
-        return -1;
-    try {
-        Gui::OverlayManager::instance()->setOverlayMode(
-            Gui::OverlayManager::OverlayMode::DisableAll);
-        return 0;
-    }
-    catch (...) {
-        return -2;
-    }
 }
 
 // Never call Gui::Application::runApplication() from QtActivity: that would
@@ -126,10 +108,6 @@ int drnas_freecad_android_start(StageCallback callback) noexcept
         // disable the desktop IPC-only messageReceived connection.
         post.setLoadFromPythonModule(true);
         post.execute();
-        // Restore old desktop settings may re-enable overlays on a tiny
-        // Android Qt logical display. Restore safe, ordinary QDockWidgets.
-        Gui::OverlayManager::instance()->setOverlayMode(
-            Gui::OverlayManager::OverlayMode::DisableAll);
 
         stage(callback, "Showing original FreeCAD MainWindow");
         originalMainWindow->setProperty("eventLoop", true);
