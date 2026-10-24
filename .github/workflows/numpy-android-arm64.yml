@@ -64,6 +64,21 @@ jobs:
           PY
           SH
           chmod +x $GITHUB_WORKSPACE/.drnas-fix-python-pc.sh
+      - name: Set Android ARM64 long double format for Meson cross build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('numpy/_core/meson.build')
+          src=p.read_text()
+          needle="longdouble_format = meson.get_external_property('longdouble_format', 'UNKNOWN')"
+          assert src.count(needle)==1, 'NumPy longdouble probe changed upstream'
+          src=src.replace(needle, """# Android AArch64 uses IEEE-754 binary128 little-endian long double.
+          # Avoid executing a target binary on the x86_64 GitHub runner.
+          longdouble_format = 'IEEE_QUAD_LE' if host_machine.system() == 'android' and host_machine.cpu_family() == 'aarch64' else meson.get_external_property('longdouble_format', 'UNKNOWN')""")
+          p.write_text(src)
+          print('Patched target-only long double detection for Android AArch64')
+          PY
       - name: Cross-build CPython 3.14 Android ARM64 NumPy wheel
         env:
           CIBW_PLATFORM: android
