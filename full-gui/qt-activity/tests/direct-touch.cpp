@@ -134,6 +134,31 @@ int main(int argc,char** argv) {
     check(popup.isVisible(),"test popup should open");
     QTest::keyClick(&popup,Qt::Key_Back);drain();
     check(!popup.isVisible(),"Android Back must dismiss active Qt popup");
-    std::cout<<"Direct touch routing checks passed\n";
+    // Original desktop FreeCAD toolbar, not our floating Android command panel.
+    // The real bug was touch not activating its stock "New" QToolButton.
+    QToolBar* originalToolbar=new QToolBar("FreeCAD Desktop", &cad);
+    cad.addToolBar(Qt::TopToolBarArea,originalToolbar);
+    QAction* originalNew=originalToolbar->addAction("New");
+    int newTriggers=0;
+    QObject::connect(originalNew,&QAction::triggered,[&]{++newTriggers;});
+    originalToolbar->show();drain();
+    auto* newButton=originalToolbar->findChild<QToolButton*>();
+    check(newButton && newButton->isVisible(),"original upstream New must be a visible toolbutton");
+    const QPoint center=newButton->rect().center();
+    // Android: touch delivered to QToolButton itself.
+    QTest::touchEvent(newButton,device).press(25,center,newButton).commit();
+    QTest::touchEvent(newButton,device).release(25,center,newButton).commit();drain();
+    check(newTriggers==1,"direct original FreeCAD toolbar touch must trigger New once");
+    // Android integration: the parent can receive touch instead of the child.
+    // Route by global logical coordinates; never use devicePixelRatio here.
+    const QPoint throughHost=host.mapFromGlobal(newButton->mapToGlobal(center));
+    QTest::touchEvent(&host,device).press(26,throughHost,&host).commit();
+    QTest::touchEvent(&host,device).release(26,throughHost,&host).commit();drain();
+    check(newTriggers==2,"misrouted QtActivity toolbar touch must still trigger New once");
+    QTest::touchEvent(newButton,device).press(27,center,newButton).commit();
+    QTest::touchEvent(newButton,device).move(27,center+QPoint(65,0),newButton).commit();
+    QTest::touchEvent(newButton,device).release(27,center+QPoint(65,0),newButton).commit();drain();
+    check(newTriggers==2,"toolbar drag or finger slip must not activate New");
+    std::cout<<"Direct touch and original desktop FreeCAD toolbar checks passed\n";
     host.takeCentralWidget(); // stack-owned cad
 }

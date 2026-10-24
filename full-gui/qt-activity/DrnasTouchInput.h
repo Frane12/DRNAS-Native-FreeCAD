@@ -28,6 +28,8 @@
 #include <QSlider>
 #include <QTimer>
 #include <QTouchEvent>
+#include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include "StartupDiagnostics.h"
@@ -84,6 +86,10 @@ class DrnasTouchInput final : public QObject {
     double zoomLog=0;
     QPointer<QWidget> cameraOwner;
     QPointer<QWidget> lastViewport;
+    QPointer<QToolButton> toolbarTouchButton;
+    QPointF toolbarTouchStart;
+    int toolbarTouchId = -1;
+    bool toolbarTouchCancelled = false;
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
@@ -192,6 +198,90 @@ class DrnasTouchInput final : public QObject {
     }
     void setPosition(const QPointF& global) {
         cursor=QPointF(host->mapFromGlobal(global.toPoint()));
+    }
+    // The original FreeCAD desktop toolbars consist of QToolButtons which
+    // Qt/Android may not reliably turn into mouse clicks when the embedded
+    // FreeCAD MainWindow shares a native surface with QtActivity. Opt these
+    // actual upstream controls in, without making the whole host touch-accepting.
+    void prepareFreeCADToolbars() {
+        if (!cad) return;
+        for (QToolBar* bar : cad->findChildren<QToolBar*>()) {
+            bar->setAttribute(Qt::WA_AcceptTouchEvents, true);
+            for (QToolButton* button : bar->findChildren<QToolButton*>())
+                button->setAttribute(Qt::WA_AcceptTouchEvents, true);
+        }
+    }
+    QToolButton* toolbarAtFinger(const QPointF& global) const {
+        if (!cad || QApplication::activeModalWidget() || QApplication::activePopupWidget())
+            return nullptr;
+        // A real touch panel, native popup or lower shell control wins over
+        // CAD toolbar fallback routing. No coordinate scaling (logical pixels).
+        for (QWidget* overlay : {panel, commandsPanel.data(), commandsLauncher.data(),
+                                 launcher, cancelButton, contextButton}) {
+            if (overlay && overlay->isVisible() &&
+                overlay->rect().contains(overlay->mapFromGlobal(global.toPoint())))
+                return nullptr;
+        }
+        for (QToolBar* bar : cad->findChildren<QToolBar*>()) {
+            if (!bar->isVisible() || !bar->isEnabled()) continue;
+            if (!bar->rect().contains(bar->mapFromGlobal(global.toPoint()))) continue;
+            for (QToolButton* button : bar->findChildren<QToolButton*>()) {
+                if (button->isVisible() && button->isEnabled() &&
+                    button->rect().contains(button->mapFromGlobal(global.toPoint())))
+                    return button;
+            }
+        }
+        return nullptr;
+    }
+    void clickFreeCADToolButton(QToolButton* button,const QPointF& global) {
+        if (!button || !button->isVisible() || !button->isEnabled()) return;
+        const QPointF local=button->mapFromGlobal(global.toPoint());
+        const QPointF window=button->window()->mapFromGlobal(global.toPoint());
+        // Both events are queued before executing QAction/QMenu handlers.
+        // Avoid QMenu::exec() reentrancy inside QTouchEvent dispatch.
+        QCoreApplication::postEvent(button,new QMouseEvent(QEvent::MouseButtonPress,
+            local,window,global,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier));
+        QCoreApplication::postEvent(button,new QMouseEvent(QEvent::MouseButtonRelease,
+            local,window,global,Qt::LeftButton,Qt::NoButton,Qt::NoModifier));
+        DrnasDiagnostics::note(QStringLiteral("INPUT TOOLBAR touch click action=%1 logical=%2,%3 dpr=%4")
+            .arg(button->defaultAction() ? button->defaultAction()->text() : button->objectName())
+            .arg(int(global.x())).arg(int(global.y())).arg(button->devicePixelRatioF()));
+    }
+    bool handleFreeCADToolbarTouch(QTouchEvent* event) {
+        if (event->type()==QEvent::TouchBegin && toolbarTouchId<0) {
+            if (event->points().size()!=1) return false;
+            const QEventPoint& p=event->points().first();
+            QToolButton* button=toolbarAtFinger(p.globalPosition());
+            if (!button) return false;
+            toolbarTouchButton=button;
+            toolbarTouchId=p.id();
+            toolbarTouchStart=p.globalPosition();
+            toolbarTouchCancelled=false;
+            DrnasDiagnostics::note(QStringLiteral("INPUT TOOLBAR touch begin target=%1")
+                .arg(button->defaultAction()?button->defaultAction()->text():button->objectName()));
+            event->accept();
+            return true;
+        }
+        if (toolbarTouchId<0) return false;
+        if (event->points().size()>1) toolbarTouchCancelled=true;
+        const QEventPoint* tracked=nullptr;
+        for (const QEventPoint& p:event->points())
+            if (p.id()==toolbarTouchId) {tracked=&p;break;}
+        const bool finishing=event->type()==QEvent::TouchEnd ||
+            (tracked && tracked->state()==QEventPoint::State::Released);
+        if (tracked && (tracked->globalPosition()-toolbarTouchStart).manhattanLength() >
+            std::max(18,QApplication::startDragDistance()*2))
+            toolbarTouchCancelled=true;
+        if (finishing) {
+            QPointer<QToolButton> target=toolbarTouchButton;
+            const QPointF release=tracked ? tracked->globalPosition():toolbarTouchStart;
+            const bool sameButton=target && toolbarAtFinger(release)==target;
+            const bool click=!toolbarTouchCancelled && sameButton;
+            toolbarTouchButton.clear();toolbarTouchId=-1;toolbarTouchCancelled=false;
+            if (click) clickFreeCADToolButton(target.data(),release);
+        }
+        event->accept();
+        return true;
     }
     static bool isCadView(QGraphicsView* view) {
         return view->inherits("Gui::View3DInventorViewer") ||
@@ -462,6 +552,7 @@ if _drnas_doc:
         }
         for (auto* view:cad->findChildren<QGraphicsView*>())
             if (isCadView(view)) view->viewport()->setAttribute(Qt::WA_AcceptTouchEvents);
+        prepareFreeCADToolbars();
         const QRect bounds(host->mapToGlobal(QPoint()),host->size());
         for (QWidget* top : QApplication::topLevelWidgets()) {
             auto* dialog=qobject_cast<QDialog*>(top);
@@ -511,9 +602,18 @@ protected:
             (obj==touchOwner && (event->type()==QEvent::Hide || event->type()==QEvent::FocusOut)) ||
             (inputWidget && (inputWidget->windowType()==Qt::Popup || qobject_cast<QDialog*>(inputWidget)) &&
              event->type()==QEvent::Show)) resetGesture();
+        if (event->type()==QEvent::TouchCancel && toolbarTouchId>=0) {
+            toolbarTouchButton.clear();toolbarTouchId=-1;toolbarTouchCancelled=false;
+            event->accept();return true;
+        }
         if (event->type()==QEvent::TouchCancel && touchOwner) {
             resetGesture(); event->accept(); return true;
         }
+        // Toolbars use direct absolute-position tap routing, separately from
+        // CAD gestures. Even if Android delivers a touch to the embedded main
+        // window rather than its QToolButton, hit-test the original toolbar.
+        if (touchEvent && handleFreeCADToolbarTouch(static_cast<QTouchEvent*>(event)))
+            return true;
         // UI widgets keep normal Qt hit testing, focus, scrolling and modality.
         // Only a sequence which begins inside a CAD viewport belongs to us.
         const bool mouseEvent=event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
@@ -540,6 +640,9 @@ protected:
                         int(s.value(QStringLiteral("touch/panelY"),0.15).toDouble()*host->height()));
             cursor=QPointF(host->width()/2.0,host->height()/2.0); scheduleRepair();
         }
+        if (event->type()==QEvent::Show &&
+            (qobject_cast<QToolBar*>(obj) || qobject_cast<QToolButton*>(obj)))
+            prepareFreeCADToolbars();
         if ((event->type()==QEvent::Show || event->type()==QEvent::Move || event->type()==QEvent::Resize) &&
             (qobject_cast<QMdiSubWindow*>(obj) || qobject_cast<QDialog*>(obj) || qobject_cast<QMdiArea*>(obj))) scheduleRepair();
         if (obj==panel && event->type()==QEvent::Hide) { releaseAll(); savePosition(); }

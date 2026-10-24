@@ -384,6 +384,9 @@ void compactOriginalAndroidFreeCADChrome(QMainWindow* window)
         menu->hide();
     }
     for (QToolBar* bar : window->findChildren<QToolBar*>()) {
+        bar->setAttribute(Qt::WA_AcceptTouchEvents, true);
+        for (QToolButton* button : bar->findChildren<QToolButton*>())
+            button->setAttribute(Qt::WA_AcceptTouchEvents, true);
         bar->setIconSize(QSize(18, 18));
         bar->setMovable(false);
         if (bar->isFloating()) window->addToolBar(Qt::TopToolBarArea, bar);
