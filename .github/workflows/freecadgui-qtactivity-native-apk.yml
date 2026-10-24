@@ -4,12 +4,6 @@ name: DRNAS FreeCADGui QtActivity APK Integration
 # The main-branch workflow_run controller still dispatches packaging after a
 # genuinely new successful native GUI build.
 on:
-  push:
-    branches: [feature/full-freecad-android]
-    paths:
-      - 'full-gui/qt-activity/**'
-      - 'full-gui/integrated-apk/**'
-      - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
   workflow_dispatch:
     inputs:
       upstream_run_id:
