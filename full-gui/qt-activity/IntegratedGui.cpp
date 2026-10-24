@@ -1,6 +1,7 @@
 // The reference renderer is allocated lazily by Render Lab after Gui startup.
 #include "NativeOcctViewport.h"
 #include "DrnasRenderLab.h"
+#include "DrnasMobileLayout.h"
 #include <algorithm>
 #include <utility>
 #include <QApplication>
@@ -442,151 +443,6 @@ bool runOriginalFreeCADPython(const QString& script, QString& error)
     return true;
 }
 
-// Child overlay: never docks into the CAD layout or creates an Android window.
-class DrnasFloatingCommands : public QObject {
-    QMainWindow* host;
-    QWidget* panel;
-    QPushButton* launcher;
-    QWidget* grip;
-    QPoint dragOffset;
-    bool dragging = false;
-    void constrain() {
-        const int w = std::max(1, std::min(460, host->width() - 12));
-        panel->setFixedWidth(w);
-        panel->adjustSize();
-        panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
-                    std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
-        launcher->setGeometry(std::max(0, host->width()/2-28),
-                              std::max(0, host->height()-40), 56, 34);
-        panel->raise(); launcher->raise();
-    }
-protected:
-    bool eventFilter(QObject* obj, QEvent* event) override {
-        if (obj == host && event->type() == QEvent::Resize) constrain();
-        if (obj == grip) {
-            auto* mouse = dynamic_cast<QMouseEvent*>(event);
-            if (mouse && event->type() == QEvent::MouseButtonPress &&
-                mouse->button() == Qt::LeftButton) {
-                dragging = true;
-                dragOffset = mouse->globalPosition().toPoint()-panel->mapToGlobal(QPoint());
-                return true;
-            }
-            if (mouse && event->type() == QEvent::MouseMove && dragging) {
-                panel->move(host->mapFromGlobal(mouse->globalPosition().toPoint()-dragOffset));
-                constrain(); return true;
-            }
-            if (event->type() == QEvent::MouseButtonRelease && dragging) {
-                dragging = false; return true;
-            }
-        }
-        return QObject::eventFilter(obj, event);
-    }
-public:
-    DrnasFloatingCommands(QMainWindow* shell, QToolBar* toolbar)
-        : QObject(shell), host(shell) {
-        panel = new QWidget(host);
-        panel->setObjectName(QStringLiteral("drnasFloatingCommands"));
-        panel->setStyleSheet(QStringLiteral("background:#182d42;color:white;"));
-        auto* layout = new QVBoxLayout(panel);
-        layout->setContentsMargins(3,3,3,3); layout->setSpacing(2);
-        auto* row = new QHBoxLayout;
-        auto* title = new QLabel(QStringLiteral("DRNAS tools — drag"), panel);
-        title->setMinimumHeight(30);
-        grip = title; grip->installEventFilter(this);
-        auto* close = new QPushButton(QStringLiteral("×"), panel);
-        close->setFixedSize(34,30);
-        row->addWidget(title,1); row->addWidget(close);
-        layout->addLayout(row);
-        toolbar->setParent(panel);
-        toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        layout->addWidget(toolbar);
-        launcher = new QPushButton(QStringLiteral("Tools"), host);
-        launcher->setObjectName(QStringLiteral("drnasFloatingCommandsLauncher"));
-        launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
-        connect(launcher, &QPushButton::clicked, this, [this] {
-            panel->setVisible(!panel->isVisible()); constrain();
-        });
-        connect(close, &QPushButton::clicked, panel, &QWidget::hide);
-        host->installEventFilter(this);
-        panel->move(6,6); constrain();
-        panel->hide(); launcher->show();
-        DrnasDiagnostics::note(QStringLiteral("DRNAS floating tools: collapsed; CAD layout unreserved"));
-    }
-};
-
-
-void recordNativeGlesViewport(QMainWindow* freecad)
-{
-    // Earlier GPU03 readings also went through GL4ES. Query the Android GLES
-    // dispatch library explicitly, using read-only queries in the viewport context.
-    QOpenGLWidget* widget = nullptr;
-    if (freecad) {
-        for (auto* candidate : freecad->findChildren<QOpenGLWidget*>()) {
-            if (candidate->isVisible() && candidate->isValid() &&
-                candidate->width() > 100 && candidate->height() > 100) {
-                widget = candidate;
-                break;
-            }
-        }
-    }
-    if (!widget) {
-        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE: no visible document viewport; create a document first"));
-        return;
-    }
-    // A valid widget can outlive its Android EGLSurface during rotation or
-    // the first raster-to-OpenGL window transition. Diagnostics must not
-    // force makeCurrent() against an unexposed/destroyed native window.
-    QWindow* nativeWindow = widget->window()->windowHandle();
-    if (!nativeWindow || !nativeWindow->isExposed() ||
-        !widget->updatesEnabled() ||
-        QGuiApplication::applicationState() != Qt::ApplicationActive) {
-        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE deferred: native surface not ready"));
-        return;
-    }
-    QOpenGLContext* previous = QOpenGLContext::currentContext();
-    QSurface* previousSurface = previous ? previous->surface() : nullptr;
-    widget->makeCurrent();
-    void* gles = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
-    using ReadString = const unsigned char* (*)(unsigned int);
-    using ReadInteger = void (*)(unsigned int, int*);
-    auto readString = gles ? reinterpret_cast<ReadString>(dlsym(gles, "glGetString")) : nullptr;
-    auto readInteger = gles ? reinterpret_cast<ReadInteger>(dlsym(gles, "glGetIntegerv")) : nullptr;
-    const bool current = QOpenGLContext::currentContext() == widget->context();
-    if (current && readString && readInteger) {
-        Dl_info provider = {};
-        dladdr(reinterpret_cast<const void*>(readString), &provider);
-        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE glGetString provider=%1")
-            .arg(QString::fromLocal8Bit(provider.dli_fname ? provider.dli_fname : "(unknown)")));
-        const unsigned int tokens[] = {0x1F00, 0x1F01, 0x1F02, 0x8B8C};
-        const char* names[] = {"VENDOR", "RENDERER", "VERSION", "GLSL"};
-        for (int i = 0; i < 4; ++i) {
-            const unsigned char* value = readString(tokens[i]);
-            DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE %1=%2")
-                .arg(QString::fromLatin1(names[i]),
-                     value ? QString::fromLatin1(reinterpret_cast<const char*>(value)) : QStringLiteral("(null)")));
-        }
-        int fbo = -1, viewport[4] = {}, depth = -1, stencil = -1;
-        readInteger(0x8CA6, &fbo);       // GL_FRAMEBUFFER_BINDING
-        readInteger(0x0BA2, viewport);   // GL_VIEWPORT
-        readInteger(0x0D56, &depth);     // GL_DEPTH_BITS
-        readInteger(0x0D57, &stencil);   // GL_STENCIL_BITS
-        DrnasDiagnostics::note(QStringLiteral(
-            "GPU_NATIVE FBO=%1 QtFBO=%2 depth=%3 stencil=%4 viewport=%5,%6,%7,%8 widgetLogical=%9x%10 dpr=%11")
-            .arg(fbo).arg(widget->defaultFramebufferObject()).arg(depth).arg(stencil)
-            .arg(viewport[0]).arg(viewport[1]).arg(viewport[2]).arg(viewport[3])
-            .arg(widget->width()).arg(widget->height()).arg(widget->devicePixelRatioF()));
-    } else {
-        DrnasDiagnostics::note(QStringLiteral("GPU_NATIVE unavailable: current=%1 GLES=%2 strings=%3 integers=%4")
-            .arg(current).arg(gles != nullptr).arg(readString != nullptr).arg(readInteger != nullptr));
-    }
-    if (gles) dlclose(gles);
-    // Restore the caller's current-context choice. No extra GL surface is created.
-    if (previous != widget->context()) {
-        widget->doneCurrent();
-        if (previous && previousSurface) previous->makeCurrent(previousSurface);
-    }
-}
-
 void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freecad)
 {
     if (!shell || !freecad || shell->findChild<QToolBar*>(
@@ -606,7 +462,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     toolbar->setStyleSheet(QStringLiteral(
         "QToolBar{background:#182d42;border:0px;spacing:3px;padding:2px;}"
         "QToolButton{color:white;background:#315775;border:1px solid #52718d;"
-        "border-radius:4px;min-height:30px;padding:3px 6px;font-size:12px;}"
+        "border-radius:4px;min-height:30px;padding:3px 4px;font-size:11px;}"
         "QToolButton:pressed{background:#4383a9;}"
         "QLabel{color:#eaf2f8;font-size:11px;padding:2px;}"));
     // Mounted as a child overlay after actions are populated.
@@ -647,7 +503,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
             report(label + QStringLiteral(": ") + error);
         }
     };
-    auto* newDoc = toolbar->addAction(QStringLiteral("NEW +"));
+    auto* newDoc = toolbar->addAction(QStringLiteral("New +"));
     newDoc->setToolTip(QStringLiteral("FreeCAD.newDocument()"));
     QObject::connect(newDoc, &QAction::triggered, shell, [invoke] {
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C00 QAction triggered: entering handler"));
@@ -705,155 +561,21 @@ finally:
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
-    // Session-only opt-in. A crash restarts with the blank viewport fallback.
-    auto* coinRender = toolbar->addAction(QStringLiteral("TEST Coin render"));
-    coinRender->setObjectName(QStringLiteral("drnasTestCoinRender"));
-    coinRender->setCheckable(true);
-    coinRender->setChecked(qgetenv("DRNAS_ENABLE_COIN_REDRAW") == QByteArray("1"));
-    coinRender->setToolTip(QStringLiteral("Enable genuine Coin rendering with GPU/context diagnostics; may crash. Copy Log after restart."));
-    QObject::connect(coinRender, &QAction::triggered, shell,
-                     [invoke, report, upstream](bool enabled) {
-        qputenv("DRNAS_ENABLE_COIN_REDRAW", enabled ? QByteArray("1") : QByteArray("0"));
-        DrnasDiagnostics::note(QStringLiteral("RENDER PROBE: genuine Coin redraw enabled=%1; session only").arg(enabled));
-        report(enabled ? QStringLiteral("Coin render test enabled; create a document or redraw")
-                       : QStringLiteral("Coin render test disabled; blank viewport fallback"));
-        if (enabled) {
-            recordNativeGlesViewport(upstream.data());
-            invoke(QStringLiteral(
-                "import FreeCADGui as Gui\n"
-                "if Gui.activeDocument() is not None:\n"
-                "    Gui.activeDocument().activeView().redraw()\n"),
-                QStringLiteral("Coin redraw probe"));
-        }
-    });
-    coinRender->setVisible(false); // Replaced by explicit Render Lab phases.
-    auto* renderLab = new DrnasRenderLab(shell, freecad, toolbar,
+    new DrnasRenderLab(shell, freecad, toolbar,
         [](const QString& code, QString& error) { return runOriginalFreeCADPython(code,error); });
-    // Choose before New in a fresh launch. Never compare A/B by switching
-    // already-mutated Coin/GL state within an existing document.
-    const QString initialAb = qgetenv("DRNAS_VIEWPORT_AB") == QByteArray("B")
-        ? QStringLiteral("B") : QStringLiteral("A");
-    auto* abStatus = new QLabel(QStringLiteral("A/B: ") + initialAb, toolbar);
-    const bool abAvailable = dlsym(RTLD_DEFAULT, "drnas_viewport_ab_version") != nullptr;
-    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; render remains off")
-        .arg(initialAb).arg(abAvailable));
-    for (const char mode : {'A', 'B'}) {
-        auto* action = toolbar->addAction(QStringLiteral("TEST %1").arg(QChar(mode)));
-        action->setObjectName(QStringLiteral("drnasViewportTest%1").arg(QChar(mode)));
-        action->setEnabled(abAvailable);
-        action->setToolTip(mode == 'A'
-            ? QStringLiteral("A: original Coin viewport. Select before New after restarting app.")
-            : QStringLiteral("B: sync Coin to actual GL viewport. Select before New after restarting app."));
-        QObject::connect(action, &QAction::triggered, shell,
-            [upstream, report, coinRender, abStatus, mode, renderLab] {
-                if (!upstream) return;
-                for (auto* area : upstream->findChildren<QMdiArea*>()) {
-                    if (!area->subWindowList().isEmpty()) {
-                        report(QStringLiteral("A/B: restart app and choose TEST A or TEST B before New"));
-                        return;
-                    }
-                }
-                qputenv("DRNAS_ENABLE_COIN_REDRAW", QByteArray("0"));
-                coinRender->setChecked(false);
-                renderLab->setStage(0);
-                qputenv("DRNAS_VIEWPORT_AB", QByteArray(1, mode));
-                abStatus->setText(QStringLiteral("A/B: %1").arg(QChar(mode)));
-                DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB SELECT mode=%1; fresh document required; render remains off")
-                    .arg(QChar(mode)));
-                report(QStringLiteral("TEST %1 selected. New, then TEST Coin render; keep the same startup scale and rotation sequence.")
-                    .arg(QChar(mode)));
-            });
-    }
-    toolbar->addWidget(abStatus);
-    if (!abAvailable) {
-        abStatus->setText(QStringLiteral("A/B: awaiting native build"));
-        DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB unavailable in bundled native library; test buttons disabled"));
-    }
-    auto* storageTest = toolbar->addAction(QStringLiteral("Storage"));
-    QObject::connect(storageTest, &QAction::triggered, shell, [invoke] {
-        invoke(QStringLiteral("_drnas_storage_test()"), QStringLiteral("Storage probe"));
-    });
-    auto* coreTest = toolbar->addAction(QStringLiteral("New no view"));
-    QObject::connect(coreTest, &QAction::triggered, shell, [invoke] {
-        invoke(QStringLiteral(
-            "import FreeCAD as App\n"
-            "_drnas_storage_test()\n"
-            "_drnas_mark('CORE NEW BEGIN hidden=True')\n"
-            "_drnas_core_doc = App.newDocument('DRNAS_CoreProbe', hidden=True)\n"
-            "_drnas_mark('CORE NEW RETURN transient=' + repr(_drnas_core_doc.TransientDir))\n"
-            "App.closeDocument(_drnas_core_doc.Name)\n"
-            "_drnas_mark('CORE NEW CLOSED')\n"), QStringLiteral("Core document probe"));
-    });
-    // DRNAS crash isolation: opt-in tests in the SAME original GUI, without
-    // automatic workbench activation or an additional Qt/OpenGL window.
-    // The existing Android Python bridge acquires/releases the GIL.
-    for (const auto& probe : {
-             std::pair<const char*, const char*>{"TEST 1 Part", "import Part"},
-             {"TEST 2 PartGui", "import PartGui"},
-             {"TEST 3 Activate", R"DRNAS(
-import os, sys, faulthandler, traceback, FreeCADGui as Gui
-_drnas_path = os.environ.get('DRNAS_WB_LOG_PATH', '')
-_drnas_fd = os.open(_drnas_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600) if _drnas_path else -1
-_drnas_count = 0
-def _drnas_mark(message):
-    if _drnas_fd >= 0:
-        os.write(_drnas_fd, ('[PYTRACE] ' + message + '\n').encode('utf-8', 'replace'))
-def _drnas_trace(frame, event, arg):
-    global _drnas_count
-    if event not in ('call', 'line', 'exception') or _drnas_count >= 1200:
-        return _drnas_trace
-    path = frame.f_code.co_filename.replace('\\', '/')
-    if '/Mod/Part/' in path or path.endswith('/Part/InitGui.py') or '/Mod/PartDesign/' in path:
-        _drnas_count += 1
-        _drnas_mark('%04d %s %s:%d %s' % (_drnas_count, event, path, frame.f_lineno, frame.f_code.co_name))
-    return _drnas_trace
-_drnas_mark('TEST 3: before activateWorkbench(PartWorkbench)')
-sys.settrace(_drnas_trace)
-try:
-    Gui.activateWorkbench('PartWorkbench')
-    _drnas_mark('TEST 3: activateWorkbench returned OK')
-except BaseException:
-    sys.settrace(None)
-    _drnas_mark('TEST 3: PYTHON EXCEPTION BEGIN')
-    for _drnas_line in traceback.format_exc().splitlines():
-        _drnas_mark(_drnas_line)
-    _drnas_mark('TEST 3: PYTHON EXCEPTION END')
-finally:
-    sys.settrace(None)
-    _drnas_mark('TEST 3: trace disabled')
-    if _drnas_fd >= 0:
-        os.close(_drnas_fd)
-)DRNAS"}}) {
-        const QString caption = QString::fromLatin1(probe.first);
-        const QString command = QString::fromLatin1(probe.second);
-        QAction* test = toolbar->addAction(caption);
-        test->setToolTip(QStringLiteral("Isolated Part crash checkpoint; inspect DRNAS log if app exits"));
-        QObject::connect(test, &QAction::triggered, shell,
-                         [invoke, caption, command, report] {
-            QSettings settings;
-            const QString pending = QStringLiteral("nativeProbe/partStagePending");
-            settings.setValue(pending, caption);
-            settings.sync();
-            DrnasDiagnostics::note(QStringLiteral("PART PROBE BEGIN: ") + caption);
-            QString error;
-            const bool ok = runOriginalFreeCADPython(command, error);
-            DrnasDiagnostics::note(QStringLiteral("PART PROBE RETURN: %1 result=%2 error=%3")
-                .arg(caption).arg(ok).arg(error));
-            settings.remove(pending);
-            settings.sync();
-            report(caption + (ok ? QStringLiteral(" PASS")
-                                  : QStringLiteral(" FAIL: ") + error));
-        });
-    }
-    toolbar->addSeparator();
-    toolbar->addSeparator();
+    auto* workbenchButton=new QToolButton(toolbar);
+    workbenchButton->setText(QStringLiteral("Rad"));
+    auto* workbenchMenu=new QMenu(workbenchButton);
+    workbenchButton->setMenu(workbenchMenu);
+    workbenchButton->setPopupMode(QToolButton::InstantPopup);
+    toolbar->addWidget(workbenchButton);
     for (const auto& workbench : {
              std::pair<const char*, const char*>{"Part", "PartWorkbench"},
              {"Sketcher", "SketcherWorkbench"},
              {"PartDesign", "PartDesignWorkbench"}}) {
         const QString label = QString::fromLatin1(workbench.first);
         const QString name = QString::fromLatin1(workbench.second);
-        QAction* action = toolbar->addAction(label);
+        QAction* action = workbenchMenu->addAction(label);
         QObject::connect(action, &QAction::triggered, shell,
                          [invoke, label, name] {
             DrnasDiagnostics::note(QStringLiteral("TOUCH workbench ") + label);
@@ -975,9 +697,11 @@ finally:
         report(QStringLiteral("Log copied to clipboard"));
     });
     toolbar->addSeparator();
-    toolbar->addWidget(resultLabel);
+    resultLabel->hide();
     toolbar->setVisible(true);
-    new DrnasFloatingCommands(shell, toolbar);
+    toolbar->setAllowedAreas(Qt::BottomToolBarArea);
+    shell->addToolBar(Qt::BottomToolBarArea,toolbar);
+    new DrnasMobileLayout(shell,freecad,toolbar);
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });
@@ -1054,18 +778,6 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         installOriginalFreeCADTouchControls(shell, window);
         if (!beforeFirstShow) {
             window->show();
-        }
-        // Show a recognizable version in the genuine FreeCAD status bar,
-        // which is visible even when Android incorrectly overlays the menus.
-        if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
-                QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05"), window->statusBar());
-            marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
-            marker->setStyleSheet(QStringLiteral(
-                "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
-                "border-radius:3px;font-size:11px;}"));
-            window->statusBar()->addPermanentWidget(marker);
-            marker->show();
         }
         // QtActivity shell is already shown; don't showMaximized/raise it
         // during GL startup because that may recreate Android's EGLSurface.
@@ -1231,7 +943,7 @@ public:
         qApp->installEventFilter(new DrnasInputTrace(qApp));
         DrnasDiagnostics::note(QStringLiteral("Installed non-consuming Qt input trace"));
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
-        setWindowTitle(QStringLiteral("DRNAS FreeCAD Full GUI - NO PREVIEW"));
+        setWindowTitle(QStringLiteral("DRNAS FreeCAD · DRNAS render"));
 #else
         setWindowTitle(QStringLiteral("DRNAS FreeCAD - Qt Native CAD View"));
 #endif
@@ -1431,7 +1143,7 @@ public:
                             DrnasDiagnostics::note(QStringLiteral("AUTO 2/3 PASS: genuine GUI embedded"));
                             QAction* partDesign = nullptr;
                             if (commandBar) {
-                                for (QAction* action : commandBar->actions()) {
+                                for (QAction* action : commandBar->findChildren<QAction*>()) {
                                     if (action->text() == QStringLiteral("PartDesign")) {
                                         partDesign = action;
                                         break;

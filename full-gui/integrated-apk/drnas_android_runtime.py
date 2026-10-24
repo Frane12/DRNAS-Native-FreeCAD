@@ -144,12 +144,31 @@ def _drnas_render_watch(directory):
         slotCreatedDocument = dirty
         slotDeletedDocument = dirty
         slotActivateDocument = dirty
+        slotActivatedDocument = dirty
+        slotUndoDocument = dirty
+        slotRedoDocument = dirty
+        slotChangedViewObject = dirty
 
     _drnas_render_observer = Observer()
     App.addDocumentObserver(_drnas_render_observer)
     import FreeCADGui as Gui
     Gui.addDocumentObserver(_drnas_render_observer)
     _drnas_render_observer.dirty()
+
+
+_drnas_render_active_document = None
+
+
+def _drnas_render_poll():
+    # Some GUI observer versions use different activation callbacks. Poll the
+    # document identity as well so switching/closing documents cannot leave a stale view.
+    global _drnas_render_active_document
+    doc = App.ActiveDocument
+    name = doc.Name if doc else None
+    if name != _drnas_render_active_document:
+        _drnas_render_active_document = name
+        if _drnas_render_observer is not None:
+            _drnas_render_observer.dirty()
 
 
 def _drnas_render_export(directory):
@@ -199,13 +218,98 @@ def _drnas_render_export(directory):
         elif os.path.exists(target):
             os.unlink(target)
         metadata = {'document': doc.Name if doc else None, 'objects': names,
+                    'labels': [doc.getObject(name).Label for name in names] if doc else [],
                     'count': len(shapes)}
-        with open(os.path.join(directory, 'snapshot.json'), 'w') as stream:
+        with open(os.path.join(directory, 'snapshot.json.tmp'), 'w') as stream:
             json.dump(metadata, stream)
+        os.replace(os.path.join(directory, 'snapshot.json.tmp'),
+                   os.path.join(directory, 'snapshot.json'))
         _drnas_mark('RENDER_BASELINE exported ' + repr(metadata))
     except Exception:
         _drnas_mark("RENDER_BASELINE EXPORT_FAILED\n" + traceback.format_exc())
         raise
+
+
+def _drnas_model_command(action, value=None):
+    """Experimental model commands: real FreeCAD objects, transactions and history."""
+    import FreeCADGui as Gui
+    doc = App.ActiveDocument
+    _drnas_mark('MODEL_COMMAND BEGIN ' + action)
+    if action == 'select':
+        obj = doc.getObject(value) if doc else None
+        if obj is None:
+            raise ValueError('Object is no longer in the active document')
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(obj)
+        _drnas_mark('MODEL_COMMAND SELECT ' + obj.Name)
+        return
+    if action in ('undo', 'redo'):
+        if doc is None:
+            raise ValueError('Create or open a document first')
+        getattr(doc, action)()
+        doc.recompute()
+    else:
+        if doc is None:
+            if action != 'box':
+                raise ValueError('Create or open a document first')
+            doc = App.newDocument('DrnasModelLab')
+            doc.UndoMode = 1
+        selection = [obj for obj in Gui.Selection.getSelection()
+                     if obj.Document == doc]
+        obj = selection[0] if len(selection) == 1 else None
+        if action == 'resize' and (obj is None or not obj.isDerivedFrom('Part::Box')):
+            raise ValueError('Select one Part Box in MODEL > Odaberi objekt')
+        if action == 'cut' and (obj is None or not hasattr(obj, 'Shape') or obj.Shape.isNull()):
+            raise ValueError('Select one BRep object in MODEL > Odaberi objekt')
+        if action == 'resize':
+            if not isinstance(value, (list, tuple)) or len(value) != 3:
+                raise ValueError('Expected length, width and height')
+            dimensions = [float(v) for v in value]
+            if any(not __import__('math').isfinite(v) or v <= 0 for v in dimensions):
+                raise ValueError('Dimensions must be finite and positive')
+        if action not in ('box', 'resize', 'cut'):
+            raise ValueError('Unknown model command: ' + action)
+        # UndoMode is explicitly enabled only for documents created by this lab.
+        doc.openTransaction('DRNAS model: ' + action)
+        try:
+            if action == 'box':
+                result = doc.addObject('Part::Box', 'Box')
+                result.Length, result.Width, result.Height = 20, 20, 20
+            elif action == 'resize':
+                result = obj
+                result.Length, result.Width, result.Height = dimensions
+            else:
+                bounds = obj.Shape.BoundBox
+                if min(bounds.XLength, bounds.YLength, bounds.ZLength) <= 0:
+                    raise ValueError('Hole test needs a solid with nonzero dimensions')
+                drill = doc.addObject('Part::Cylinder', 'DrnasDrill')
+                drill.Radius = min(bounds.XLength, bounds.YLength) * 0.18
+                drill.Height = bounds.ZLength + 2
+                drill.Placement.Base = App.Vector(
+                    (bounds.XMin + bounds.XMax) / 2,
+                    (bounds.YMin + bounds.YMax) / 2, bounds.ZMin - 1)
+                # Match the ancestor frame used by the exported target shape.
+                if hasattr(obj, 'getGlobalPlacement') and hasattr(obj, 'Placement'):
+                    parent = obj.getGlobalPlacement().multiply(obj.Placement.inverse())
+                    drill.Placement = parent.multiply(drill.Placement)
+                result = doc.addObject('Part::Cut', 'DrnasCut')
+                result.Base, result.Tool = obj, drill
+            doc.recompute()
+            if result.Shape.isNull() or not result.Shape.isValid():
+                raise RuntimeError('FreeCAD produced an empty or invalid shape')
+            if action == 'cut':
+                obj.ViewObject.Visibility = False
+                drill.ViewObject.Visibility = False
+            result.ViewObject.Visibility = True
+            doc.commitTransaction()
+        except Exception:
+            doc.abortTransaction()
+            raise
+        Gui.Selection.clearSelection()
+        Gui.Selection.addSelection(result)
+    if _drnas_render_observer is not None:
+        _drnas_render_observer.dirty()
+    _drnas_mark('MODEL_COMMAND END ' + action)
 
 
 if not getattr(App, '__drnas_runtime_installed__', False):
