@@ -26,7 +26,7 @@ class DrnasMobileLayout final : public QObject {
         }
         return docks;
     }
-    void arrange() {
+    void arrange(bool updateVisibility=false) {
         if (!host || !cad || applying) return;
         applying=true;
         const bool portrait=host->height()>host->width();
@@ -45,7 +45,7 @@ class DrnasMobileLayout final : public QObject {
                 if (first) cad->tabifyDockWidget(first,dock);
             }
             if (!first) first=dock;
-            dock->setVisible(visible);
+            if (changed || updateVisibility) dock->setVisible(visible);
         }
         if (first && visible) {
             const int extent=portrait ? qMax(1,cad->height()/4) : qMax(1,qMin(250,cad->width()/4));
@@ -84,7 +84,7 @@ public:
         connect(toggle,&QAction::triggered,this,[this]{
             if (!host) return;
             bool& visible=host->height()>host->width()?portraitPanels:landscapePanels;
-            visible=!visible; arrange();
+            visible=!visible; arrange(true);
         });
         settle.setSingleShot(true); settle.setInterval(100);
         connect(&settle,&QTimer::timeout,this,[this]{arrange();});
