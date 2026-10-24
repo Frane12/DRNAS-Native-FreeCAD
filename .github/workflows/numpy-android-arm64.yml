@@ -7,6 +7,7 @@ on:
       - '.github/workflows/numpy-android-arm64.yml'
 permissions:
   contents: read
+  actions: write
 jobs:
   numpy-android:
     runs-on: ubuntu-24.04
@@ -62,3 +63,11 @@ jobs:
           name: drnas-numpy-cp314-android-arm64
           path: wheelhouse/*.whl
           if-no-files-found: error
+      - name: Dispatch FreeCAD APK integration only after successful wheel verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/workflows/freecadgui-qtactivity-native-apk.yml/dispatches" \
+            -f ref=feature/full-freecad-android \
+            -f 'inputs[numpy_run_id]=${{ github.run_id }}'
