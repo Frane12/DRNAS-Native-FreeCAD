@@ -118,15 +118,15 @@ class DrnasRenderLab final : public QObject {
     void auditWarnings() {
         DrnasDiagnostics::note(QStringLiteral("WARN_AUDIT BEGIN Std_Measure Std_MassProperties"));
         execute(QStringLiteral(
-            "import FreeCADGui as Gui, traceback\\n"
-            "for _name in ('Std_Measure','Std_MassProperties'):\\n"
-            "    try:\\n"
-            "        print('DRNAS WARN_AUDIT command', _name, 'registered=', Gui.getCommand(_name) is not None, flush=True)\\n"
-            "    except Exception as _e:\\n"
-            "        print('DRNAS WARN_AUDIT exception', _name, repr(_e), flush=True)\\n"));
-        DrnasDiagnostics::note(QStringLiteral("WARN_AUDIT END (inspect Python stdout and FreeCAD report view)"));
+            "import FreeCADGui as Gui\n"
+            "try:\n"
+            "    _drnas_known_commands = set(Gui.listCommands())\n"
+            "    for _name in ('Std_Measure', 'Std_MassProperties'):\n"
+            "        print('DRNAS WARN_AUDIT', _name, 'registered=', _name in _drnas_known_commands, flush=True)\n"
+            "except Exception as _e:\n"
+            "    print('DRNAS WARN_AUDIT failure', repr(_e), flush=True)\n"));
+        DrnasDiagnostics::note(QStringLiteral("WARN_AUDIT END (Python script executed; inspect command registration output)"));
     }
-
     QString argument() const {
         QJsonArray a; a.append(directory);
         const QByteArray json=QJsonDocument(a).toJson(QJsonDocument::Compact);
