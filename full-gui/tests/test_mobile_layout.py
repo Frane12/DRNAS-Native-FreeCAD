@@ -50,6 +50,14 @@ assert 'installOriginalFreeCADTouchControls(this,freecadWindow)' in gui
 assert 'settings.setValue(QStringLiteral("nativeProbe/pending"), result == 0)' in gui
 assert 'if(property("drnasAutoStartPartDesign").toBool())' in gui
 
+# A real Android 16 ARM64 log captured a native SIGSEGV at import MeasureGui
+# before the MainWindow existed. Do not regress to eager import from the stage
+# callback even when desktop FreeCAD expects Std_Measure commands.
+assert 'MEASURE ISOLATED: skip unsafe early MeasureGui native import' in gui
+assert '"import MeasureGui\\n"' not in gui, (
+    "Native MeasureGui extension must not load during GUI startup"
+)
+
 # Input fixes share the same Android QWindow as the native FreeCAD scene.
 # Enforce the regression contract before paying for the full Qt/ARM64 build.
 touch = (base / "qt-activity/DrnasTouchInput.h").read_text()
