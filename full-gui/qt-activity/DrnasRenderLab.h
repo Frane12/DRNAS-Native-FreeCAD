@@ -78,7 +78,7 @@ class DrnasRenderLab final : public QObject {
     QTimer poll;
     QString directory;
     QByteArray previousDirty;
-    int stage=0;
+    int stage=3;
     bool watching=false, busy=false, axes=false, nativeStages=false;
     QActionGroup* stages;
     QAction* axesAction;
@@ -251,7 +251,7 @@ public:
             action->setObjectName(QStringLiteral("drnasRenderStage%1").arg(i));
             action->setCheckable(true); action->setData(i); stages->addAction(action);
             action->setEnabled(i==0 || i==5 || supported);
-            if (i==0) action->setChecked(true);
+            if (i==3) action->setChecked(true);
             QObject::connect(action,&QAction::triggered,this,[this,i]{setStage(i);});
         }
         const bool gpuReady = dlsym(RTLD_DEFAULT, "drnas_gpu_color_version") != nullptr;
@@ -285,9 +285,9 @@ public:
         axesAction->setCheckable(true); axesAction->setEnabled(false);
         axesAction->setToolTip(QStringLiteral("Zasebni test prethodno problematičnog križa osi; samo faza 4"));
         QObject::connect(axesAction,&QAction::triggered,this,[this](bool value){axes=value;setStage(stage);});
-        qputenv("DRNAS_ENABLE_COIN_REDRAW","0");
-        qputenv("DRNAS_RENDER_STAGE","0");
-        qputenv("DRNAS_COIN_FBO_SYNC","0");
+        qputenv("DRNAS_ENABLE_COIN_REDRAW","1");
+        qputenv("DRNAS_RENDER_STAGE","3");
+        qputenv("DRNAS_COIN_FBO_SYNC","1");
         qputenv("DRNAS_RENDER_AXES","0");
         poll.setInterval(750);
         QTimer::singleShot(2400,this,[this]{auditWarnings();inspectCoinWindow(QStringLiteral("startup"));});
@@ -296,7 +296,7 @@ public:
         // The toolbar is installed before Gui startup finishes. Delay allocation
         // of the reference GL widget until the original workspace is initialized.
         QTimer::singleShot(1500,this,[this]{poll.start();tick(true);});
-        DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=reference").arg(supported));
+        DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=coin3d").arg(supported));
     }
     void setStage(int value) {
         if (value==4) {

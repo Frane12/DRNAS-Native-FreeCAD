@@ -81,15 +81,19 @@ set_target_properties(drnas_freecad_qtgui PROPERTIES
 if(DRNAS_FREECAD_RUNTIME_DIR)
     set_target_properties(drnas_freecad_qtgui PROPERTIES
         QT_ANDROID_PACKAGE_NAME "org.drnas.freecad.integrated"
-        QT_ANDROID_APP_NAME "DRNAS FreeCAD Native GUI Integration"
-        QT_ANDROID_VERSION_CODE 3
-        QT_ANDROID_VERSION_NAME "0.3.0-alpha"
+        QT_ANDROID_APP_NAME "DRNAS FreeCAD"
+        QT_ANDROID_VERSION_CODE 4
+        QT_ANDROID_VERSION_NAME "0.4.0-coin3d"
     )
 endif()
 
 # Android-only startup screen runs before Qt's native libraries/QApplication.
 # Change UI scale before context creation, preserving Qt's input-coordinate mapping.
 if(ANDROID AND DRNAS_FREECAD_RUNTIME_DIR)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/android/res/drawable-nodpi")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/../../android-smoke/app/src/main/res/drawable-nodpi/ic_drnas_freecad.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/android/res/drawable-nodpi/ic_drnas_freecad.png" COPYONLY)
+
     set_target_properties(drnas_freecad_qtgui PROPERTIES
         QT_ANDROID_PACKAGE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/android")
 endif()

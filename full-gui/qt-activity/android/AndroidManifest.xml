@@ -13,6 +13,7 @@
         android:smallScreens="true" />
     <application
         android:name="org.qtproject.qt.android.bindings.QtApplication"
+        android:icon="@drawable/ic_drnas_freecad"
         android:hardwareAccelerated="true"
         android:label="-- %%INSERT_APP_NAME%% --"
         android:requestLegacyExternalStorage="true"

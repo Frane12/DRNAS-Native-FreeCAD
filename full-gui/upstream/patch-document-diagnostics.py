@@ -62,6 +62,15 @@ def patch_android_service_storage(root):
 
 def patch(root):
     patch_android_service_storage(root)
+    # Android keeps docks in the normal main-window layout. Desktop overlay
+    # proxies otherwise leave an empty transparent frame above the model.
+    main_window = root / "src/Gui/MainWindow.cpp"
+    source = main_window.read_text()
+    source = once(source, '    OverlayManager::instance()->restore();',
+        '    OverlayManager::instance()->restore();\n#ifdef __ANDROID__\n'
+        '    OverlayManager::instance()->setOverlayMode(OverlayManager::OverlayMode::DisableAll);\n#endif')
+    main_window.write_text(source)
+
     # No Python/Qt calls: durable native markers still work during a failure
     # below Python. This is ordinary execution logging, not a signal handler.
     (root / "src/Base/AndroidDocumentDiagnostics.h").write_text(r'''#pragma once

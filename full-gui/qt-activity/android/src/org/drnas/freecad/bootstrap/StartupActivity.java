@@ -86,7 +86,7 @@ public final class StartupActivity extends Activity {
         testHelp.setTextColor(Color.rgb(215, 232, 245));
         testHelp.setTextSize(17);
         testHelp.setPadding(0, dp(12), 0, dp(4));
-        panel.addView(testHelp);
+        // The proven viewport configuration is automatic in the clean app.
         viewportTests = new RadioGroup(this);
         for (String mode : new String[]{"A", "B"}) {
             RadioButton radio = new RadioButton(this);
@@ -100,9 +100,10 @@ public final class StartupActivity extends Activity {
             viewportTests.addView(radio);
             if (mode.equals("A")) radio.setChecked(true);
         }
+        viewportTests.setVisibility(View.GONE);
         panel.addView(viewportTests);
         Button start = new Button(this);
-        start.setText("POKRENI PART DESIGN");
+        start.setText("POKRENI FREECAD");
         start.setTextSize(19);
         start.setMinHeight(dp(64));
         start.setOnClickListener(v -> launch(true));
@@ -129,7 +130,7 @@ public final class StartupActivity extends Activity {
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
             RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
             Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
-            Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "0", true);
+            Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "1", true);
         } catch (android.system.ErrnoException error) {
             Log.e("DRNAS", "Startup display configuration failed", error);
             return;
