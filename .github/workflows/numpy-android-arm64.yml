@@ -26,6 +26,34 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install 'cibuildwheel>=3.2,<4'
+      - name: Repair Android CPython pkg-config linker metadata
+        run: |
+          set -euo pipefail
+          # cibuildwheel creates its own Android CPython prefix after this
+          # step. Patch the metadata inside its before-build hook instead.
+          cat > $GITHUB_WORKSPACE/.drnas-fix-python-pc.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          pcdir="${PKG_CONFIG_LIBDIR:-}"
+          test -n "$pcdir" && test -d "$pcdir"
+          python3 - "$pcdir" <<'PY'
+          from pathlib import Path
+          import sys
+          root=Path(sys.argv[1])
+          found=0
+          for pc in root.glob('python*.pc'):
+              content=pc.read_text()
+              if '$(BLDLIBRARY)' in content:
+                  content=content.replace('$(BLDLIBRARY)', '-lpython3.14')
+                  pc.write_text(content)
+                  found+=1
+          if not found:
+              print('No unresolved BLDLIBRARY in Python pkg-config metadata')
+          else:
+              print('Fixed Python pkg-config files:',found)
+          PY
+          SH
+          chmod +x $GITHUB_WORKSPACE/.drnas-fix-python-pc.sh
       - name: Cross-build CPython 3.14 Android ARM64 NumPy wheel
         env:
           CIBW_PLATFORM: android
@@ -34,7 +62,7 @@ jobs:
           CIBW_ENVIRONMENT_ANDROID: 'NPY_DISABLE_SVML=1'
           CIBW_BUILD_VERBOSITY: '1'
           # Upstream wheel hooks otherwise download Linux x86_64 OpenBLAS.
-          CIBW_BEFORE_BUILD: 'true'
+          CIBW_BEFORE_BUILD: 'bash {project}/.drnas-fix-python-pc.sh'
           CIBW_CONFIG_SETTINGS: 'setup-args=-Dblas=none setup-args=-Dlapack=none setup-args=-Dallow-noblas=true'
         run: python3 -m cibuildwheel --platform android --archs arm64_v8a --output-dir wheelhouse
       - name: Verify wheel tag and binary ABI
