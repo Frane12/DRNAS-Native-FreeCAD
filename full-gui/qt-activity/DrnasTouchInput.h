@@ -375,7 +375,9 @@ protected:
         // Android modal dialogs must receive direct touch/click events. Relative
         // touchpad translation can otherwise consume the only way to dismiss them.
         if (modal && inputWidget && (inputWidget==modal || modal->isAncestorOf(inputWidget))) {
-            if (relativeActive || relativeTouchId>=0 || buttons!=Qt::NoButton) {
+            // Do not release on every child-widget event: that can synthesize a
+            // mouse release between the dialog button's press and release.
+            if (event->type()==QEvent::TouchBegin && (relativeActive || relativeTouchId>=0 || buttons!=Qt::NoButton)) {
                 relativeActive=false;
                 relativeTouchId=-1;
                 releaseAll();
