@@ -352,6 +352,8 @@ class DrnasTouchInput final : public QObject {
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
         if (injectedEvents.contains(event)) return false;
+        for (auto* w=qobject_cast<QWidget*>(obj); w; w=w->parentWidget())
+            if (w->property("drnasDirectTouch").toBool()) return false;
         if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
             event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick) {
             auto* mouse=static_cast<QMouseEvent*>(event);

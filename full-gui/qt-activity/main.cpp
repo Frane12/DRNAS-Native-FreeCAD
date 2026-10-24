@@ -32,9 +32,9 @@ int main(int argc, char** argv)
     window->show();
     // Always available in Safe Mode, before any risky native FreeCAD dlopen.
     // A child widget overlay only: never creates another Android surface.
-    new DrnasDebugCenter(window);
+
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
-    new DrnasLiveGuiLab(window);
+
 #endif
     DrnasDiagnostics::note(QStringLiteral("Qt GUI visible; entering event loop"));
     return app.exec();

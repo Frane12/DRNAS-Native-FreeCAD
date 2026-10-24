@@ -5,15 +5,14 @@ find_package(Qt6 6.8.3 REQUIRED COMPONENTS
     Core Gui Widgets OpenGL OpenGLWidgets Svg SvgWidgets UiTools Network PrintSupport Xml Concurrent)
 # Use Qt's official Android entrypoint and deployment settings instead of
 # calling QApplication from the unrelated OCCT Java Activity.
-# FULL upstream FreeCAD uses its own Coin3D/OpenGL viewport.
-# The reference GLES viewer is compiled for both builds, but in the full GUI
-# it is created lazily after FreeCAD startup, only inside the Render Lab.
+# FreeCAD owns parametric documents; the integrated OCCT/GLES viewport displays
+# their exported BRep geometry. Coin redraw remains disabled in this branch.
 set(DRNAS_QT_ACTIVITY_SOURCES main.cpp IntegratedGui.cpp StartupDiagnostics.cpp NativeOcctViewport.cpp)
 qt_add_executable(drnas_freecad_qtgui ${DRNAS_QT_ACTIVITY_SOURCES})
 if(DRNAS_FREECAD_RUNTIME_DIR)
     target_compile_definitions(drnas_freecad_qtgui PRIVATE
         DRNAS_FREECAD_FULL_INTEGRATION=1)
-    message(STATUS "FULL FREECAD NO-PREVIEW: bootstrap is Qt Widgets only; FreeCAD owns OpenGL")
+    message(STATUS "DRNAS renderer: Qt Widgets bootstrap; native GLES view after FreeCAD initialization")
 endif()
 target_link_libraries(drnas_freecad_qtgui PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets
@@ -81,9 +80,9 @@ set_target_properties(drnas_freecad_qtgui PROPERTIES
 if(DRNAS_FREECAD_RUNTIME_DIR)
     set_target_properties(drnas_freecad_qtgui PROPERTIES
         QT_ANDROID_PACKAGE_NAME "org.drnas.freecad.modelab"
-        QT_ANDROID_APP_NAME "DRNAS FreeCAD MODEL LAB"
-        QT_ANDROID_VERSION_CODE 3
-        QT_ANDROID_VERSION_NAME "0.3.0-modelab"
+        QT_ANDROID_APP_NAME "DRNAS FreeCAD"
+        QT_ANDROID_VERSION_CODE 4
+        QT_ANDROID_VERSION_NAME "0.4.0-drnas-render"
     )
 endif()
 

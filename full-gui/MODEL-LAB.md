@@ -43,3 +43,32 @@ Run `python full-gui/tests/test_model_commands.py` for transaction boundary test
 These tests do not verify OCCT geometry or Android display output. The Actions
 build verifies native compilation and packaging; the phone test verifies rendering.
 Look for `MODEL_COMMAND`, `RENDER_BASELINE`, and `MODEL LAB` in diagnostics.
+
+## Integrated DRNAS renderer (0.4)
+
+Phone validation showed a real cut solid rendering correctly. This branch now
+uses DRNAS rendering automatically for document changes, with no Coin/GPU test
+switches. The package ID remains `org.drnas.freecad.modelab`; launcher name is
+DRNAS FreeCAD, with the upstream FreeCAD icon. Coin libraries remain dependencies
+of FreeCADGui but Coin drawing is disabled.
+
+The bottom command bar contains Model, native view controls, workbenches,
+original menus, Copy Log, and Panels. The diagnostic floating Tools/LAB/DBG
+launchers are removed. Dimension entry uses one scrollable child sheet for all
+three values, with Apply/Cancel; object selection also uses a child sheet.
+Neither opens another Android window or nested dialog event loop.
+
+Portrait: desktop toolbar rows collapse, the model spans the width, and Panels
+opens tabbed tree/properties/tasks at the bottom (about one quarter height).
+Landscape: the panels return to the left (about one quarter width). Hidden
+panels can be reopened with Panels. Layout settles after orientation changes;
+no physical display resolution override or OpenGL widget reparenting is used.
+
+Phone checks: create/resize/cut and undo/redo; open and cancel both child sheets;
+rotate while a sheet is open; toggle Panels and edit properties in both
+orientations; save/reopen; background/resume; Copy Log on any failure. View
+controls under Prikaz operate on the DRNAS camera. Face/edge picking and
+Sketcher overlays are still pending; ordinary BRep modeling is the test scope.
+
+Icon source: FreeCAD/FreeCAD `src/Gui/Icons/freecad.svg` (upstream artwork,
+retained in the Android package source; PNG densities generated with Inkscape).

@@ -213,7 +213,11 @@ void NativeOcctViewport::resizeGL(int w,int h) {
 void NativeOcctViewport::updateProjections() {
     proj_.setToIdentity();
     const float aspect=float(std::max(1,width()))/std::max(1,height());
-    proj_.perspective(45.f,aspect,.1f,100.f);
+    // Keep the shorter screen axis at 45 degrees. Rotating to portrait must
+    // not crop the model horizontally or reset the user's zoom and camera.
+    const float halfAngle=22.5f*3.14159265f/180.f;
+    const float verticalFov=2.f*std::atan(std::tan(halfAngle)/std::min(1.f,aspect))*180.f/3.14159265f;
+    proj_.perspective(verticalFov,aspect,.1f,100.f);
 }
 void NativeOcctViewport::drawMesh(bool wire) {
     auto& buffer=wire?edgeVbo_:vbo_;
