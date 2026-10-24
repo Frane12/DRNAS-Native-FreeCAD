@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 #pragma once
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <utility>
 #include <QApplication>
@@ -293,7 +294,8 @@ class DrnasTouchInput final : public QObject {
             .arg(embeddedDialog->isWindow()));
     }
     void embedPartDesignModal(QDialog* dialog) {
-        if(!dialog || dialog->property("drnasModalEmbedded").toBool() || !host)return;
+        if(!dialog || dialog->property("drnasModalEmbedded").toBool() ||
+           dialog->property("drnasModalRestoring").toBool() || !host)return;
         // Only the specific modal proven to fight QtActivity in device logs.
         if(!QString::fromLatin1(dialog->metaObject()->className()).contains(QStringLiteral("DlgActiveBody")))
             return;
@@ -336,9 +338,11 @@ class DrnasTouchInput final : public QObject {
         // Restore ownership only after the QDialog hide/exec path completes.
         QTimer::singleShot(0,this,[guarded,original,flags]{
             if(!guarded)return;
+            guarded->setProperty("drnasModalRestoring",true);
             guarded->setProperty("drnasModalEmbedded",false);
             guarded->setParent(original,flags);
             guarded->hide();
+            guarded->setProperty("drnasModalRestoring",false);
         });
         DrnasDiagnostics::note(QStringLiteral("MODAL_EMBED finished; native focus conflict released"));
     }
