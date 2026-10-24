@@ -414,7 +414,11 @@ class DrnasMobileWorkspace final : public QObject {
     static bool isSystemDock(QDockWidget* dock) {
         const QString name=dock->objectName().toLower();
         const QString title=dock->windowTitle().toLower();
+        // FreeCAD's auxiliary Selection view is sometimes a floating 100x30
+        // placeholder on Android. Never treat it as a modelling dock or
+        // repeatedly pull it into the layout graph on every Show event.
         return name.contains(QStringLiteral("report")) || name.contains(QStringLiteral("console")) ||
+            name.contains(QStringLiteral("selection")) || title.contains(QStringLiteral("pogled odabira")) ||
             title.contains(QStringLiteral("izvješ")) || title.contains(QStringLiteral("console"));
     }
     void schedule() {
@@ -435,20 +439,19 @@ class DrnasMobileWorkspace final : public QObject {
         const bool narrow=portrait || width<720 || width-2*std::min(260,width/4)<width/2;
         QList<QDockWidget*> model, tasks;
         QStringList names;
-        bool needsDockRepair=false;
         for (auto* dock:cad->findChildren<QDockWidget*>()) {
             if (!dock || isSystemDock(dock)) continue;
             (isTask(dock) ? tasks : model).append(dock);
             const Qt::DockWidgetArea area=cad->dockWidgetArea(dock);
-            if (dock->isFloating() || area==Qt::NoDockWidgetArea) needsDockRepair=true;
+            // Identity and set of actual docks, NOT their visibility/area:
+            // our own addDockWidget/tabify/raise would otherwise invalidate
+            // the signature and trigger another rebuild every 180ms.
             names.append(dock->objectName()+QLatin1Char(':')+
-                QString::number(int(area))+QLatin1Char(':')+
-                QString::number(dock->isHidden())+QLatin1Char(':')+
-                QString::number(dock->isFloating()));
+                QString::number(reinterpret_cast<quintptr>(dock),16));
         }
         const QString layout=QStringLiteral("%1/%2/%3/%4/%5")
             .arg(width).arg(height).arg(portrait).arg(narrow).arg(names.join(QLatin1Char(';')));
-        if (layout==previousLayout && !needsDockRepair) {
+        if (layout==previousLayout) {
             applying=false;
             return;
         }
@@ -467,6 +470,9 @@ class DrnasMobileWorkspace final : public QObject {
             if(overlayResult==-1) settle.start(400);
             return;
         }
+        // Save the requested state BEFORE manipulating Qt docks. A Dock
+        // LayoutRequest caused by this pass must be a no-op on the next tick.
+        previousLayout=layout;
         // Never turn an upstream hidden panel on merely because of rotation.
         QHash<QDockWidget*,bool> hidden;
         for(auto* dock:model+tasks) {
@@ -515,7 +521,10 @@ class DrnasMobileWorkspace final : public QObject {
             if(!tasks.isEmpty()) cad->resizeDocks({tasks.first()},{panelWidth},Qt::Horizontal);
         }
         for(auto* dock:all) {
-            dock->setVisible(!hidden.value(dock));
+            // Only restore visibility if a reparent operation actually
+            // changed it; redundant show/hide can invalidate the GL surface.
+            if(dock->isHidden()!=hidden.value(dock))
+                dock->setVisible(!hidden.value(dock));
         }
 
         // Desktop FreeCAD workbench bars can eat the whole PORTRAIT screen.
@@ -524,11 +533,22 @@ class DrnasMobileWorkspace final : public QObject {
             if(bar->property("drnasFloatingOverlay").toBool())continue;
             bar->setIconSize(QSize(18,18));
             if(portrait) {
+                // Keep the genuine workbench selector accessible in portrait.
+                // Other bulky desktop bars remain available through the
+                // compact Tools menu; do not leave users with zero toolbar.
+                const bool essential=!bar->findChildren<QComboBox*>().isEmpty();
+                if(essential) {
+                    if(bar->property("drnasPortraitHidden").toBool()) {
+                        bar->setProperty("drnasPortraitHidden",false);
+                        if(bar->property("drnasPortraitRestore").toBool())bar->show();
+                    }
+                    continue;
+                }
                 if(!bar->property("drnasPortraitHidden").toBool()) {
                     bar->setProperty("drnasPortraitRestore",!bar->isHidden());
                     bar->setProperty("drnasPortraitHidden",true);
                 }
-                bar->hide();
+                if(!bar->isHidden())bar->hide();
             } else if(bar->property("drnasPortraitHidden").toBool()) {
                 bar->setProperty("drnasPortraitHidden",false);
                 if(bar->property("drnasPortraitRestore").toBool())bar->show();
@@ -552,16 +572,7 @@ class DrnasMobileWorkspace final : public QObject {
         DrnasDiagnostics::note(QStringLiteral("MOBILE_LAYOUT %1 %2x%3 narrow=%4 docks=%5")
             .arg(portrait ? QStringLiteral("portrait") : QStringLiteral("landscape"))
             .arg(width).arg(height).arg(narrow).arg(result.join(QStringLiteral(" | "))));
-        // Save final layout signature; geometry changes should not recursively
-        // trigger a fresh Qt dock rebuild.
-        previousLayout.clear();
-        QStringList updated;
-        for(auto* dock:all) updated.append(dock->objectName()+QLatin1Char(':')+
-            QString::number(int(cad->dockWidgetArea(dock)))+QLatin1Char(':')+
-            QString::number(dock->isHidden())+QLatin1Char(':')+
-            QString::number(dock->isFloating()));
-        previousLayout=QStringLiteral("%1/%2/%3/%4/%5")
-            .arg(width).arg(height).arg(portrait).arg(narrow).arg(updated.join(QLatin1Char(';')));
+        DrnasDiagnostics::note(QStringLiteral("MOBILE_LAYOUT_STABLE: layout applied once per orientation/dock set"));
         applying=false;
     }
 protected:
