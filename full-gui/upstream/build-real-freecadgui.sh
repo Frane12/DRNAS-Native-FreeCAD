@@ -228,7 +228,7 @@ probe = r'''
             drnasGL->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &drnasFbo);
             drnasGL->glGetIntegerv(GL_VIEWPORT, drnasViewport);
             const GLenum drnasErr = drnasGL->glGetError();
-            fprintf(stderr, "[DRNAS_COIN_QUARTER] phase=paint_entry fbo=%d viewport=%d,%d,%d,%d glError=0x%x\\n",
+            fprintf(stderr, "[DRNAS_COIN_QUARTER] phase=paint_entry fbo=%d viewport=%d,%d,%d,%d glError=0x%x\n",
                     drnasFbo, drnasViewport[0], drnasViewport[1],
                     drnasViewport[2], drnasViewport[3], unsigned(drnasErr));
             fflush(stderr);
@@ -237,9 +237,9 @@ probe = r'''
 #endif
 '''
 # Insert before the existing multisample guard, which is inside Quarter's paint.
-guard = '#ifndef ANDROID\\n' + state + '\\n#endif'
+guard = '#ifndef ANDROID\n' + state + '\n#endif'
 assert source.count(guard) == 1, 'Quarter paint diagnostic anchor missing'
-source = '#include <cstdio>\\n' + source.replace(guard, probe + guard)
+source = '#include <cstdio>\n' + source.replace(guard, probe + guard)
 
 path.write_text(source)
 print('Quarter Android GLES2 omits unsupported GL_MULTISAMPLE toggling')
