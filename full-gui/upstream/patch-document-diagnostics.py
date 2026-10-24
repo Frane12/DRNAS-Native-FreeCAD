@@ -535,25 +535,33 @@ static void drnasSyncQtCoinFbo(QOpenGLWidget* widget)
     const GLuint qtFbo=widget->defaultFramebufferObject();
     if (!qtFbo) { ::drnasDocumentPhase("FBO_SYNC no Qt FBO", "SKIP"); return; }
     using Query=void (*)(unsigned int,int*);
+    using BindQtFbo=int (*)(unsigned int);
     static void* gles=dlopen("libGLESv2.so",RTLD_NOW|RTLD_LOCAL);
+    static void* gl4es=dlopen("libGL.so",RTLD_NOW|RTLD_LOCAL);
     static Query nativeQuery=gles ? reinterpret_cast<Query>(dlsym(gles,"glGetIntegerv")) : nullptr;
-    int nativeBefore=-1,gl4esBefore=-1,nativeAfter=-1,gl4esAfter=-1;
+    static BindQtFbo bindQt=gl4es ? reinterpret_cast<BindQtFbo>(dlsym(gl4es,"drnas_gl4es_bind_qt_default_fbo")) : nullptr;
+    int nativeBefore=-1,wrappedBefore=-1,nativeAfter=-1,wrappedAfter=-1;
     if(nativeQuery) nativeQuery(GL_FRAMEBUFFER_BINDING,&nativeBefore);
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING,&gl4esBefore);
-    if(nativeBefore!=int(qtFbo) || gl4esBefore!=int(qtFbo))
-        glBindFramebuffer(GL_FRAMEBUFFER,qtFbo);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING,&wrappedBefore);
+    // Qt's framebuffer is native id=qtFbo. GL4ES's DEFAULT framebuffer is
+    // *logically* id=0 and maps to that Qt FBO, never id=qtFbo in its own map.
+    const int bridge=bindQt ? bindQt(qtFbo) : -3;
     if(nativeQuery) nativeQuery(GL_FRAMEBUFFER_BINDING,&nativeAfter);
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING,&gl4esAfter);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING,&wrappedAfter);
     const GLenum status=glCheckFramebufferStatus(GL_FRAMEBUFFER);
     const GLenum error=glGetError();
-    const bool passed=(nativeAfter==int(qtFbo) && gl4esAfter==int(qtFbo)
-                     && status==GL_FRAMEBUFFER_COMPLETE && error==GL_NO_ERROR);
+    const bool passed=bridge==1 && nativeAfter==int(qtFbo) &&
+        wrappedAfter==0 && status==GL_FRAMEBUFFER_COMPLETE && error==GL_NO_ERROR;
     static unsigned int samples=0;
-    if(samples++<48 || !passed) {
-        char line[320];
+    if(samples++<60 || !passed) {
+        char line[480];
         std::snprintf(line,sizeof(line),
-          "FBO_SYNC qt=%u nativeBefore=%d wrappedBefore=%d nativeAfter=%d wrappedAfter=%d status=0x%x error=0x%x",
-          qtFbo,nativeBefore,gl4esBefore,nativeAfter,gl4esAfter,unsigned(status),unsigned(error));
+          "FBO_BRIDGE qt=%u nativeBefore=%d wrappedBefore=%d bridge=%d nativeAfter=%d wrappedDefault=%d status=0x%x error=0x%x logical=%dx%d physical=%dx%d dpr=%.4f",
+          qtFbo,nativeBefore,wrappedBefore,bridge,nativeAfter,wrappedAfter,
+          unsigned(status),unsigned(error),widget->width(),widget->height(),
+          qRound(widget->width()*widget->devicePixelRatioF()),
+          qRound(widget->height()*widget->devicePixelRatioF()),
+          double(widget->devicePixelRatioF()));
         ::drnasDocumentPhase(line,passed?"PASS":"WARNING");
     }
 }

@@ -31,41 +31,28 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 source = p.read_text()
-old = """    glframebuffer_t *fb = find_framebuffer(framebuffer);
-    if(!fb) {
-        errorShim(GL_INVALID_VALUE);
-        return;
-    }"""
-new = """    glframebuffer_t *fb = find_framebuffer(framebuffer);
-#ifdef __ANDROID__
-    // Qt allocates the QOpenGLWidget FBO through native GLES, not GL4ES.
-    // Adopt only an existing native FBO when our renderer test requests it.
-    const char *sync = getenv("DRNAS_COIN_FBO_SYNC");
-    if (!fb && framebuffer && sync && sync[0]=='1' && sync[1]=='\\0') {
-        LOAD_GLES2_OR_OES(glIsFramebuffer);
-        if (gles_glIsFramebuffer(framebuffer)) {
-            int inserted = 0;
-            khint_t k = kh_put(framebufferlist_t, glstate->fbo.framebufferlist,
-                               framebuffer, &inserted);
-            if (inserted > 0) {
-                fb = calloc(1, sizeof(glframebuffer_t));
-                if (fb) {
-                    fb->id = framebuffer;
-                    kh_value(glstate->fbo.framebufferlist,k) = fb;
-                    fprintf(stderr,"DRNAS_GL4ES_ADOPT_QT_FBO id=%u\\n",framebuffer);
-                } else {
-                    kh_del(framebufferlist_t,glstate->fbo.framebufferlist,k);
-                }
-            } else if (inserted == 0) {
-                fb = kh_value(glstate->fbo.framebufferlist,k);
-            }
-        }
-    }
+old = """GLenum ReadDraw_Push(GLenum target) {"""
+new = """#ifdef __ANDROID__
+__attribute__((visibility("default")))
+int drnas_gl4es_bind_qt_default_fbo(unsigned int qtFbo) {
+    // GL4ES has its own framebuffer namespace. Qt owns qtFbo and created
+    // it directly through GLES; it must NOT be treated as a GL4ES-generated
+    // nonzero FBO. Map GL4ES framebuffer zero to the real Qt GLES FBO.
+    if (!glstate || !glstate->fbo.fbo_0 || !qtFbo) return -1;
+    LOAD_GLES2_OR_OES(glIsFramebuffer);
+    if (!gles_glIsFramebuffer(qtFbo)) return -2;
+    glstate->fbo.mainfbo_fbo = qtFbo;
+    gl4es_glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // GL4ES reports logical framebuffer 0, native GLES must report qtFbo.
+    return 1;
+}
 #endif
-    if(!fb) {
-        errorShim(GL_INVALID_VALUE);
-        return;
-    }"""
+
+GLenum ReadDraw_Push(GLenum target) {"""
+if source.count(old) != 1:
+    raise SystemExit("Pinned GL4ES ReadDraw_Push anchor changed")
+p.write_text(source.replace(old, new, 1))
+print("DRNAS GL4ES Qt FBO default bridge enabled (Qt retains FBO ownership)")
 if source.count(old) != 1:
     raise SystemExit("GL4ES pinned glBindFramebuffer source changed")
 p.write_text(source.replace(old,new,1))
