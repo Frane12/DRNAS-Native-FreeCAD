@@ -149,6 +149,13 @@ for package in PySide6 shiboken6 pivy; do
     cp -a "$bindings/$package/." "$work/bundle/assets/drnas/freecad/Mod/$package/"
 done
 # These packages contain ELF extensions, so extract to filesystem on-device;
+# Install validated NumPy wheel into the extracted FreeCAD Mod path.
+# Unlike python314.zip, this path supports Android native .so imports.
+numpy_stage="$OUT/numpy-stage"
+test -s "$numpy_stage/numpy/__init__.py"
+test -d "$numpy_stage/numpy/_core"
+cp -a "$numpy_stage/." "$work/bundle/assets/drnas/freecad/Mod/"
+echo 'PASS: NumPy staged as extractable ARM64 package in APK.'
 # zipimport cannot load extension modules directly from APK assets.
 python3 "$ROOT/full-gui/upstream/audit-python-bindings.py" \
   "$work/bundle/assets/drnas/freecad/Mod" --require-all
@@ -164,7 +171,7 @@ manifest = root / "freecad-manifest.txt"
 previous = [line for line in manifest.read_text().splitlines() if line]
 # Remove stale identity: native extraction keys off bundle-<sha>.sha256.
 previous = [name for name in previous if not (name.startswith("bundle-") and name.endswith(".sha256"))]
-for package in ("PySide", "PySide6", "shiboken6", "pivy"):
+for package in ("PySide", "PySide6", "shiboken6", "pivy", "numpy", "numpy.libs"):
     for path in sorted((base / "Mod" / package).rglob("*")):
         if path.is_file() and not path.is_symlink():
             previous.append(path.relative_to(base).as_posix())
