@@ -141,14 +141,26 @@ class DrnasTouchInput final : public QObject {
     QPointF cursor,last,start;
     QElapsedTimer clock;
     bool relative=false,moved=false,repairQueued=false;
-    int touchId=-1,queuedZoom=0,previousZoom=0;
+    int touchId=-1,zoomDeflection=0,zoomTicks=0;
+    // This FreeCAD desktop modal is embedded in the existing QtActivity
+    // QWidget tree: no competing Android QWindow or native focus loop.
+    QPointer<QDialog> embeddedDialog;
+    QPointer<QWidget> modalShield;
+    QPointer<QWidget> originalDialogParent;
+    Qt::WindowFlags originalDialogFlags{};
     Qt::MouseButtons buttons=Qt::NoButton;
     QTimer zoomTimer;
     QPoint globalPoint() const {return host->mapToGlobal(cursor.toPoint());}
     QWidget* target() const {
-        QWidget* top=QApplication::activePopupWidget();
+        QWidget* top=embeddedDialog && embeddedDialog->isVisible()
+            ? static_cast<QWidget*>(embeddedDialog.data()) : QApplication::activePopupWidget();
         if(!top)top=QApplication::activeModalWidget();
-        if(top) {auto* child=top->childAt(top->mapFromGlobal(globalPoint()));return child?child:top;}
+        if(top) {
+            if(!top->rect().contains(top->mapFromGlobal(globalPoint())))
+                return modalShield && modalShield->isVisible() ? modalShield.data() : top;
+            auto* child=top->childAt(top->mapFromGlobal(globalPoint()));
+            return child?child:top;
+        }
         return QApplication::widgetAt(globalPoint());
     }
     void sendMouse(QEvent::Type type,Qt::MouseButton button) {
@@ -171,7 +183,7 @@ class DrnasTouchInput final : public QObject {
     void releaseAll() {
         mouseButton(Qt::LeftButton,false);mouseButton(Qt::RightButton,false);
         for(auto* key:mouseKeys)key->release();
-        relative=false;touchId=-1;queuedZoom=0;previousZoom=0;zoomTimer.stop();mouseReceiver.clear();
+        relative=false;touchId=-1;zoomDeflection=0;zoomTicks=0;zoomTimer.stop();mouseReceiver.clear();
         if(zoomControl){QSignalBlocker blocker(zoomControl);zoomControl->setValue(0);}
     }
     bool isControl(QWidget* widget) const {
@@ -179,7 +191,8 @@ class DrnasTouchInput final : public QObject {
         return false;
     }
     bool inRender(QWidget* widget) const {
-        if(!cad || !widget || QApplication::activeModalWidget() || QApplication::activePopupWidget())return false;
+        if(!cad || !widget || (embeddedDialog && embeddedDialog->isVisible()) ||
+           QApplication::activeModalWidget() || QApplication::activePopupWidget())return false;
         bool rendering=false;
         for(QWidget* p=widget;p && p!=host;p=p->parentWidget()) {
             if(qobject_cast<QDialog*>(p)||qobject_cast<QDockWidget*>(p)||qobject_cast<QAbstractButton*>(p)||
@@ -191,7 +204,9 @@ class DrnasTouchInput final : public QObject {
     void showPointer() {
         cursor.setX(std::clamp(cursor.x(),0.0,double(std::max(0,host->width()-1))));
         cursor.setY(std::clamp(cursor.y(),0.0,double(std::max(0,host->height()-1))));
-        QWidget* top=QApplication::activePopupWidget();if(!top)top=QApplication::activeModalWidget();
+        QWidget* top=embeddedDialog && embeddedDialog->isVisible()
+            ? static_cast<QWidget*>(embeddedDialog.data()) : QApplication::activePopupWidget();
+        if(!top)top=QApplication::activeModalWidget();
         if(top && top->rect().contains(top->mapFromGlobal(globalPoint()))) {
             mark->hide();
             if(!dialogMark || dialogMark->parentWidget()!=top) {
@@ -202,9 +217,16 @@ class DrnasTouchInput final : public QObject {
             if(dialogMark)dialogMark->hide();mark->move(cursor.toPoint()-QPoint(12,12));mark->show();mark->raise();
         }
     }
-    void begin(const QPointF& point){relative=true;moved=false;start=last=point;clock.start();}
+    void begin(const QPointF& point) {
+        relative=true;moved=false;start=last=point;clock.start();
+        // Qt global touch coordinates and QMouseEvent positions are LOGICAL
+        // pixels. Do not multiply by devicePixelRatio: GL/FBO alone does that.
+        DrnasDiagnostics::note(QStringLiteral("TOUCH_VIEW_BEGIN global=%1,%2 host=%3x%4 dpr=%5")
+            .arg(point.x()).arg(point.y()).arg(host->width()).arg(host->height())
+            .arg(host->devicePixelRatioF()));
+    }
     void move(const QPointF& point) {
-        if(!relative)return;
+        if(!relative || point==last)return;
         if((point-start).manhattanLength()>QApplication::startDragDistance())moved=true;
         cursor+=point-last;last=point;showPointer();sendMouse(QEvent::MouseMove,Qt::NoButton);
     }
@@ -213,19 +235,112 @@ class DrnasTouchInput final : public QObject {
         if(!moved && clock.elapsed()<350 && buttons==Qt::NoButton) {
             mouseButton(Qt::LeftButton,true);mouseButton(Qt::LeftButton,false);
         }
+        DrnasDiagnostics::note(QStringLiteral("TOUCH_VIEW_END moved=%1 cursor=%2,%3 held=%4")
+            .arg(moved).arg(cursor.x()).arg(cursor.y()).arg(int(buttons)));
     }
+    // Coin3D works in whole wheel notches (angleDelta 120). The old code
+    // issued 60-unit half-notches every 16ms, flooding the event queue and
+    // making touch zoom inconsistent with the desktop navigation handler.
     void zoomStep() {
-        if(!cad || QApplication::activeModalWidget()){queuedZoom=0;zoomTimer.stop();return;}
-        QWidget* view=nullptr;
-        if(auto* mdi=cad->findChild<QMdiArea*>())if(auto* active=mdi->activeSubWindow()) {
-            for(auto* candidate:active->findChildren<QGraphicsView*>())if(candidate->isVisible()){view=candidate->viewport();break;}
+        if(!cad || (embeddedDialog && embeddedDialog->isVisible()) ||
+           QApplication::activeModalWidget() || QApplication::activePopupWidget()) {
+            zoomDeflection=0;zoomTimer.stop();return;
         }
-        if(!view){queuedZoom=0;zoomTimer.stop();return;}
-        const int delta=std::clamp(queuedZoom,-60,60);queuedZoom-=delta;
-        const QPoint local=view->rect().center();
-        QCoreApplication::postEvent(view,new QWheelEvent(local,view->mapToGlobal(local),QPoint(),QPoint(0,delta),
+        if(std::abs(zoomDeflection)<6){zoomTimer.stop();return;}
+        QWidget* view=nullptr;
+        if(auto* mdi=cad->findChild<QMdiArea>())
+            if(auto* active=mdi->activeSubWindow()) {
+                for(auto* candidate:active->findChildren<QGraphicsView*>())
+                    if(candidate->isVisible()) {view=candidate->viewport();break;}
+                if(!view)for(auto* candidate:active->findChildren<QOpenGLWidget*>())
+                    if(candidate->isVisible()){view=candidate;break;}
+            }
+        if(!view || !view->isVisible()){zoomTimer.stop();return;}
+        const int magnitude=std::abs(zoomDeflection);
+        const int stride=magnitude<25?5:magnitude<55?3:magnitude<80?2:1;
+        if(++zoomTicks%stride!=0)return;
+        const QPointF local=view->rect().center();
+        const QPointF global=view->mapToGlobal(local.toPoint());
+        QCoreApplication::postEvent(view,new QWheelEvent(local,global,QPoint(),
+            QPoint(0,zoomDeflection>0?120:-120),
             Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false));
-        if(!queuedZoom)zoomTimer.stop();
+        if(zoomTicks==stride || zoomTicks%32==0)
+            DrnasDiagnostics::note(QStringLiteral("TOUCH_ZOOM notch=%1 view=%2x%3 dpr=%4")
+                .arg(zoomDeflection>0?1:-1).arg(view->width()).arg(view->height())
+                .arg(view->devicePixelRatioF()));
+    }
+    // An upstream desktop QDialog creates a second Android QWindow even when
+    // parented to embedded FreeCAD. For the observed PartDesign Active Body
+    // editor only, turn it into an in-window QWidget BEFORE native creation.
+    // Preserve QDialog::accept/reject/exec semantics and its original owner.
+    void layoutEmbeddedModal() {
+        if(!embeddedDialog || !modalShield || !embeddedDialog->isVisible())return;
+        modalShield->setGeometry(host->rect());
+        modalShield->show();modalShield->raise();
+        const QSize limit(std::max(1,host->width()-24),std::max(1,host->height()-24));
+        embeddedDialog->setMinimumSize(0,0);
+        QSize desired=embeddedDialog->sizeHint();
+        if(!desired.isValid())desired=embeddedDialog->size();
+        embeddedDialog->resize(desired.boundedTo(limit));
+        embeddedDialog->move(std::max(0,(host->width()-embeddedDialog->width())/2),
+                             std::max(0,(host->height()-embeddedDialog->height())/2));
+        embeddedDialog->raise();
+        if(auto* close=modalShield->findChild<QPushButton*>(QStringLiteral("drnasModalClose")))
+            close->setGeometry(std::max(0,host->width()-118),4,114,32);
+        DrnasDiagnostics::note(QStringLiteral("MODAL_EMBED layout=%1x%2 dialog=%3x%4 topLevel=%5")
+            .arg(host->width()).arg(host->height())
+            .arg(embeddedDialog->width()).arg(embeddedDialog->height())
+            .arg(embeddedDialog->isWindow()));
+    }
+    void embedPartDesignModal(QDialog* dialog) {
+        if(!dialog || dialog->property("drnasModalEmbedded").toBool() || !host)return;
+        // Only the specific modal proven to fight QtActivity in device logs.
+        if(!QString::fromLatin1(dialog->metaObject()->className()).contains(QStringLiteral("DlgActiveBody")))
+            return;
+        if(embeddedDialog && embeddedDialog!=dialog)return;
+        originalDialogParent=dialog->parentWidget();
+        originalDialogFlags=dialog->windowFlags();
+        embeddedDialog=dialog;
+        dialog->setProperty("drnasModalEmbedded",true);
+        if(!modalShield) {
+            modalShield=new QWidget(host);
+            modalShield->setObjectName(QStringLiteral("drnasModalShield"));
+            modalShield->setStyleSheet(QStringLiteral("background-color:rgba(10,18,30,175);"));
+            auto* close=new QPushButton(QStringLiteral("× Zatvori"),modalShield);
+            close->setObjectName(QStringLiteral("drnasModalClose"));
+            close->setFocusPolicy(Qt::NoFocus);
+            QObject::connect(close,&QPushButton::clicked,this,[this]{
+                if(embeddedDialog)embeddedDialog->reject();
+            });
+            modalShield->hide();
+        }
+        // Qt::Widget rather than Qt::Dialog is essential: a dialog window
+        // flag creates a separate native surface on this Qt/Android backend.
+        dialog->setParent(host,Qt::Widget);
+        DrnasDiagnostics::note(QStringLiteral("MODAL_EMBED prepared %1 ownedByHost=1")
+            .arg(dialog->objectName()));
+        QPointer<QDialog> guarded(dialog);
+        QObject::connect(dialog,&QObject::destroyed,this,[this,guarded]{
+            if(!guarded && modalShield)modalShield->hide();
+            embeddedDialog.clear();
+            for(auto* control:controls)control->setEnabled(true);
+        });
+    }
+    void finishEmbeddedModal(QDialog* dialog) {
+        if(!dialog || dialog!=embeddedDialog)return;
+        if(modalShield)modalShield->hide();
+        const QPointer<QDialog> guarded(dialog);
+        const QPointer<QWidget> original=originalDialogParent;
+        const Qt::WindowFlags flags=originalDialogFlags;
+        embeddedDialog.clear();
+        // Restore ownership only after the QDialog hide/exec path completes.
+        QTimer::singleShot(0,this,[guarded,original,flags]{
+            if(!guarded)return;
+            guarded->setProperty("drnasModalEmbedded",false);
+            guarded->setParent(original,flags);
+            guarded->hide();
+        });
+        DrnasDiagnostics::note(QStringLiteral("MODAL_EMBED finished; native focus conflict released"));
     }
     void fitDialog(QDialog* dialog) {
         if(!dialog || !dialog->isVisible() || !dialog->parentWidget() ||
@@ -276,16 +391,26 @@ protected:
         if(object==host && type==QEvent::Resize) {
             releaseAll();for(auto* control:controls)control->restore();
             cursor=QPointF(host->width()/2.0,host->height()/2.0);scheduleRepair();
+            if(embeddedDialog)layoutEmbeddedModal();
+            DrnasDiagnostics::note(QStringLiteral("TOUCH_VIEW_RESIZE logical=%1x%2 dpr=%3")
+                .arg(host->width()).arg(host->height()).arg(host->devicePixelRatioF()));
         }
         if((type==QEvent::Show || type==QEvent::Resize) &&
             (qobject_cast<QDialog*>(object)||qobject_cast<QMdiSubWindow*>(object)||
              (widget && widget->objectName().startsWith(QStringLiteral("Overlay")))))scheduleRepair();
         if(auto* dialog=qobject_cast<QDialog*>(object)) {
-            if(type==QEvent::Show && dialog->isModal()) {
+            // Polish is emitted before QWidget allocates an Android native
+            // QWindow, unlike Show which may already be too late.
+            if(type==QEvent::Polish)embedPartDesignModal(dialog);
+            if(type==QEvent::Show && dialog==embeddedDialog) {
+                QTimer::singleShot(0,this,[this]{layoutEmbeddedModal();});
+            }
+            if(type==QEvent::Show && (dialog->isModal() || dialog==embeddedDialog)) {
                 releaseAll();mark->hide();
                 for(auto* control:controls)control->setEnabled(false);
                 DrnasDiagnostics::note(QStringLiteral("MODAL_BEGIN %1; host controls suspended").arg(dialog->objectName()));
             } else if(type==QEvent::Hide || type==QEvent::Destroy) {
+                if(dialog==embeddedDialog)finishEmbeddedModal(dialog);
                 QTimer::singleShot(0,this,[this] {
                     if(QApplication::activeModalWidget())return;
                     for(auto* control:controls)control->setEnabled(true);
@@ -332,9 +457,18 @@ public:
         auto* zoom=new QSlider(Qt::Horizontal,zoomGroup);zoomControl=zoom;zoom->setRange(-100,100);zoom->setValue(0);zoom->setFocusPolicy(Qt::NoFocus);
         zoom->setToolTip(QStringLiteral("Zoom — vraća se u sredinu"));zoomGroup->body->addWidget(zoom,1);
         zoom->setStyleSheet(QStringLiteral("QSlider::groove:horizontal{height:5px;background:#6d91ab;}QSlider::handle:horizontal{background:#73d9ec;width:20px;margin:-9px 0;border-radius:6px;}"));
-        connect(zoom,&QSlider::sliderMoved,this,[this](int value){queuedZoom=std::clamp(queuedZoom+(value-previousZoom)*12,-1200,1200);previousZoom=value;if(queuedZoom)zoomTimer.start();});
-        connect(zoom,&QSlider::sliderReleased,this,[this,zoom]{QSignalBlocker block(zoom);zoom->setValue(0);previousZoom=0;});
-        zoomTimer.setInterval(16);connect(&zoomTimer,&QTimer::timeout,this,[this]{zoomStep();});
+        connect(zoom,&QSlider::valueChanged,this,[this](int value) {
+            const int next=std::abs(value)<6?0:value;
+            if(zoomDeflection==next)return;
+            zoomDeflection=next;zoomTicks=0;
+            if(zoomDeflection)zoomTimer.start();
+            else zoomTimer.stop();
+        });
+        connect(zoom,&QSlider::sliderReleased,this,[this,zoom] {
+            QSignalBlocker block(zoom);zoom->setValue(0);
+            zoomDeflection=0;zoomTicks=0;zoomTimer.stop();
+        });
+        zoomTimer.setInterval(65);connect(&zoomTimer,&QTimer::timeout,this,[this]{zoomStep();});
         qApp->installEventFilter(this);scheduleRepair();showPointer();
         DrnasDiagnostics::note(QStringLiteral("INPUT minimal: movable L/R + zoom; direct dialogs; relative CAD viewport"));
     }
