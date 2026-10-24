@@ -39,7 +39,7 @@ def stage(source, destination):
         count += 1
     count += copy_tree(material / "materialtools", destination / "Mod/Material/materialtools")
     # InitGui scripts resolve workbench icons via the same ResourceDir.
-    for module in ("Part", "Sketcher", "PartDesign"):
+    for module in ("Material", "Part", "Sketcher", "PartDesign"):
         count += copy_tree(source / "src/Mod" / module / "Gui/Resources",
                            destination / "share/Mod" / module / "Resources")
     root = destination / "share/Mod/Material/Resources"
@@ -53,6 +53,8 @@ def stage(source, destination):
             raise SystemExit(f"Missing or mismatched upstream material UUID: {relative}")
     if not (root / "Materials/Standard/Default.FCMat").is_file():
         raise SystemExit("Missing default physical material")
+    if not (root / "icons/MaterialWorkbench.svg").is_file():
+        raise SystemExit("Missing original Material workbench icon")
     print(f"PASS: staged {count} original material/model/icon resources; default UUIDs verified")
 
 
