@@ -452,8 +452,10 @@ class DrnasFloatingCommands : public QObject {
     bool dragging = false;
     void constrain() {
         const int w = std::max(1, std::min(460, host->width() - 12));
-        panel->setFixedWidth(w);
-        panel->adjustSize();
+        const int h = std::max(1, std::min(360, host->height() - 52));
+        // Keep the title and close button inside the actual host, even on
+        // a short landscape display. Only the command list scrolls.
+        panel->setFixedSize(w, h);
         panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
                     std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
         launcher->setGeometry(std::max(0, host->width()/2-28),
@@ -497,14 +499,30 @@ public:
         close->setFixedSize(34,30);
         row->addWidget(title,1); row->addWidget(close);
         layout->addLayout(row);
-        toolbar->setParent(panel);
-        toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        layout->addWidget(toolbar);
+        auto* scroll = new QScrollArea(panel);
+        scroll->setObjectName(QStringLiteral("drnasFloatingCommandsScroll"));
+        scroll->setWidgetResizable(true);
+        scroll->setMinimumSize(0, 0);
+        toolbar->setOrientation(Qt::Vertical);
+        toolbar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+        // QToolBar otherwise hides excess actions behind its extension menu.
+        // Preserve its full vertical extent inside the scrollable child.
+        toolbar->setMinimumHeight(toolbar->sizeHint().height());
+        scroll->setWidget(toolbar);
+        layout->addWidget(scroll, 1);
         launcher = new QPushButton(QStringLiteral("Tools"), host);
         launcher->setObjectName(QStringLiteral("drnasFloatingCommandsLauncher"));
         launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
         connect(launcher, &QPushButton::clicked, this, [this] {
-            panel->setVisible(!panel->isVisible()); constrain();
+            const bool opening = panel->isHidden();
+            constrain();
+            panel->setVisible(opening);
+            if (opening) {
+                panel->raise();
+                DrnasDiagnostics::note(QStringLiteral("TOOLS opened inside host: panel=%1,%2 %3x%4 host=%5x%6")
+                    .arg(panel->x()).arg(panel->y()).arg(panel->width()).arg(panel->height())
+                    .arg(host->width()).arg(host->height()));
+            }
         });
         connect(close, &QPushButton::clicked, panel, &QWidget::hide);
         host->installEventFilter(this);
