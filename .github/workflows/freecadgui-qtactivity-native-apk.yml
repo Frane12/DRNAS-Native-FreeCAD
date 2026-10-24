@@ -249,6 +249,29 @@ jobs:
           cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
           python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
 
+      - name: Mandatory NumPy ARM64 / CPython 3.14 dependency preflight
+        run: |
+          set -euo pipefail
+          # Never mistake a host x86_64 NumPy for an Android extension.
+          pyroot="out/full-deps/python/lib/python3.14/site-packages"
+          numpy="$pyroot/numpy"
+          if [ ! -f "$numpy/__init__.py" ]; then
+            echo "::error::NumPy missing for embedded Android CPython 3.14. A genuine Android ARM64 NumPy build is required before producing a test APK."
+            exit 1
+          fi
+          mapfile -t extensions < <(find "$numpy" -type f -name '*.so' | sort)
+          if [ "${#extensions[@]}" -eq 0 ]; then
+            echo "::error::NumPy has no compiled extensions; pure Python files alone are insufficient."
+            exit 1
+          fi
+          for ext in "${extensions[@]}"; do
+            readelf -h "$ext" | grep -q 'Machine:.*AArch64' || { echo "::error::Non-ARM64 NumPy extension: $ext"; exit 1; }
+            if readelf -d "$ext" | grep -Eq 'libc\\.so\\.6|ld-linux'; then
+              echo "::error::Linux/glibc NumPy extension cannot run on Android: $ext"; exit 1
+            fi
+          done
+          echo "PASS: Android ARM64 NumPy binary preflight (${#extensions[@]} extensions)"
+
       - name: Stage native FreeCADGui and all verified Android dependencies
         env:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
