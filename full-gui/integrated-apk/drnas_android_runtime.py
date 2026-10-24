@@ -112,7 +112,7 @@ def _drnas_part_commands():
     expected = ('Part_ToleranceSet', 'Part_CompoundFilter', 'Part_ExplodeCompound',
                 'Part_XOR', 'Part_Slice', 'Part_SliceApart', 'Part_BooleanFragments',
                 'Part_JoinCutout', 'Part_JoinEmbed', 'Part_JoinConnect', 'Part_Tube',
-                'Std_MassProperties')
+                'Std_MassProperties', 'Std_Measure')
     _drnas_mark('COMMANDS missing=' + repr([name for name in expected if name not in commands]))
     _drnas_mark('ACTIVE WORKBENCH ' + Gui.activeWorkbench().name())
 

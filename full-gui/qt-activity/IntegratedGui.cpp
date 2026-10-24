@@ -1187,6 +1187,23 @@ void recordOriginalGuiStage(const char* stageName)
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
     }
+    // The standard FreeCAD toolbar contains Std_Measure/Std_MassProperties.
+    // Their real commands are registered by the native MeasureGui Python
+    // extension, not by FreeCADGui or PartGui.  Load it after Gui::Application
+    // exists but before MainWindow and StartupPostProcess create toolbars.
+    if (stage == QStringLiteral("Original Gui::MainWindow constructor")) {
+        QString measureError;
+        if (!runOriginalFreeCADPython(QStringLiteral(
+                "import FreeCADGui as Gui\n"
+                "import MeasureGui\n"
+                "_drnas_measure_missing = [name for name in ('Std_Measure', 'Std_MassProperties') if name not in Gui.listCommands()]\n"
+                "_drnas_mark('MEASURE REGISTER missing=' + repr(_drnas_measure_missing))\n"
+                "if _drnas_measure_missing:\n"
+                "    raise RuntimeError('MeasureGui command registration failed: ' + repr(_drnas_measure_missing))\n"
+                ), measureError)) {
+            DrnasDiagnostics::note(QStringLiteral("REAL MEASURE INIT FAILED: ") + measureError);
+        }
+    }
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
         stage.contains(QStringLiteral("OpenGL"), Qt::CaseInsensitive)) {
