@@ -18,6 +18,9 @@ jobs:
           repository: numpy/numpy
           ref: v2.5.4
           persist-credentials: false
+          submodules: recursive
+      - name: Verify vendored Meson submodule
+        run: test -s vendored-meson/meson/meson.py
       - name: Host build tools
         run: |
           python3 -m pip install --upgrade pip
@@ -29,6 +32,9 @@ jobs:
           CIBW_ARCHS_ANDROID: arm64_v8a
           CIBW_ENVIRONMENT_ANDROID: 'NPY_DISABLE_SVML=1'
           CIBW_BUILD_VERBOSITY: '1'
+          # Upstream wheel hooks otherwise download Linux x86_64 OpenBLAS.
+          CIBW_BEFORE_BUILD: 'true'
+          CIBW_CONFIG_SETTINGS: 'setup-args=-Dblas=none setup-args=-Dlapack=none setup-args=-Dallow-noblas=true'
         run: python3 -m cibuildwheel --platform android --archs arm64_v8a --output-dir wheelhouse
       - name: Verify wheel tag and binary ABI
         run: |
