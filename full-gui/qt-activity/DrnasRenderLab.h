@@ -14,6 +14,8 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLContext>
 #include <QMdiArea>
+#include <QMdiSubWindow>
+#include <QMetaObject>
 #include <QPointer>
 #include <QStandardPaths>
 #include <QTimer>
@@ -78,6 +80,52 @@ class DrnasRenderLab final : public QObject {
     bool watching=false, busy=false, axes=false, nativeStages=false;
     QActionGroup* stages;
     QAction* axesAction;
+    int coinWindowChecks=0;
+    void inspectCoinWindow(const QString& phase) {
+        if (!upstream) return;
+        auto* mdi=upstream->findChild<QMdiArea*>();
+        if (!mdi) { DrnasDiagnostics::note(QStringLiteral("COIN_WINDOW %1 no MDI area").arg(phase)); return; }
+        const auto windows=mdi->subWindowList();
+        DrnasDiagnostics::note(QStringLiteral("COIN_WINDOW %1 mdi=%2x%3 subwindows=%4 active=%5")
+            .arg(phase).arg(mdi->width()).arg(mdi->height()).arg(windows.size())
+            .arg(mdi->activeSubWindow()!=nullptr));
+        for (auto* window:windows) {
+            const auto glViews=window->findChildren<QOpenGLWidget*>();
+            DrnasDiagnostics::note(QStringLiteral("COIN_WINDOW candidate title=%1 visible=%2 glViews=%3 size=%4x%5")
+                .arg(window->windowTitle()).arg(window->isVisible()).arg(glViews.size())
+                .arg(window->width()).arg(window->height()));
+            if (glViews.isEmpty()) continue;
+            if (phase==QStringLiteral("foreground")) {
+                // Original FreeCAD document subwindow, NOT a duplicated/reparented GL widget.
+                // Keeping it inside the existing Android QWindow avoids the known Qt
+                // 'touch event received for non-existing window' lifecycle failure.
+                window->show();
+                mdi->setActiveSubWindow(window);
+                window->raise();
+                window->setFocus(Qt::OtherFocusReason);
+                for (auto* gl:glViews) {
+                    DrnasDiagnostics::note(QStringLiteral("COIN_WINDOW GL valid=%1 visible=%2 size=%3x%4 fbo=%5")
+                        .arg(gl->isValid()).arg(gl->isVisible()).arg(gl->width()).arg(gl->height())
+                        .arg(gl->defaultFramebufferObject()));
+                    gl->update();
+                }
+                return;
+            }
+        }
+        if (phase==QStringLiteral("foreground"))
+            DrnasDiagnostics::note(QStringLiteral("COIN_WINDOW WARNING: no original Coin GL document subwindow; create/open a document first"));
+    }
+    void auditWarnings() {
+        DrnasDiagnostics::note(QStringLiteral("WARN_AUDIT BEGIN Std_Measure Std_MassProperties"));
+        execute(QStringLiteral(
+            "import FreeCADGui as Gui, traceback\\n"
+            "for _name in ('Std_Measure','Std_MassProperties'):\\n"
+            "    try:\\n"
+            "        print('DRNAS WARN_AUDIT command', _name, 'registered=', Gui.getCommand(_name) is not None, flush=True)\\n"
+            "    except Exception as _e:\\n"
+            "        print('DRNAS WARN_AUDIT exception', _name, repr(_e), flush=True)\\n"));
+        DrnasDiagnostics::note(QStringLiteral("WARN_AUDIT END (inspect Python stdout and FreeCAD report view)"));
+    }
 
     QString argument() const {
         QJsonArray a; a.append(directory);
@@ -177,6 +225,7 @@ public:
         QObject::connect(coinButton,&QAction::triggered,this,[this] {
             DrnasDiagnostics::note(QStringLiteral("ONE_TAP COIN3D_FULL requested (stage 3; NaviCube crash guard retained)"));
             setStage(3);
+            QTimer::singleShot(350,this,[this]{inspectCoinWindow(QStringLiteral("foreground"));});
         });
         toolbar->addSeparator();
         stages=new QActionGroup(this);
@@ -203,6 +252,7 @@ public:
         qputenv("DRNAS_RENDER_STAGE","0");
         qputenv("DRNAS_RENDER_AXES","0");
         poll.setInterval(750);
+        QTimer::singleShot(2400,this,[this]{auditWarnings();inspectCoinWindow(QStringLiteral("startup"));});
         QObject::connect(&poll,&QTimer::timeout,this,[this]{tick();});
         QObject::connect(qApp,&QCoreApplication::aboutToQuit,this,[this]{poll.stop();});
         // The toolbar is installed before Gui startup finishes. Delay allocation
@@ -264,5 +314,7 @@ public:
             });
         }
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 QUEUED").arg(stage));
+        if (stage>=1 && stage<=3)
+            QTimer::singleShot(450,this,[this,value]{if(stage==value) inspectCoinWindow(QStringLiteral("foreground"));});
     }
 };
