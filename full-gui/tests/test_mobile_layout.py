@@ -49,6 +49,14 @@ assert 'installOriginalFreeCADTouchControls(shell, window)' not in early_embed
 assert 'installOriginalFreeCADTouchControls(this,freecadWindow)' in gui
 assert 'settings.setValue(QStringLiteral("nativeProbe/pending"), result == 0)' in gui
 assert 'if(property("drnasAutoStartPartDesign").toBool())' in gui
+# Android layout must not run at 5-6 Hz on a static viewport: dock
+# visibility/area change as a SIDE EFFECT of the layout pass.
+assert 'previousLayout=layout;' in gui
+assert 'needsDockRepair' not in gui
+assert 'name.contains(QStringLiteral("selection"))' in gui
+assert 'MOBILE_LAYOUT_STABLE' in gui
+assert 'const bool essential=!bar->findChildren<QComboBox*>().isEmpty()' in gui
+
 
 # A real Android 16 ARM64 log captured a native SIGSEGV at import MeasureGui
 # before the MainWindow existed. Do not regress to eager import from the stage
@@ -78,6 +86,9 @@ for token in (
     'TOUCH_PAN_END',
     'mouseButton(Qt::MiddleButton,false)',
     'suppressAfterPan',
+    'lastViewportTouch.start()',
+    'lastViewportTouch.elapsed()<650',
+    'TOUCH_TAP_IGNORED pointer outside viewport',
 ):
     assert token in touch, f"Android modal/touch navigation contract missing: {token}"
 assert 'queuedZoom' not in touch and 'previousZoom' not in touch, (
