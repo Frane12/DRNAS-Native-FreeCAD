@@ -1146,9 +1146,9 @@ void recordOriginalGuiStage(const char* stageName)
         if (hasMeasure && hasMeasureGui) {
             QString error;
             const bool ready=runOriginalFreeCADPython(QStringLiteral(
-                "import MeasureGui\\n"
-                "import FreeCADGui as Gui\\n"
-                "assert all(name in Gui.listCommands() for name in ('Std_Measure','Std_MassProperties'))\\n"),error);
+                "import MeasureGui\n"
+                "import FreeCADGui as Gui\n"
+                "assert all(name in Gui.listCommands() for name in ('Std_Measure','Std_MassProperties'))\n"),error);
             DrnasDiagnostics::note(ready ? QStringLiteral("MEASURE: native MeasureGui loaded; both Std_ commands registered")
                                          : QStringLiteral("MEASURE: native command registration failed: ")+error);
         } else {
