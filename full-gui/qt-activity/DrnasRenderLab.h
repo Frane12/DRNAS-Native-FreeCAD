@@ -10,6 +10,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QOpenGLWidget>
+#include <QOpenGLFunctions>
+#include <QOpenGLContext>
 #include <QMdiArea>
 #include <QPointer>
 #include <QStandardPaths>
@@ -21,6 +24,37 @@
 #include <dlfcn.h>
 #include <functional>
 
+// Independent Qt framebuffer probe. Deliberately does not call Coin/GL4ES:
+// if this paints, Qt composition works and the fault is further upstream.
+class DrnasFboProbe final : public QOpenGLWidget, protected QOpenGLFunctions {
+public:
+    explicit DrnasFboProbe(QWidget* parent):QOpenGLWidget(parent) {
+        setObjectName(QStringLiteral("drnasQtFboProbe"));
+    }
+protected:
+    void initializeGL() override {
+        initializeOpenGLFunctions();
+        DrnasDiagnostics::note(QStringLiteral("FBO_PROBE INIT valid=%1 context=%2")
+            .arg(isValid()).arg(QOpenGLContext::currentContext()!=nullptr));
+    }
+    void paintGL() override {
+        GLint before=0, after=0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING,&before);
+        const GLenum status=glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glViewport(0,0,width()*devicePixelRatioF(),height()*devicePixelRatioF());
+        glClearColor(0.82f,0.13f,0.65f,1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        const GLenum error=glGetError();
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING,&after);
+        static int samples=0;
+        if (samples++<8) DrnasDiagnostics::note(QStringLiteral(
+            "FBO_PROBE PAINT qtFbo=%1 boundBefore=%2 boundAfter=%3 status=0x%4 error=0x%5 logical=%6x%7 dpr=%8")
+            .arg(defaultFramebufferObject()).arg(before).arg(after)
+            .arg(uint(status),0,16).arg(uint(error),0,16)
+            .arg(width()).arg(height()).arg(devicePixelRatioF()));
+    }
+};
+
 // A child overlay in the original MDI area. No native window, reparenting of
 // FreeCAD views, demo geometry, or startup GL allocation. Only one view is shown.
 class DrnasRenderLab final : public QObject {
@@ -28,6 +62,7 @@ class DrnasRenderLab final : public QObject {
     QPointer<QWidget> panel;
     QPointer<QWidget> areaViewport;
     QPointer<NativeOcctViewport> reference;
+    QPointer<DrnasFboProbe> fboProbe;
     QPointer<QLabel> status;
     std::function<bool(const QString&, QString&)> python;
     QTimer poll;
@@ -110,8 +145,10 @@ class DrnasRenderLab final : public QObject {
     }
 protected:
     bool eventFilter(QObject* object,QEvent* event) override {
-        if (object==areaViewport && event->type()==QEvent::Resize && panel)
-            panel->setGeometry(areaViewport->rect());
+        if (object==areaViewport && event->type()==QEvent::Resize) {
+            if (panel) panel->setGeometry(areaViewport->rect());
+            if (fboProbe) fboProbe->setGeometry(areaViewport->rect());
+        }
         return false;
     }
 public:
@@ -123,12 +160,13 @@ public:
         const bool supported=dlsym(RTLD_DEFAULT,"drnas_render_stages_version")!=nullptr;
         nativeStages=supported;
         const QStringList labels={QStringLiteral("0 Naš prikaz"),QStringLiteral("1 Coin pozadina"),
-            QStringLiteral("2 Coin tijelo"),QStringLiteral("3 Coin izgled"),QStringLiteral("4 Coin dodaci")};
+            QStringLiteral("2 Coin tijelo"),QStringLiteral("3 Coin izgled"),QStringLiteral("4 Coin dodaci"),
+            QStringLiteral("5 Qt FBO test")};
         for (int i=0;i<labels.size();++i) {
             auto* action=toolbar->addAction(labels[i]);
             action->setObjectName(QStringLiteral("drnasRenderStage%1").arg(i));
             action->setCheckable(true); action->setData(i); stages->addAction(action);
-            action->setEnabled(i==0 || supported);
+            action->setEnabled(i==0 || i==5 || supported);
             if (i==0) action->setChecked(true);
             QObject::connect(action,&QAction::triggered,this,[this,i]{setStage(i);});
         }
@@ -157,10 +195,19 @@ public:
         axesAction->setChecked(axes);
         qputenv("DRNAS_RENDER_STAGE",QByteArray::number(stage));
         qputenv("DRNAS_RENDER_AXES",axes && stage==4 ? "1" : "0");
-        qputenv("DRNAS_ENABLE_COIN_REDRAW",stage==0 ? "0" : "1");
+        qputenv("DRNAS_ENABLE_COIN_REDRAW",(stage==0 || stage==5) ? "0" : "1");
+        if (fboProbe) fboProbe->hide();
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 axes=%2 BEGIN").arg(stage).arg(axes));
         if (stage==0) tick(true);
-        else {
+        else if (stage==5) {
+            if (panel) panel->hide();
+            if (ensurePanel() && areaViewport) {
+                if (!fboProbe) fboProbe=new DrnasFboProbe(areaViewport);
+                fboProbe->setGeometry(areaViewport->rect());
+                fboProbe->show(); fboProbe->raise(); fboProbe->update();
+                DrnasDiagnostics::note(QStringLiteral("FBO_PROBE ACTIVE: magenta expected; Coin disabled"));
+            }
+        } else {
             if (panel) panel->hide();
             execute(QStringLiteral(
                 "import FreeCAD as App, FreeCADGui as Gui\n"
