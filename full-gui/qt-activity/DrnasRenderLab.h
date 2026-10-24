@@ -166,7 +166,9 @@ public:
                 "import FreeCAD as App, FreeCADGui as Gui\n"
                 "App.ParamGet('User parameter:BaseApp/Preferences/View').SetBool('ShowNaviCube', %1)\n"
                 "if Gui.activeDocument() is not None:\n"
-                "    Gui.activeDocument().activeView().redraw()\n").arg(stage==4 ? QStringLiteral("True") : QStringLiteral("False")));
+                "    Gui.activeDocument().activeView().setAxisCross(%2)\n"
+                "    Gui.activeDocument().activeView().redraw()\n").arg(stage==4 ? QStringLiteral("True") : QStringLiteral("False"),
+                    axes && stage==4 ? QStringLiteral("True") : QStringLiteral("False")));
         }
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 QUEUED").arg(stage));
     }
