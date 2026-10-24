@@ -32,6 +32,7 @@
 #include <QMenuBar>
 #include <QPushButton>
 #include <QPointer>
+#include <QPixmap>
 #include <QScreen>
 #include <QOpenGLContext>
 #include <QOpenGLWidget>
@@ -501,8 +502,8 @@ class DrnasFloatingCommands : public QObject {
         panel->adjustSize();
         panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
                     std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
-        launcher->setGeometry(std::max(0, host->width()/2-28),
-                              std::max(0, host->height()-40), 56, 34);
+        if(launcher->parentWidget()==host)
+            launcher->setGeometry(std::max(0,host->width()/2-28),std::max(0,host->height()-40),56,34);
         panel->raise(); launcher->raise();
     }
 protected:
@@ -545,7 +546,11 @@ public:
         toolbar->setParent(panel);
         toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         layout->addWidget(toolbar);
-        launcher = new QPushButton(QStringLiteral("Tools"), host);
+        auto* cadWindow=qobject_cast<QMainWindow*>(host->centralWidget());
+        QWidget* launcherParent=cadWindow ? static_cast<QWidget*>(cadWindow->statusBar()) : host;
+        launcher = new QPushButton(QStringLiteral("Alati"),launcherParent);
+        launcher->setFixedSize(56,28);
+        if(cadWindow)cadWindow->statusBar()->addPermanentWidget(launcher);
         launcher->setObjectName(QStringLiteral("drnasFloatingCommandsLauncher"));
         launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
         connect(launcher, &QPushButton::clicked, this, [this] {
@@ -1386,6 +1391,12 @@ public:
 #ifdef DRNAS_FREECAD_FULL_INTEGRATION
         setProperty("drnasAutoStartPartDesign", qgetenv("DRNAS_AUTOSTART") != QByteArray("0"));
 #endif
+        auto restoreStartupUi=[safe=QPointer<QWidget>(central)] {
+            if(!safe)return;
+            if(auto* splash=safe->findChild<QWidget*>(QStringLiteral("drnasStartupSplash")))splash->hide();
+            for(auto* child:safe->findChildren<QWidget*>(QString(),Qt::FindDirectChildrenOnly))
+                if(child->objectName()!=QStringLiteral("drnasStartupSplash"))child->show();
+        };
         connect(launchOriginal, &QPushButton::clicked, this,
                 [this, launchOriginal, nativeStatus] {
             launchOriginal->setEnabled(false);
@@ -1608,7 +1619,7 @@ public:
         if (property("drnasAutoStartPartDesign").toBool()) {
             // Wait until the QtActivity surface and event loop are ready.
             // Reuse actual button handlers; never fabricate PASS results.
-            QTimer::singleShot(350, this, [this, runProbe, launchOriginal] {
+            QTimer::singleShot(350, this, [this, runProbe, launchOriginal, restoreStartupUi] {
                 DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 BEGIN: load genuine FreeCAD libraries; QT_SCALE_FACTOR=%1")
                     .arg(QString::fromLatin1(qgetenv("QT_SCALE_FACTOR"))));
                 if (auto* screen = QGuiApplication::primaryScreen()) {
@@ -1620,11 +1631,13 @@ public:
                 if (!launchOriginal->isEnabled()) {
                     setProperty("drnasAutoStartPartDesign", false);
                     DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 FAILED: GUI launch remains disabled"));
+                    restoreStartupUi();
                     return;
                 }
                 DrnasDiagnostics::note(QStringLiteral("AUTO 1/3 PASS: libraries loaded"));
                 DrnasDiagnostics::note(QStringLiteral("AUTO 2/3 BEGIN: original FreeCAD GUI"));
                 launchOriginal->click();
+                if(!originalFreeCADEmbeddedBeforeShow)restoreStartupUi();
             });
         }
         auto* plainStatus = new QLabel(
@@ -1694,6 +1707,23 @@ public:
 #endif
 
         setCentralWidget(central);
+#ifdef DRNAS_FREECAD_FULL_INTEGRATION
+        if(qgetenv("DRNAS_AUTOSTART")!=QByteArray("0")) {
+            for(auto* child:central->findChildren<QWidget*>(QString(),Qt::FindDirectChildrenOnly))child->hide();
+            auto* splash=new QWidget(central);splash->setObjectName(QStringLiteral("drnasStartupSplash"));
+            splash->setStyleSheet(QStringLiteral("background:#102337;color:#e8f2fa;"));
+            central->setStyleSheet(QStringLiteral("background:#102337;"));
+            auto* branding=new QVBoxLayout(splash);branding->addStretch();
+            auto* logo=new QLabel(splash);logo->setAlignment(Qt::AlignCenter);
+            logo->setPixmap(QPixmap(QStringLiteral("assets:/drnas-splash.png")).scaled(132,132,Qt::KeepAspectRatio,Qt::SmoothTransformation));
+            branding->addWidget(logo);
+            auto* title=new QLabel(QStringLiteral("DRNAS FreeCAD"),splash);title->setAlignment(Qt::AlignCenter);
+            title->setStyleSheet(QStringLiteral("font-size:28px;font-weight:bold;padding:12px;"));branding->addWidget(title);
+            auto* loading=new QLabel(QStringLiteral("Pokretanje radnog prostora…"),splash);loading->setAlignment(Qt::AlignCenter);
+            loading->setStyleSheet(QStringLiteral("color:#94cddd;font-size:14px;"));branding->addWidget(loading);branding->addStretch();
+            outer->addWidget(splash,10);splash->show();
+        }
+#endif
 #ifndef DRNAS_FREECAD_FULL_INTEGRATION
         auto* fileMenu=menuBar()->addMenu(QStringLiteral("File"));
         auto* save=fileMenu->addAction(QStringLiteral("Save FCStd (integration pending)"));

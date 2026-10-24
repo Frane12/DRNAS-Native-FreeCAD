@@ -1,145 +1,125 @@
 package org.drnas.freecad.bootstrap;
 
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.system.Os;
-import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import java.util.Locale;
+import java.io.File;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
-/** Runs before Qt starts, so display scaling and touch coordinates agree. */
+/** Lightweight splash; recovery is offered only for an actual recorded crash/ANR. */
 public final class StartupActivity extends Activity {
-    private static final int[] LONG_EDGES = {0, 960, 1280, 1600, 1920};
-    private static final String PREFS = "drnas_startup_display";
-    private RadioGroup choices;
-    private RadioGroup viewportTests;
-    private SharedPreferences preferences;
-    private DisplayMetrics metrics;
     private boolean starting;
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
-
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
-        metrics = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
-        int saved = preferences.getInt("longEdge", 0);
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(20), dp(16), dp(20), dp(20));
-        panel.setBackgroundColor(Color.rgb(17, 31, 49));
-        scroll.addView(panel);
-        TextView title = new TextView(this);
-        title.setText("DRNAS FreeCAD");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(26);
-        panel.addView(title);
-        TextView help = new TextView(this);
-        help.setText("Odaberi radnu rezoluciju prije pokretanja. Veća rezolucija daje više prostora i manje kontrole.\n\nNakon pokretanja automatski se otvara Part Design.");
-        help.setTextColor(Color.rgb(215, 232, 245));
-        help.setTextSize(17);
-        help.setPadding(0, dp(12), 0, dp(8));
-        panel.addView(help);
-        choices = new RadioGroup(this);
-        int nativeWidth = Math.round(metrics.widthPixels / metrics.density);
-        int nativeHeight = Math.round(metrics.heightPixels / metrics.density);
-        for (int edge : LONG_EDGES) {
-            RadioButton radio = new RadioButton(this);
-            radio.setId(View.generateViewId());
-            radio.setTag(edge);
-            int width = nativeWidth;
-            int height = nativeHeight;
-            if (edge != 0) {
-                double ratio = (double) edge / Math.max(nativeWidth, nativeHeight);
-                width = (int) Math.round(nativeWidth * ratio);
-                height = (int) Math.round(nativeHeight * ratio);
-            }
-            radio.setText((edge == 0 ? "Automatski — " : "") + width + " × " + height);
-            radio.setTextSize(19);
-            radio.setTextColor(Color.WHITE);
-            radio.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(110, 205, 255)));
-            radio.setMinHeight(dp(56));
-            choices.addView(radio);
-            if (edge == saved) radio.setChecked(true);
-        }
-        if (choices.getCheckedRadioButtonId() == -1) {
-            ((RadioButton) choices.getChildAt(0)).setChecked(true);
-        }
-        panel.addView(choices);
-        TextView testHelp = new TextView(this);
-        testHelp.setText("Proba prikaza — odaberi prije pokretanja");
-        testHelp.setTextColor(Color.rgb(215, 232, 245));
-        testHelp.setTextSize(17);
-        testHelp.setPadding(0, dp(12), 0, dp(4));
-        // The proven viewport configuration is automatic in the clean app.
-        viewportTests = new RadioGroup(this);
-        for (String mode : new String[]{"A", "B"}) {
-            RadioButton radio = new RadioButton(this);
-            radio.setId(View.generateViewId());
-            radio.setTag(mode);
-            radio.setText(mode.equals("A") ? "TEST A — postojeći izračun" : "TEST B — dimenzije GL prikaza");
-            radio.setTextColor(Color.WHITE);
-            radio.setTextSize(17);
-            radio.setMinHeight(dp(48));
-            radio.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(110, 205, 255)));
-            viewportTests.addView(radio);
-            if (mode.equals("A")) radio.setChecked(true);
-        }
-        viewportTests.setVisibility(View.GONE);
-        panel.addView(viewportTests);
-        Button start = new Button(this);
-        start.setText("POKRENI FREECAD");
-        start.setTextSize(19);
-        start.setMinHeight(dp(64));
-        start.setOnClickListener(v -> launch(true));
-        panel.addView(start);
-        Button safe = new Button(this);
-        safe.setText("SIGURNI NAČIN / COPY LOG");
-        safe.setTextSize(17);
-        safe.setMinHeight(dp(56));
-        safe.setOnClickListener(v -> launch(false));
-        panel.addView(safe);
-        setContentView(scroll);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().getDecorView().setSystemUiVisibility(0x1706);
+        if (hasUnseenCrash()) showRecovery(); else showSplash();
     }
-
-    private void launch(boolean automatic) {
-        if (starting) return;
-        RadioButton selected = findViewById(choices.getCheckedRadioButtonId());
-        int edge = (Integer) selected.getTag();
-        double logicalLong = Math.max(metrics.widthPixels, metrics.heightPixels) / (double) metrics.density;
-        double scale = edge == 0 ? 1.0 : logicalLong / edge;
-        // Android's Os.setenv updates the native process environment before
-        // QtActivity loads Qt. No root, display-mode override or extra GL surface.
+    private boolean hasUnseenCrash() {
+        if (Build.VERSION.SDK_INT < 30) return false;
         try {
-            Os.setenv("QT_SCALE_FACTOR", String.format(Locale.ROOT, "%.6f", scale), true);
-            Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
-            RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
-            Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
-            Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "1", true);
-        } catch (android.system.ErrnoException error) {
-            Log.e("DRNAS", "Startup display configuration failed", error);
-            return;
-        }
-        preferences.edit().putInt("longEdge", edge).apply();
-        starting = true;
-        Intent intent = new Intent();
-        intent.setClassName(getPackageName(), "org.qtproject.qt.android.bindings.QtActivity");
-        startActivity(intent);
-        finish();
+            ActivityManager manager = (ActivityManager)getSystemService(ACTIVITY_SERVICE);
+            List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(getPackageName(),0,1);
+            if (exits.isEmpty()) return false;
+            ApplicationExitInfo exit = exits.get(0);
+            int reason = exit.getReason();
+            boolean crashed = reason == ApplicationExitInfo.REASON_CRASH ||
+                reason == ApplicationExitInfo.REASON_CRASH_NATIVE || reason == ApplicationExitInfo.REASON_ANR;
+            SharedPreferences prefs = getSharedPreferences("drnas_recovery",MODE_PRIVATE);
+            if (!crashed || exit.getTimestamp() <= prefs.getLong("shownCrash",0)) return false;
+            prefs.edit().putLong("shownCrash",exit.getTimestamp()).apply();
+            return true;
+        } catch (RuntimeException error) { Log.w("DRNAS","Cannot read process exit history",error);return false; }
     }
+    private LinearLayout page() {
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(28),dp(24),dp(28),dp(24));
+        panel.setGravity(Gravity.CENTER);
+        panel.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[]{Color.rgb(9,21,35),Color.rgb(26,58,82)}));
+        return panel;
+    }
+    private TextView text(String value,int size) {
+        TextView text=new TextView(this);text.setText(value);text.setTextColor(Color.WHITE);
+        text.setTextSize(size);text.setGravity(Gravity.CENTER);text.setPadding(0,dp(8),0,dp(8));return text;
+    }
+    private void showSplash() {
+        LinearLayout panel=page();
+        ImageView logo=new ImageView(this);
+        int icon=getResources().getIdentifier("ic_drnas_freecad","drawable",getPackageName());
+        if(icon!=0) logo.setImageResource(icon);
+        panel.addView(logo,new LinearLayout.LayoutParams(dp(132),dp(132)));
+        TextView title=text("DRNAS FreeCAD",30);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);panel.addView(title);
+        TextView subtitle=text("Modeliraj. Stvaraj.",17);subtitle.setTextColor(Color.rgb(146,207,229));panel.addView(subtitle);
+        ProgressBar progress=new ProgressBar(this);
+        LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(dp(32),dp(32));params.topMargin=dp(22);
+        panel.addView(progress,params);setContentView(panel);
+        handler.postDelayed(() -> launch(true),650);
+    }
+    private String readLog(String name) {
+        File file=new File(new File(getFilesDir(),"diagnostics"),name);
+        if(!file.isFile())return "";
+        try(RandomAccessFile input=new RandomAccessFile(file,"r")) {
+            int length=(int)Math.min(input.length(),128*1024);
+            byte[] bytes=new byte[length];input.seek(input.length()-length);input.readFully(bytes);
+            return new String(bytes,StandardCharsets.UTF_8);
+        } catch(java.io.IOException error) {return "Log nije dostupan: "+error.getMessage();}
+    }
+    private void showRecovery() {
+        LinearLayout panel=page();panel.setGravity(Gravity.TOP);
+        panel.addView(text("Prethodno pokretanje se srušilo",23));
+        String report=readLog("current-launch.log");
+        if(report.isEmpty())report=readLog("previous-launch.log");
+        if(report.isEmpty())report="Nema spremljenog izvještaja. Pokreni sigurni način za dijagnostiku.";
+        final String fullReport=report;
+        ScrollView scroll=new ScrollView(this);TextView log=text(report,12);
+        log.setGravity(Gravity.START);log.setTypeface(Typeface.MONOSPACE);log.setTextIsSelectable(true);
+        scroll.addView(log);panel.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        Button copy=new Button(this);copy.setText("KOPIRAJ LOG");
+        copy.setOnClickListener(v -> {ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("DRNAS FreeCAD crash",fullReport));copy.setText("LOG KOPIRAN");});panel.addView(copy);
+        Button start=new Button(this);start.setText("POKRENI FREECAD");start.setOnClickListener(v -> launch(true));panel.addView(start);
+        Button safe=new Button(this);safe.setText("SIGURNI NAČIN");safe.setOnClickListener(v -> launch(false));panel.addView(safe);
+        setContentView(panel);
+    }
+    private void launch(boolean automatic) {
+        if(starting || isFinishing())return;
+        try {
+            Os.setenv("QT_SCALE_FACTOR","1.000000",true);
+            Os.setenv("DRNAS_AUTOSTART",automatic?"1":"0",true);
+            Os.setenv("DRNAS_VIEWPORT_AB","A",true);
+            Os.setenv("DRNAS_ENABLE_COIN_REDRAW","1",true);
+        } catch(android.system.ErrnoException error) {Log.e("DRNAS","Startup failed",error);return;}
+        starting=true;
+        Intent intent=new Intent();intent.setClassName(getPackageName(),"org.qtproject.qt.android.bindings.QtActivity");
+        startActivity(intent);finish();
+    }
+    @Override protected void onDestroy() {handler.removeCallbacksAndMessages(null);super.onDestroy();}
 }
