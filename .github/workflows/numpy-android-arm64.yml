@@ -34,27 +34,33 @@ jobs:
           cat > $GITHUB_WORKSPACE/.drnas-fix-python-pc.sh <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
-          pcdir="${PKG_CONFIG_LIBDIR:-}"
-          test -n "$pcdir" && test -d "$pcdir"
-          python3 - "$pcdir" <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
-          import sys
-          root=Path(sys.argv[1])
-          found=0
-          import re
-          for pc in root.glob('*.pc'):
-              content=pc.read_text()
-              updated=content.replace('$(BLDLIBRARY)', '-lpython3.14').replace('${BLDLIBRARY}', '-lpython3.14')
-              updated=re.sub(r'(?m)^BLDLIBRARY=.*$', 'BLDLIBRARY=-lpython3.14', updated)
-              if updated != content:
-                  pc.write_text(updated)
-                  found+=1
-          import subprocess
-          result=subprocess.check_output(['pkg-config','--define-prefix','--libs','python3'],text=True)
-          print('Python pkg-config libs:',result.strip())
-          if 'BLDLIBRARY' in result:
-              raise SystemExit('Unresolved Python linker metadata remains')
-          print('Fixed Python pkg-config files:',found)
+          import glob, subprocess
+          roots = [Path(p) for p in glob.glob('/tmp/cibw-run-*/cp314-android_arm64_v8a/python/prefix/lib/pkgconfig')]
+          if not roots:
+              raise SystemExit('PRE-FLIGHT FAILED: Android CPython pkgconfig directory not found')
+          count = 0
+          for root in roots:
+              for pc in root.glob('*.pc'):
+                  original = pc.read_text()
+                  fixed = original.replace('$(BLDLIBRARY)', '-lpython3.14').replace('${BLDLIBRARY}', '-lpython3.14')
+                  if fixed != original:
+                      pc.write_text(fixed)
+                      count += 1
+              env = __import__('os').environ.copy()
+              env['PKG_CONFIG_LIBDIR'] = str(root)
+              env['PKG_CONFIG_PATH'] = ''
+              for pkg in ('python3', 'python-3.14', 'python-3.14-embed'):
+                  p = subprocess.run(['pkg-config', '--define-prefix', '--libs', pkg], env=env, capture_output=True, text=True)
+                  if p.returncode == 0:
+                      print(pkg, p.stdout.strip())
+                      if 'BLDLIBRARY' in p.stdout:
+                          raise SystemExit('PRE-FLIGHT FAILED: unresolved BLDLIBRARY in '+pkg)
+              print('Android CPython prefix:', root.parent.parent)
+          print('Fixed pkg-config files:', count)
+          if count == 0:
+              raise SystemExit('PRE-FLIGHT FAILED: no linker metadata was repaired')
           PY
           SH
           chmod +x $GITHUB_WORKSPACE/.drnas-fix-python-pc.sh
