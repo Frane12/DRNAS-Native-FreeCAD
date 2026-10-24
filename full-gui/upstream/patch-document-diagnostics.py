@@ -215,7 +215,9 @@ private:
     # Device A and B both pass the main Coin scene and crash inside
     # drawAxisCross(). Isolate only this auxiliary draw on Android; leave
     # desktop drawing and the genuine scene renderer unchanged.
-    viewer_source = once(viewer_source, 'this->drawAxisCross();', r'''
+    viewer_source = once(viewer_source,
+        'if (_drnasTraceEnabled) ::drnasDocumentPhase("RS05A axis cross", "BEGIN");\n    this->drawAxisCross();',
+        r'''if (_drnasTraceEnabled) ::drnasDocumentPhase("RS05A axis cross", "BEGIN");
 #ifdef __ANDROID__
     if (_drnasTraceEnabled)
         ::drnasDocumentPhase("RS05A axis cross", "SKIPPED_ANDROID_ISOLATION");
