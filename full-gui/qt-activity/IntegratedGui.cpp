@@ -1133,6 +1133,28 @@ void recordOriginalGuiStage(const char* stageName)
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
     }
+    // Upstream StdWorkbench inserts Std_Measure/Std_MassProperties into
+    // menus and toolbars. They are defined by the genuine MeasureGui module,
+    // not by FreeCADGui: its PyInit explicitly registers both commands.
+    // Load it before StartupPostProcess assembles the original UI.
+    // Older proven APK artifacts have no MeasureGui.so; keep those builds
+    // operational and report absent functionality instead of loading stubs.
+    if (stage == QStringLiteral("Original Gui::StartupPostProcess")) {
+        const QString nativeLibDir=QString::fromLocal8Bit(qgetenv("PATH_TO_FREECAD_LIBDIR"));
+        const bool hasMeasure=QFileInfo::exists(nativeLibDir+QStringLiteral("/Measure.so"));
+        const bool hasMeasureGui=QFileInfo::exists(nativeLibDir+QStringLiteral("/MeasureGui.so"));
+        if (hasMeasure && hasMeasureGui) {
+            QString error;
+            const bool ready=runOriginalFreeCADPython(QStringLiteral(
+                "import MeasureGui\\n"
+                "import FreeCADGui as Gui\\n"
+                "assert all(name in Gui.listCommands() for name in ('Std_Measure','Std_MassProperties'))\\n"),error);
+            DrnasDiagnostics::note(ready ? QStringLiteral("MEASURE: native MeasureGui loaded; both Std_ commands registered")
+                                         : QStringLiteral("MEASURE: native command registration failed: ")+error);
+        } else {
+            DrnasDiagnostics::note(QStringLiteral("MEASURE: original Measure/MeasureGui native module absent; StdWorkbench commands unavailable"));
+        }
+    }
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
         stage.contains(QStringLiteral("OpenGL"), Qt::CaseInsensitive)) {

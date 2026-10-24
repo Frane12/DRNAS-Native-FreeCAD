@@ -32,7 +32,7 @@ def copy_assets(root: Path, destination: Path) -> int:
 def main():
     source, built, destination = map(Path, sys.argv[1:])
     count = 0
-    for module in ("Part", "Sketcher", "PartDesign"):
+    for module in ("Part", "Sketcher", "PartDesign", "Measure"):
         count += copy_assets(source / "src/Mod" / module, destination / "Mod" / module)
         count += copy_assets(built / "Mod" / module, destination / "Mod" / module)
     count += copy_assets(source / "src/Gui/Stylesheets", destination / "data/Gui/Stylesheets")
@@ -50,7 +50,7 @@ def main():
 
     for path in (
         "Mod/Part/InitGui.py", "Mod/Sketcher/InitGui.py",
-        "Mod/PartDesign/InitGui.py",
+        "Mod/PartDesign/InitGui.py", "Mod/Measure/InitGui.py",
         "data/Gui/Stylesheets/overlay/icons/taskshow.svg",
     ):
         if not (destination / path).is_file():
