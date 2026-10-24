@@ -2,6 +2,7 @@
 #include <QEvent>
 #include <QMouseEvent>
 #include <QOpenGLContext>
+#include <QWindow>
 #include <QTouchEvent>
 #include <QWheelEvent>
 #include <QtMath>
@@ -11,6 +12,9 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepTools.hxx>
+#include <BRep_Builder.hxx>
+#include <QFile>
 #include <Poly_Triangulation.hxx>
 #include <TopAbs.hxx>
 #include <TopExp_Explorer.hxx>
@@ -75,7 +79,7 @@ constexpr char kFragment[] =
     "+vec3(0.045,0.07,0.13),1.0);}\n";
 }
 
-NativeOcctViewport::NativeOcctViewport(QWidget* parent):QOpenGLWidget(parent) {
+NativeOcctViewport::NativeOcctViewport(QWidget* parent, bool demo):QOpenGLWidget(parent) {
     QSurfaceFormat f;
     f.setRenderableType(QSurfaceFormat::OpenGLES);
     f.setDepthBufferSize(24);
@@ -83,24 +87,44 @@ NativeOcctViewport::NativeOcctViewport(QWidget* parent):QOpenGLWidget(parent) {
     setFormat(f);
     setAttribute(Qt::WA_AcceptTouchEvents,true);
     setMinimumSize(160,210);
-    setShape(0);
+    if (demo) setShape(0);
 }
 NativeOcctViewport::~NativeOcctViewport() {
-    if(context()) {
+    if(context() && context()->isValid() && window()->windowHandle() &&
+       window()->windowHandle()->isExposed()) {
         makeCurrent();
-        if(vbo_.isCreated())vbo_.destroy();
-        if(edgeVbo_.isCreated())edgeVbo_.destroy();
-        doneCurrent();
+        if (QOpenGLContext::currentContext()==context()) {
+            if(vbo_.isCreated())vbo_.destroy();
+            if(edgeVbo_.isCreated())edgeVbo_.destroy();
+            shader_.reset();
+            doneCurrent();
+        }
     }
 }
 int NativeOcctViewport::triangleCount() const {
     return static_cast<int>(triangles_.size()/18);
 }
 bool NativeOcctViewport::setShape(int kind) {
-    std::vector<float> mesh;
     try {
         TopoDS_Shape shape;
-        if(!makeSolid(kind,shape)) return false;
+        return makeSolid(kind,shape) && setShapeData(shape);
+    } catch (...) { return false; }
+}
+bool NativeOcctViewport::loadBrep(const QString& path) {
+    try {
+        TopoDS_Shape shape;
+        BRep_Builder builder;
+        const QByteArray file=QFile::encodeName(path);
+        if (!BRepTools::Read(shape,file.constData(),builder) || shape.IsNull()) return false;
+        return setShapeData(shape);
+    } catch (...) { return false; }
+}
+void NativeOcctViewport::clearShape() {
+    triangles_.clear(); edgeVertices_.clear(); gpuDirty_=true; update();
+}
+bool NativeOcctViewport::setShapeData(const TopoDS_Shape& shape) {
+    std::vector<float> mesh;
+    try {
         BRepMesh_IncrementalMesh triangulator(shape,0.25,false,0.28,false);
         if(!triangulator.IsDone())return false;
         const std::size_t maxTriangles=200000;
@@ -162,17 +186,21 @@ bool NativeOcctViewport::setShape(int kind) {
 }
 void NativeOcctViewport::initializeGL() {
     initializeOpenGLFunctions();
+    initialized_=false;
+    // A recreated Android context needs new shader and buffer resources.
+    shader_=std::make_unique<QOpenGLShaderProgram>();
+    vbo_.destroy(); edgeVbo_.destroy();
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
-    bool ok=shader_.addShaderFromSourceCode(QOpenGLShader::Vertex,kVertex)
-         && shader_.addShaderFromSourceCode(QOpenGLShader::Fragment,kFragment);
+    bool ok=shader_->addShaderFromSourceCode(QOpenGLShader::Vertex,kVertex)
+         && shader_->addShaderFromSourceCode(QOpenGLShader::Fragment,kFragment);
     if(ok) {
-        shader_.bindAttributeLocation("aPos",0);
-        shader_.bindAttributeLocation("aNormal",1);
-        ok=shader_.link();
+        shader_->bindAttributeLocation("aPos",0);
+        shader_->bindAttributeLocation("aNormal",1);
+        ok=shader_->link();
     }
     if(!ok) qWarning("DRNAS native GPU shader error: %s",
-                      qPrintable(shader_.log()));
+                      qPrintable(shader_->log()));
     initialized_=ok;
     vbo_.create();
     edgeVbo_.create();
@@ -226,10 +254,10 @@ void NativeOcctViewport::paintGL() {
     object.rotate(yaw_,0,1,0);
     object.scale(normalization_);
     object.translate(-midpoint_);
-    shader_.bind();
-    shader_.setUniformValue("uMVP",proj_*camera*object);
-    shader_.setUniformValue("uModel",object);
-    shader_.setUniformValue("uFlat",0.f);
+    shader_->bind();
+    shader_->setUniformValue("uMVP",proj_*camera*object);
+    shader_->setUniformValue("uModel",object);
+    shader_->setUniformValue("uFlat",0.f);
     if(wire_) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.f,1.f);
@@ -237,8 +265,8 @@ void NativeOcctViewport::paintGL() {
     drawMesh(false);
     if(wire_) {
         glDisable(GL_POLYGON_OFFSET_FILL);
-        shader_.setUniformValue("uFlat",1.f);
-        shader_.setUniformValue("uColor",QVector3D(.64f,.84f,1.f));
+        shader_->setUniformValue("uFlat",1.f);
+        shader_->setUniformValue("uColor",QVector3D(.64f,.84f,1.f));
         glDepthMask(GL_FALSE);
         drawMesh(true);
         glDepthMask(GL_TRUE);
@@ -261,8 +289,8 @@ void NativeOcctViewport::paintGL() {
         if(gridBuffer.create()) {
             gridBuffer.bind();
             gridBuffer.allocate(lines.data(),int(lines.size()*sizeof(float)));
-            shader_.setUniformValue("uFlat",1.f);
-            shader_.setUniformValue("uColor",QVector3D(.14f,.23f,.32f));
+            shader_->setUniformValue("uFlat",1.f);
+            shader_->setUniformValue("uColor",QVector3D(.14f,.23f,.32f));
             glEnableVertexAttribArray(0);
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,6*sizeof(float),nullptr);
@@ -277,7 +305,7 @@ void NativeOcctViewport::paintGL() {
             gridBuffer.destroy();
         }
     }
-    shader_.release();
+    shader_->release();
 }
 void NativeOcctViewport::setView(int preset) {
     if(preset==1){pitch_=0.f;yaw_=0.f;}

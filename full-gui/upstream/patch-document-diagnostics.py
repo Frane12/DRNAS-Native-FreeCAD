@@ -377,13 +377,84 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
                           'this->actualRedraw();',
                           '''if (const char* enable = std::getenv("DRNAS_ENABLE_COIN_REDRAW");
         enable && enable[0] == '1' && enable[1] == '\\0') {
+        const char* stage = std::getenv("DRNAS_RENDER_STAGE");
+        char stageLabel[64];
+        std::snprintf(stageLabel, sizeof(stageLabel), "RENDER_STAGE phase=%s", stage ? stage : "legacy");
+        ::drnasDocumentPhase(stageLabel, "DRAW_BEGIN");
         ::drnasDocumentPhase("P03 Coin scene render", "REAL_REDRAW_BEGIN");
         this->actualRedraw();
         ::drnasDocumentPhase("P03 Coin scene render", "REAL_REDRAW_END");
+        ::drnasDocumentPhase(stageLabel, "DRAW_END");
     } else {
         ::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");
     }''')
     quarter_path.write_text(quarter_source)
+
+    # Independent, session-only Coin stages for comparison with the GLES
+    # BRep reference view. Unset preserves the legacy full-render probe.
+    viewer_source = viewer_path.read_text()
+    stage_helper = r'''
+#ifdef __ANDROID__
+extern "C" __attribute__((visibility("default")))
+int drnas_render_stages_version() { return 1; }
+static int drnasRenderStage()
+{
+    const char* stage = std::getenv("DRNAS_RENDER_STAGE");
+    return stage && stage[0] >= '0' && stage[0] <= '4' && stage[1] == '\0'
+        ? stage[0] - '0' : 4;
+}
+#else
+static int drnasRenderStage() { return 4; }
+#endif
+'''
+    viewer_source = once(viewer_source, gpu_probe, gpu_probe + stage_helper)
+    start = viewer_source.index('void View3DInventorViewer::renderGLActionScene(')
+    end = viewer_source.index('void View3DInventorViewer::renderScene()', start)
+    body = viewer_source[start:end]
+    body = body.replace('    if (!this->shading) {',
+                '    if (drnasRenderStage() <= 1) return;\n\n    if (!this->shading) {', 1)
+    body = once(body, 'inherited::actualRedraw();', r'''if (drnasRenderStage() == 2) {
+            // Temporary graph; never change stored materials or ViewProviders.
+            const CoinPtr<SoSeparator> basic(new SoSeparator);
+            if (auto* camera = this->getSoRenderManager()->getCamera()) basic->addChild(camera);
+            auto* material = new SoMaterial;
+            material->diffuseColor.setValue(0.65f, 0.70f, 0.78f);
+            material->transparency.setValue(0.0f);
+            material->setOverride(true);
+            basic->addChild(material);
+            auto* lighting = new SoLightModel;
+            lighting->model = SoLightModel::BASE_COLOR;
+            lighting->setOverride(true);
+            basic->addChild(lighting);
+            basic->addChild(this->pcViewProviderRoot);
+            ::drnasDocumentPhase("RENDER_STAGE basic geometry", "BEGIN");
+            glra->apply(basic);
+            ::drnasDocumentPhase("RENDER_STAGE basic geometry", "END");
+        } else {
+            inherited::actualRedraw();
+        }''')
+    for call in ('renderDelayedAnnotations(glra);',):
+        body = once(body, call, 'if (drnasRenderStage() >= 3) ' + call)
+    for call in ('glra->apply(this->foregroundroot);', 'glra->apply(this->decorationroot);'):
+        body = once(body, call, 'if (drnasRenderStage() >= 4) ' + call)
+    viewer_source = viewer_source[:start] + body + viewer_source[end:]
+    start = viewer_source.index('void View3DInventorViewer::renderScene()')
+    end = viewer_source.index('void View3DInventorViewer::renderRubberbandOverlay()', start)
+    body = viewer_source[start:end]
+    for call in ('printDimension();', 'it->paintGL();', 'renderRubberbandOverlay();'):
+        body = once(body, call, 'if (drnasRenderStage() >= 4) ' + call)
+    body = once(body,
+        '    if (_drnasTraceEnabled)\n        ::drnasDocumentPhase("RS05A axis cross", "SKIPPED_ANDROID_ISOLATION");',
+        r'''    const char* axes = std::getenv("DRNAS_RENDER_AXES");
+    if (drnasRenderStage() >= 4 && axes && axes[0] == '1' && axes[1] == '\0') {
+        ::drnasDocumentPhase("RENDER_STAGE axis cross", "BEGIN");
+        this->drawAxisCross();
+        ::drnasDocumentPhase("RENDER_STAGE axis cross", "END");
+    } else if (_drnasTraceEnabled) {
+        ::drnasDocumentPhase("RS05A axis cross", "SKIPPED_ANDROID_ISOLATION");
+    }''')
+    viewer_source = viewer_source[:start] + body + viewer_source[end:]
+    viewer_path.write_text(viewer_source)
 
     # Read native GLES and GL4ES at the SAME render boundary. The older GPU02
     # sample precedes renderScene/glViewport and can contain a previous viewport.
@@ -443,4 +514,4 @@ static void drnasViewportAbSnapshot(const char* phase, QOpenGLWidget* widget,
 
 if __name__ == "__main__":
     patch(Path(sys.argv[1]))
-    print("Render trace v6: Android GLES EGL format, axis-cross isolation and A/B GL diagnostics")
+    print("Render trace v7: staged Coin/reference lab, Android GLES EGL and A/B diagnostics")

@@ -6,13 +6,9 @@ find_package(Qt6 6.8.3 REQUIRED COMPONENTS
 # Use Qt's official Android entrypoint and deployment settings instead of
 # calling QApplication from the unrelated OCCT Java Activity.
 # FULL upstream FreeCAD uses its own Coin3D/OpenGL viewport.
-# Do not even compile the separate Qt/OCCT OpenGL startup viewer into that
-# APK; it can initialize an incompatible Android EGL/FBO before FreeCADGui.
-# Preserve the old viewport for the manually dispatched standalone OCCT LAB.
-set(DRNAS_QT_ACTIVITY_SOURCES main.cpp IntegratedGui.cpp StartupDiagnostics.cpp)
-if(NOT DRNAS_FREECAD_RUNTIME_DIR)
-    list(APPEND DRNAS_QT_ACTIVITY_SOURCES NativeOcctViewport.cpp)
-endif()
+# The reference GLES viewer is compiled for both builds, but in the full GUI
+# it is created lazily after FreeCAD startup, only inside the Render Lab.
+set(DRNAS_QT_ACTIVITY_SOURCES main.cpp IntegratedGui.cpp StartupDiagnostics.cpp NativeOcctViewport.cpp)
 qt_add_executable(drnas_freecad_qtgui ${DRNAS_QT_ACTIVITY_SOURCES})
 if(DRNAS_FREECAD_RUNTIME_DIR)
     target_compile_definitions(drnas_freecad_qtgui PRIVATE

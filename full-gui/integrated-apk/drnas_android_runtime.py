@@ -117,6 +117,86 @@ def _drnas_part_commands():
     _drnas_mark('ACTIVE WORKBENCH ' + Gui.activeWorkbench().name())
 
 
+# Render Lab exports actual document BReps. No primitive substitutes and no
+# changes to the document, ViewProviders, or saved material properties.
+_drnas_render_observer = None
+
+
+def _drnas_render_watch(directory):
+    global _drnas_render_observer
+    os.makedirs(directory, exist_ok=True)
+    if _drnas_render_observer is not None:
+        return
+
+    class Observer:
+        def dirty(self, *args):
+            import time
+            try:
+                with open(os.path.join(directory, 'dirty'), 'w') as stream:
+                    stream.write(str(time.monotonic_ns()))
+            except OSError:
+                # A failed preview notification must not interrupt CAD edits.
+                pass
+        slotChangedObject = dirty
+        slotCreatedObject = dirty
+        slotDeletedObject = dirty
+        slotRecomputedDocument = dirty
+        slotCreatedDocument = dirty
+        slotDeletedDocument = dirty
+        slotActivateDocument = dirty
+
+    _drnas_render_observer = Observer()
+    App.addDocumentObserver(_drnas_render_observer)
+    import FreeCADGui as Gui
+    Gui.addDocumentObserver(_drnas_render_observer)
+    _drnas_render_observer.dirty()
+
+
+def _drnas_render_export(directory):
+    import json
+    import Part
+    doc = App.ActiveDocument
+    shapes, names = [], []
+    if doc is not None:
+        for obj in doc.Objects:
+            view = getattr(obj, 'ViewObject', None)
+            if view is None or not view.Visibility:
+                continue
+            # A hidden parent suppresses its visible children in the real GUI.
+            parents = obj.InListRecursive
+            if any((parent.isDerivedFrom('App::Part') or parent.isDerivedFrom('PartDesign::Body')) and
+                   not parent.ViewObject.Visibility for parent in parents):
+                continue
+            shape = getattr(obj, 'Shape', None)
+            if shape is None or shape.isNull():
+                continue
+            # A visible Body already includes its tip; do not duplicate that shape.
+            if any(parent.isDerivedFrom('PartDesign::Body') and getattr(parent, 'ViewObject', None)
+                   and parent.ViewObject.Visibility and hasattr(parent, 'Shape')
+                   and not parent.Shape.isNull() for parent in parents):
+                continue
+            shape = shape.copy()
+            # Shape already carries the object's local placement. Add only
+            # the ancestor placement, avoiding a second local transform.
+            if hasattr(obj, 'getGlobalPlacement') and hasattr(obj, 'Placement'):
+                ancestors = obj.getGlobalPlacement().multiply(obj.Placement.inverse())
+                shape.Placement = ancestors.multiply(shape.Placement)
+            shapes.append(shape)
+            names.append(obj.Name)
+    target = os.path.join(directory, 'document.brep')
+    if shapes:
+        temporary = target + '.tmp'
+        Part.makeCompound(shapes).exportBrep(temporary)
+        os.replace(temporary, target)
+    elif os.path.exists(target):
+        os.unlink(target)
+    metadata = {'document': doc.Name if doc else None, 'objects': names,
+                'count': len(shapes)}
+    with open(os.path.join(directory, 'snapshot.json'), 'w') as stream:
+        json.dump(metadata, stream)
+    _drnas_mark('RENDER_BASELINE exported ' + repr(metadata))
+
+
 if not getattr(App, '__drnas_runtime_installed__', False):
     # Keep FreeCAD's original console delivery, while journaling swallowed
     # InitGui import errors that otherwise only reach the notification popup.

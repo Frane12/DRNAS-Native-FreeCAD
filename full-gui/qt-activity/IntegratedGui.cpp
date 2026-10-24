@@ -1,7 +1,6 @@
-// Full FreeCAD GUI must not allocate a competing QOpenGLWidget/EGL surface.
-#ifndef DRNAS_FREECAD_FULL_INTEGRATION
+// The reference renderer is allocated lazily by Render Lab after Gui startup.
 #include "NativeOcctViewport.h"
-#endif
+#include "DrnasRenderLab.h"
 #include <algorithm>
 #include <utility>
 #include <QApplication>
@@ -727,6 +726,9 @@ finally:
                 QStringLiteral("Coin redraw probe"));
         }
     });
+    coinRender->setVisible(false); // Replaced by explicit Render Lab phases.
+    auto* renderLab = new DrnasRenderLab(shell, freecad, toolbar,
+        [](const QString& code, QString& error) { return runOriginalFreeCADPython(code,error); });
     // Choose before New in a fresh launch. Never compare A/B by switching
     // already-mutated Coin/GL state within an existing document.
     const QString initialAb = qgetenv("DRNAS_VIEWPORT_AB") == QByteArray("B")
@@ -743,7 +745,7 @@ finally:
             ? QStringLiteral("A: original Coin viewport. Select before New after restarting app.")
             : QStringLiteral("B: sync Coin to actual GL viewport. Select before New after restarting app."));
         QObject::connect(action, &QAction::triggered, shell,
-            [upstream, report, coinRender, abStatus, mode] {
+            [upstream, report, coinRender, abStatus, mode, renderLab] {
                 if (!upstream) return;
                 for (auto* area : upstream->findChildren<QMdiArea*>()) {
                     if (!area->subWindowList().isEmpty()) {
@@ -753,6 +755,7 @@ finally:
                 }
                 qputenv("DRNAS_ENABLE_COIN_REDRAW", QByteArray("0"));
                 coinRender->setChecked(false);
+                renderLab->setStage(0);
                 qputenv("DRNAS_VIEWPORT_AB", QByteArray(1, mode));
                 abStatus->setText(QStringLiteral("A/B: %1").arg(QChar(mode)));
                 DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB SELECT mode=%1; fresh document required; render remains off")

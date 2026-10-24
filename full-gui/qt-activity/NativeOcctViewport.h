@@ -6,14 +6,18 @@
 #include <QMatrix4x4>
 #include <QPointF>
 #include <vector>
+#include <memory>
+class TopoDS_Shape;
 
 // Real Android OpenCASCADE B-Rep solids -> tessellation -> OpenGL ES.
 // Full upstream FreeCADGui ViewProvider/Coin3D is not connected yet.
 class NativeOcctViewport final : public QOpenGLWidget, protected QOpenGLFunctions {
 public:
-    explicit NativeOcctViewport(QWidget* parent = nullptr);
+    explicit NativeOcctViewport(QWidget* parent = nullptr, bool demo = true);
     ~NativeOcctViewport() override;
     bool setShape(int kind);
+    bool loadBrep(const QString& path);
+    void clearShape();
     void setView(int preset);
     void setGrid(bool show);
     void setWire(bool show);
@@ -28,9 +32,10 @@ protected:
     void wheelEvent(QWheelEvent* e) override;
     bool event(QEvent* e) override;
 private:
+    bool setShapeData(const TopoDS_Shape& shape);
     void updateProjections();
     void drawMesh(bool wire);
-    QOpenGLShaderProgram shader_;
+    std::unique_ptr<QOpenGLShaderProgram> shader_;
     QOpenGLBuffer vbo_{QOpenGLBuffer::VertexBuffer};
     QOpenGLBuffer edgeVbo_{QOpenGLBuffer::VertexBuffer};
     std::vector<float> triangles_, edgeVertices_;
