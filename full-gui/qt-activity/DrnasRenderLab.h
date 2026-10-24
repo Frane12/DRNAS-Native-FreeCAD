@@ -100,6 +100,7 @@ class DrnasRenderLab final : public QObject {
                 // Keeping it inside the existing Android QWindow avoids the known Qt
                 // 'touch event received for non-existing window' lifecycle failure.
                 window->show();
+                if (!window->isMaximized()) window->showMaximized();
                 mdi->setActiveSubWindow(window);
                 window->raise();
                 window->setFocus(Qt::OtherFocusReason);
@@ -250,6 +251,7 @@ public:
         QObject::connect(axesAction,&QAction::triggered,this,[this](bool value){axes=value;setStage(stage);});
         qputenv("DRNAS_ENABLE_COIN_REDRAW","0");
         qputenv("DRNAS_RENDER_STAGE","0");
+        qputenv("DRNAS_COIN_FBO_SYNC","0");
         qputenv("DRNAS_RENDER_AXES","0");
         poll.setInterval(750);
         QTimer::singleShot(2400,this,[this]{auditWarnings();inspectCoinWindow(QStringLiteral("startup"));});
@@ -273,6 +275,7 @@ public:
         qputenv("DRNAS_RENDER_STAGE",QByteArray::number(stage));
         qputenv("DRNAS_RENDER_AXES",axes && stage==4 ? "1" : "0");
         qputenv("DRNAS_ENABLE_COIN_REDRAW",(stage==0 || stage==5) ? "0" : "1");
+        qputenv("DRNAS_COIN_FBO_SYNC",(stage==0 || stage==5) ? "0" : "1");
         if (fboProbe) fboProbe->hide();
         DrnasDiagnostics::note(QStringLiteral("RENDER_STAGE SELECT stage=%1 axes=%2 BEGIN").arg(stage).arg(axes));
         if (stage==0) tick(true);
