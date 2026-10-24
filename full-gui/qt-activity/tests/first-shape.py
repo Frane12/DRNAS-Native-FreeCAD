@@ -2,6 +2,8 @@
 import ast
 from pathlib import Path
 import sys
+import os
+import tempfile
 from types import SimpleNamespace as NS
 
 source = Path(__file__).parents[2] / "integrated-apk/drnas_android_runtime.py"
@@ -34,4 +36,17 @@ tick()
 assert calls.count("fit") == 2, "a new document reusing the same name must be framed"
 app.ActiveDocument = None
 tick()
+watch = next(node for node in tree.body
+             if isinstance(node, ast.FunctionDef) and node.name == "_drnas_render_watch")
+scope.update(os=os, _drnas_render_observer=None)
+app.addDocumentObserver = lambda observer: None
+gui.addDocumentObserver = lambda observer: None
+exec(compile(ast.Module(body=[watch], type_ignores=[]), str(source), "exec"), scope)
+with tempfile.TemporaryDirectory() as directory:
+    scope[watch.name](directory)
+    observer = scope['_drnas_render_observer']
+    for deleted in (doc, NS(Document=doc)):
+        scope['_drnas_framed_documents'][doc.Name] = doc
+        observer.slotDeletedDocument(deleted)
+        assert doc.Name not in scope['_drnas_framed_documents'], "App and Gui close notifications must both clear framing state"
 print("Deferred first-shape framing checks passed")

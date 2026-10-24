@@ -171,7 +171,11 @@ def _drnas_render_watch(directory):
         slotActivateDocument = dirty
 
         def slotDeletedDocument(self, doc):
-            _drnas_framed_documents.pop(doc.Name, None)
+            # App and Gui observers pass different wrapper types.
+            document = getattr(doc, 'Document', doc)
+            name = getattr(document, 'Name', None)
+            if name is not None:
+                _drnas_framed_documents.pop(name, None)
             self.dirty()
 
     _drnas_render_observer = Observer()
