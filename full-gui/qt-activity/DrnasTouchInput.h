@@ -142,6 +142,8 @@ class DrnasTouchInput final : public QObject {
     QPointF cursor,last,start;
     QElapsedTimer clock;
     bool relative=false,moved=false,repairQueued=false;
+    bool twoFingerPan=false,suppressAfterPan=false;
+    QPointF panLast;
     int touchId=-1,zoomDeflection=0,zoomTicks=0;
     // This FreeCAD desktop modal is embedded in the existing QtActivity
     // QWidget tree: no competing Android QWindow or native focus loop.
@@ -183,8 +185,10 @@ class DrnasTouchInput final : public QObject {
     }
     void releaseAll() {
         mouseButton(Qt::LeftButton,false);mouseButton(Qt::RightButton,false);
+        mouseButton(Qt::MiddleButton,false);
         for(auto* key:mouseKeys)key->release();
-        relative=false;touchId=-1;zoomDeflection=0;zoomTicks=0;zoomTimer.stop();mouseReceiver.clear();
+        relative=false;twoFingerPan=false;suppressAfterPan=false;
+        touchId=-1;zoomDeflection=0;zoomTicks=0;zoomTimer.stop();mouseReceiver.clear();
         if(zoomControl){QSignalBlocker blocker(zoomControl);zoomControl->setValue(0);}
     }
     bool isControl(QWidget* widget) const {
@@ -340,7 +344,7 @@ class DrnasTouchInput final : public QObject {
             if(!guarded)return;
             guarded->setProperty("drnasModalRestoring",true);
             guarded->setProperty("drnasModalEmbedded",false);
-            guarded->setParent(original,flags);
+            guarded->setParent(original.data(),flags);
             guarded->hide();
             guarded->setProperty("drnasModalRestoring",false);
         });
@@ -428,10 +432,47 @@ protected:
         if(!inRender(widget))return false;
         if(type==QEvent::TouchCancel){releaseAll();event->accept();return true;}
         if(type==QEvent::TouchBegin || type==QEvent::TouchUpdate || type==QEvent::TouchEnd) {
-            for(const auto& point:static_cast<QTouchEvent*>(event)->points()) {
+            // One finger: move the logical pointer, tap: select.
+            // Two fingers: synthetic middle-button drag for native FreeCAD
+            // CAD-navigation pan. No additional floating UI is needed.
+            const auto points=static_cast<QTouchEvent*>(event)->points();
+            QPointF sum;
+            int activeCount=0;
+            for(const auto& point:points)
+                if(point.state()!=QEventPoint::State::Released){
+                    sum+=point.globalPosition();++activeCount;
+                }
+            if(activeCount>=2) {
+                const QPointF middle=sum/double(activeCount);
+                if(!twoFingerPan){
+                    relative=false;moved=true;touchId=-1;
+                    cursor=host->mapFromGlobal(middle.toPoint());
+                    showPointer();
+                    mouseButton(Qt::MiddleButton,true);
+                    twoFingerPan=true;panLast=middle;suppressAfterPan=true;
+                    DrnasDiagnostics::note(QStringLiteral("TOUCH_PAN_BEGIN two-finger middle-drag dpr=%1")
+                        .arg(host->devicePixelRatioF()));
+                } else if(middle!=panLast) {
+                    cursor+=middle-panLast;panLast=middle;
+                    showPointer();sendMouse(QEvent::MouseMove,Qt::NoButton);
+                }
+                event->accept();return true;
+            }
+            if(twoFingerPan){
+                mouseButton(Qt::MiddleButton,false);
+                twoFingerPan=false;relative=false;touchId=-1;
+                DrnasDiagnostics::note(QStringLiteral("TOUCH_PAN_END"));
+            }
+            // A finger left from a two-finger pan must NOT become a click.
+            if(suppressAfterPan){
+                if(activeCount==0)suppressAfterPan=false;
+                event->accept();return true;
+            }
+            for(const auto& point:points) {
                 if(touchId<0 && point.state()==QEventPoint::State::Pressed){touchId=point.id();begin(point.globalPosition());}
                 if(point.id()!=touchId)continue;
-                if(point.state()==QEventPoint::State::Released){end(point.globalPosition());touchId=-1;}else move(point.globalPosition());
+                if(point.state()==QEventPoint::State::Released){end(point.globalPosition());touchId=-1;}
+                else move(point.globalPosition());
             }
             event->accept();return true;
         }
