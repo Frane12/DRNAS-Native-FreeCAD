@@ -1371,22 +1371,19 @@ void recordOriginalGuiStage(const char* stageName)
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
     }
-    // The standard FreeCAD toolbar contains Std_Measure/Std_MassProperties.
-    // Their real commands are registered by the native MeasureGui Python
-    // extension, not by FreeCADGui or PartGui.  Load it after Gui::Application
-    // exists but before MainWindow and StartupPostProcess create toolbars.
+    // Device trace 2026-10-24T18:13:53Z: the eager import of native
+    // MeasureGui from this callback SIGSEGVs in Python's ExtensionFileLoader
+    // create_module(), *after* libCoin/FreeCADGui, Python stdlib, resource
+    // extraction, and the native App::Application bootstrap succeed.
+    // This callback executes inside FreeCAD's GUI startup before its
+    // Gui::MainWindow exists. Never dlopen/import a GUI Python extension
+    // from here: a segfault cannot be caught by try/catch or Python except.
+    // Measure/Std_MassProperties commands are intentionally NOT registered
+    // by DRNAS until a separate, isolated activation path is verified.
     if (stage == QStringLiteral("Original Gui::MainWindow constructor")) {
-        QString measureError;
-        if (!runOriginalFreeCADPython(QStringLiteral(
-                "import FreeCADGui as Gui\n"
-                "import MeasureGui\n"
-                "_drnas_measure_missing = [name for name in ('Std_Measure', 'Std_MassProperties') if name not in Gui.listCommands()]\n"
-                "_drnas_mark('MEASURE REGISTER missing=' + repr(_drnas_measure_missing))\n"
-                "if _drnas_measure_missing:\n"
-                "    raise RuntimeError('MeasureGui command registration failed: ' + repr(_drnas_measure_missing))\n"
-                ), measureError)) {
-            DrnasDiagnostics::note(QStringLiteral("REAL MEASURE INIT FAILED: ") + measureError);
-        }
+        DrnasDiagnostics::note(QStringLiteral(
+            "MEASURE ISOLATED: skip unsafe early MeasureGui native import; "
+            "continue with original FreeCADGui MainWindow construction"));
     }
     if (stage == QStringLiteral("Original Gui::StartupPostProcess") ||
         stage == QStringLiteral("Showing original FreeCAD MainWindow") ||
