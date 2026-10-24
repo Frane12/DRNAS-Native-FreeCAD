@@ -38,7 +38,30 @@ def annotate(root, path, signature, phases, max_calls=None):
     target.write_text(source)
 
 
+def patch_android_service_storage(root):
+    # Registry keys already validate the exact interface name across modules.
+    # Hidden interface RTTI in Android DSOs can make std::any_cast<T*> reject
+    # an otherwise matching registered pointer. Store the converted interface
+    # pointer directly; do not repeat the RTTI check across the DSO boundary.
+    path = root / "src/Base/ServiceProvider.h"
+    source = path.read_text()
+    source = once(source, '        std::any instance;',
+                  '''#ifdef __ANDROID__
+        void* instance;
+#else
+        std::any instance;
+#endif''')
+    source = once(source, '            return std::any_cast<T*>(instance);',
+                  '''#ifdef __ANDROID__
+            return static_cast<T*>(instance);
+#else
+            return std::any_cast<T*>(instance);
+#endif''')
+    path.write_text(source)
+
+
 def patch(root):
+    patch_android_service_storage(root)
     # No Python/Qt calls: durable native markers still work during a failure
     # below Python. This is ordinary execution logging, not a signal handler.
     (root / "src/Base/AndroidDocumentDiagnostics.h").write_text(r'''#pragma once
@@ -514,4 +537,7 @@ static void drnasViewportAbSnapshot(const char* phase, QOpenGLWidget* widget,
 
 if __name__ == "__main__":
     patch(Path(sys.argv[1]))
+    import subprocess
+    subprocess.run([sys.executable, str(Path(__file__).with_name('test-service-registry-dso.py')),
+                    sys.argv[1]], check=True)
     print("Render trace v7: staged Coin/reference lab, Android GLES EGL and A/B diagnostics")

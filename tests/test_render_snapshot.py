@@ -30,6 +30,9 @@ class Shape:
 
 
 class RenderSnapshotTests(unittest.TestCase):
+    def setUp(self):
+        self.journal = []
+
     def export(self, directory, objects, name='Document'):
         tree = ast.parse(SCRIPT.read_text())
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
@@ -39,7 +42,7 @@ class RenderSnapshotTests(unittest.TestCase):
         def compound(shapes):
             captured.extend(shapes)
             return types.SimpleNamespace(exportBrep=lambda path: Path(path).write_text('real-shape-fixture'))
-        env = {'App': app, 'os': __import__('os'), '_drnas_mark': lambda message: None}
+        env = {'App': app, 'os': __import__('os'), '_drnas_mark': self.journal.append}
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), 'exec'), env)
         with patch.dict(sys.modules, {'Part': types.SimpleNamespace(makeCompound=compound)}):
             env['_drnas_render_export'](str(directory))
@@ -87,6 +90,20 @@ class RenderSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             _, info = self.export(Path(td), [dependent, external])
             self.assertEqual(info['objects'], ['External'])
+
+    def test_export_failure_has_full_traceback_and_keeps_failure_visible(self):
+        class Broken:
+            @property
+            def ViewObject(self):
+                raise RuntimeError('bad any cast')
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(RuntimeError, 'bad any cast'):
+                self.export(Path(td), [Broken()])
+            log = '\n'.join(self.journal)
+            self.assertIn('EXPORT_FAILED', log)
+            self.assertIn('Traceback (most recent call last)', log)
+            self.assertIn('bad any cast', log)
+            self.assertFalse((Path(td) / 'snapshot.json').exists())
 
     def test_empty_document_removes_previous_snapshot(self):
         with tempfile.TemporaryDirectory() as td:
