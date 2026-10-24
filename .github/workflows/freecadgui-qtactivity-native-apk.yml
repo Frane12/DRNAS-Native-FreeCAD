@@ -39,7 +39,22 @@ env:
   ANDROID_API: '26'
 
 jobs:
+  touch-input:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install desktop Qt for input event regression checks
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qt6-base-dev
+      - name: Verify direct touch and gesture routing at normal and high DPI
+        run: |
+          cmake -S full-gui/qt-activity/tests -B build/touch-tests
+          cmake --build build/touch-tests -j2
+          ctest --test-dir build/touch-tests --output-on-failure
+          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
+
   package-real-gui:
+    needs: touch-input
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
     if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))

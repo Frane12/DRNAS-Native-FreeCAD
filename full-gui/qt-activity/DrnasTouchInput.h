@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Qt adaptation of DRNAS Blender's draggable mouse/key groups and spring zoom.
+// Direct viewport touch, native Qt controls, and coalesced CAD camera gestures.
 // Uses existing widgets and logical coordinates; creates no native/GL surface.
 #pragma once
 #include <algorithm>
 #include <functional>
 #include <utility>
+#include <cmath>
+#include <QLineF>
 #include <QApplication>
 #include <QDialog>
 #include <QEvent>
-#include <QElapsedTimer>
 #include <QFrame>
 #include <QGraphicsView>
-#include <QGridLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMainWindow>
@@ -52,45 +52,6 @@ protected:
     }
 };
 
-class DrnasPointerPad final : public QLabel {
-    QPointF last;
-    bool active = false;
-    int touchId = -1;
-public:
-    std::function<void(QPointF)> movePointer;
-    explicit DrnasPointerPad(QWidget* parent) : QLabel(parent) {
-        setText(QStringLiteral("Pomakni pokazivač ovdje"));
-        setAlignment(Qt::AlignCenter);
-        setMinimumHeight(62);
-        setAttribute(Qt::WA_AcceptTouchEvents);
-        setStyleSheet(QStringLiteral("background:#253c50;border:1px solid #6486a1;border-radius:6px;"));
-    }
-protected:
-    bool event(QEvent* e) override {
-        if (e->type()==QEvent::TouchCancel) { active=false; touchId=-1; e->accept(); return true; }
-        if (e->type()==QEvent::TouchBegin || e->type()==QEvent::TouchUpdate || e->type()==QEvent::TouchEnd) {
-            auto* touch=static_cast<QTouchEvent*>(e);
-            for (const auto& point : touch->points()) {
-                if (touchId<0 && point.state()==QEventPoint::State::Pressed) {
-                    touchId=point.id(); last=point.position(); active=true;
-                }
-                if (point.id()!=touchId) continue;
-                if (active && movePointer) movePointer(point.position()-last);
-                last=point.position();
-                if (point.state()==QEventPoint::State::Released) { active=false; touchId=-1; }
-            }
-            e->accept(); return true;
-        }
-        return QLabel::event(e);
-    }
-    void mousePressEvent(QMouseEvent* e) override { active=true; last=e->position(); e->accept(); }
-    void mouseMoveEvent(QMouseEvent* e) override {
-        if (active && movePointer) movePointer(e->position()-last);
-        last=e->position(); e->accept();
-    }
-    void mouseReleaseEvent(QMouseEvent* e) override { active=false; e->accept(); }
-};
-
 class DrnasTouchInput final : public QObject {
     QMainWindow* host;
     QPointer<QMainWindow> cad;
@@ -99,25 +60,35 @@ class DrnasTouchInput final : public QObject {
     QPointer<QWidget> commandsLauncher;
     QLabel* grip;
     QPushButton* launcher;
-    QPushButton* hold;
+    QPushButton* toolMode;
+    QPushButton* multiSelect;
+    QPushButton* cancelButton;
     DrnasPointerMark* mark;
-    QPointer<DrnasPointerMark> dialogMark;
+
     QSlider* zoom;
     QTimer zoomTimer;
     QPointer<QWidget> mouseReceiver;
     QPointer<QWidget> keyReceiver;
     QPointF cursor;
     QPoint dragOffset;
-    QPointF relativeLast, relativeStart;
-    QElapsedTimer relativeClock;
-    bool relativeActive=false, relativeMoved=false;
-    int relativeTouchId=-1;
+    enum class Gesture { Idle, Pending, Orbit, Tool, Precision, Multi };
+    Gesture gesture=Gesture::Idle;
+    QPointer<QWidget> touchOwner;
+    QPointF touchStart, touchLast, multiCenter;
+    int fingerId=-1;
+    double multiDistance=0;
+    bool toolAtStart=false;
+    QTimer precisionTimer, cameraTimer;
+    QPointF orbitDelta, panDelta;
+    double zoomLog=0;
+    QPointer<QWidget> cameraOwner;
+    QPointer<QWidget> lastViewport;
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
     QSet<const QEvent*> injectedEvents;
     bool dragging=false, repairing=false, repairQueued=false;
-    int queuedZoom=0, previousZoom=0, speed=100;
+    int queuedZoom=0, previousZoom=0;
     std::function<void(const QString&)> command;
 
     QPoint globalPoint() const { return host->mapToGlobal(cursor.toPoint()); }
@@ -129,7 +100,7 @@ class DrnasTouchInput final : public QObject {
         injectedEvents.remove(event);
     }
     QWidget* targetAtCursor() const {
-        // Resolve the actual button/viewport under the virtual cursor,
+        // Resolve the actual button/viewport at the last direct-touch position,
         // including modal dialogs, menus and the shell's own tool controls.
         QWidget* root=QApplication::activePopupWidget();
         if (!root) root=QApplication::activeModalWidget();
@@ -165,7 +136,7 @@ class DrnasTouchInput final : public QObject {
         const QPointF window=target->window()->mapFromGlobal(global.toPoint());
         // Posting lets both press and release be queued BEFORE a tool button
         // enters QMenu::exec(). A synchronous press could otherwise suspend
-        // mouseButton(false) and leave our relative pointer holding LMB.
+        // mouseButton(false) and leave an emulated button pressed.
         QCoreApplication::postEvent(target.data(),new QMouseEvent(
             type,local,window,global,button,buttons,modifiers));
     }
@@ -173,7 +144,7 @@ class DrnasTouchInput final : public QObject {
         if (down) {
             if (buttons.testFlag(button)) return;
             if (buttons==Qt::NoButton) {
-                mouseReceiver=targetAtCursor();
+                if (!mouseReceiver) mouseReceiver=targetAtCursor();
                 if (mouseReceiver) { mouseReceiver->setFocus(Qt::MouseFocusReason); keyReceiver=mouseReceiver; }
             }
             buttons|=button;
@@ -214,60 +185,183 @@ class DrnasTouchInput final : public QObject {
         if (zoom) { QSignalBlocker blocker(zoom); zoom->setValue(0); }
         mouseReceiver.clear();
     }
-    void showPointer() {
-        const QRect r=host->rect();
-        if (r.isEmpty()) return;
-        cursor.setX(std::clamp(cursor.x(),double(r.left()),double(r.right())));
-        cursor.setY(std::clamp(cursor.y(),double(r.top()),double(r.bottom())));
-        QWidget* top=QApplication::activePopupWidget();
-        if (!top) top=QApplication::activeModalWidget();
-        // A popup clips its children. Draw on the host while the cursor is
-        // outside it, instead of making a moving cursor appear frozen/hidden.
-        if (top && !top->rect().contains(top->mapFromGlobal(globalPoint()))) top=nullptr;
-        if (top) {
-            mark->hide();
-            if (!dialogMark || dialogMark->parentWidget()!=top) {
-                if (dialogMark) dialogMark->hide();
-                dialogMark=static_cast<DrnasPointerMark*>(top->findChild<QWidget*>(QStringLiteral("drnasModalPointer"),Qt::FindDirectChildrenOnly));
-                if (!dialogMark) {
-                    dialogMark=new DrnasPointerMark(top);
-                    dialogMark->setObjectName(QStringLiteral("drnasModalPointer"));
+    void setPosition(const QPointF& global) {
+        cursor=QPointF(host->mapFromGlobal(global.toPoint()));
+    }
+    static bool isCadView(QGraphicsView* view) {
+        return view->inherits("Gui::View3DInventorViewer") ||
+               view->inherits("SIM::Coin3D::Quarter::QuarterWidget") ||
+               view->property("drnasCadViewport").toBool();
+    }
+    QWidget* viewportFor(QWidget* widget) const {
+        if (!cad || !widget || !(widget==cad || cad->isAncestorOf(widget))) return nullptr;
+        for (auto* view:cad->findChildren<QGraphicsView*>()) {
+            if (!isCadView(view)) continue;
+            QWidget* viewport=view->viewport();
+            if (view->isVisible() && viewport &&
+                (widget==viewport || viewport->isAncestorOf(widget))) return viewport;
+        }
+        return nullptr;
+    }
+    void resetGesture() {
+        precisionTimer.stop(); cameraTimer.stop();
+        orbitDelta=QPointF(); panDelta=QPointF(); zoomLog=0;
+        gesture=Gesture::Idle; fingerId=-1; multiDistance=0;
+        touchOwner.clear(); cameraOwner.clear(); mark->hide();
+        releaseAll();
+    }
+    bool editingTool() {
+        if (!cad) return true;
+        // Fail closed: if the bridge fails, a one-finger drag must never orbit
+        // a sketch or task. Camera gestures with two fingers remain available.
+        cad->setProperty("drnasTouchToolActive",true);
+        command(QStringLiteral(
+            "import FreeCADGui as Gui\n"
+            "_drnas_doc=Gui.activeDocument()\n"
+            "Gui.getMainWindow().setProperty('drnasTouchToolActive', bool("
+            "(_drnas_doc and _drnas_doc.getInEdit()) or Gui.Control.activeDialog()))\n"));
+        return toolMode->isChecked() || cad->property("drnasTouchToolActive").toBool();
+    }
+    void flushCamera() {
+        if (!cameraOwner || !cameraOwner->isVisible() ||
+            QApplication::activeModalWidget() || QApplication::activePopupWidget()) {
+            orbitDelta=QPointF(); panDelta=QPointF(); zoomLog=0; return;
+        }
+        const double h=std::max(1,cameraOwner->height());
+        const QPointF orbit=std::exchange(orbitDelta,QPointF());
+        const QPointF pan=std::exchange(panDelta,QPointF());
+        const double z=std::exchange(zoomLog,0.0);
+        const QPoint anchor=cameraOwner->mapFromGlobal(multiCenter.toPoint());
+        const double ax=(anchor.x()-cameraOwner->width()/2.0)/h;
+        const double ay=(anchor.y()-cameraOwner->height()/2.0)/h;
+        if (orbit.isNull() && pan.isNull() && z==0) return;
+        // Work in the existing Coin camera. No GL context, framebuffer, native
+        // surface or synthetic multi-button mouse navigation is created here.
+        command(QStringLiteral(R"PY(import FreeCAD as App, FreeCADGui as Gui, math
+_drnas_doc=Gui.activeDocument()
+if _drnas_doc:
+    _v=_drnas_doc.activeView()
+    _c=_v.getCameraNode()
+    _r=_v.getCameraOrientation()
+    _p=App.Vector(*_c.position.getValue().getValue())
+    _f=max(1e-9,float(_c.focalDistance.getValue()))
+    _center=_p-_r.multVec(App.Vector(0,0,_f))
+    if (%1 or %2) and not (_drnas_doc.getInEdit() or Gui.Control.activeDialog()):
+        _r=_r.multiply(App.Rotation(App.Vector(0,1,0),%1)).multiply(App.Rotation(App.Vector(1,0,0),%2))
+        _v.setCameraOrientation(_r.Q)
+        _p=_center+_r.multVec(App.Vector(0,0,_f))
+    _ortho=hasattr(_c,'height')
+    _span=float(_c.height.getValue()) if _ortho else 2*_f*math.tan(float(_c.heightAngle.getValue())/2)
+    _p=_p+_r.multVec(App.Vector(-(%3)*_span,(%4)*_span,0))
+    _scale=math.exp(-(%5))
+    _p=_p+_r.multVec(App.Vector((%6)*_span*(1-_scale),-(%7)*_span*(1-_scale),0))
+    if _ortho:
+        _c.height=max(1e-9,min(1e15,_span*_scale))
+    else:
+        _new_f=max(1e-9,min(1e15,_f*_scale))
+        _p=_p+_r.multVec(App.Vector(0,0,_new_f-_f))
+        _c.focalDistance=_new_f
+    _c.position=(_p.x,_p.y,_p.z)
+    _v.redraw()
+)PY").arg(-orbit.x()*180.0/h,0,'g',12).arg(-orbit.y()*180.0/h,0,'g',12)
+            .arg(pan.x()/h,0,'g',12).arg(pan.y()/h,0,'g',12).arg(z,0,'g',12)
+            .arg(ax,0,'g',12).arg(ay,0,'g',12));
+    }
+    void queueCamera(QPointF orbit,QPointF pan,double scaleLog=0) {
+        cameraOwner=touchOwner;
+        orbitDelta+=orbit; panDelta+=pan; zoomLog=std::clamp(zoomLog+scaleLog,-10.0,10.0);
+        if (!cameraTimer.isActive()) cameraTimer.start();
+    }
+    void precisionPosition(const QPointF& finger) {
+        if (!touchOwner) return;
+        QPoint local=touchOwner->mapFromGlobal((finger+QPointF(0,-42)).toPoint());
+        local.setX(std::clamp(local.x(),0,std::max(0,touchOwner->width()-1)));
+        local.setY(std::clamp(local.y(),0,std::max(0,touchOwner->height()-1)));
+        setPosition(touchOwner->mapToGlobal(local));
+        mark->move(cursor.toPoint()-QPoint(12,12)); mark->show(); mark->raise();
+        mouseReceiver=touchOwner;
+        sendMouse(QEvent::MouseMove,Qt::NoButton);
+    }
+    void startTouch(QWidget* owner,const QEventPoint& point) {
+        resetGesture(); touchOwner=owner; lastViewport=owner;
+        touchStart=touchLast=point.globalPosition(); fingerId=point.id();
+        setPosition(touchStart); keyReceiver=owner;
+        owner->setFocus(Qt::MouseFocusReason);
+        toolAtStart=editingTool();
+        if (multiSelect->isChecked()) modifiers|=Qt::ControlModifier;
+        gesture=Gesture::Pending;
+        precisionTimer.start();
+        DrnasDiagnostics::note(QStringLiteral("INPUT touch begin owner=%1 logical=%2,%3 dpr=%4 tool=%5")
+            .arg(QString::fromLatin1(owner->metaObject()->className()))
+            .arg(owner->mapFromGlobal(touchStart.toPoint()).x())
+            .arg(owner->mapFromGlobal(touchStart.toPoint()).y())
+            .arg(owner->devicePixelRatioF()).arg(toolAtStart));
+    }
+    void handleTouch(QWidget* owner,QTouchEvent* event) {
+        QList<QEventPoint> live;
+        for (const auto& point:event->points())
+            if (point.state()!=QEventPoint::State::Released) live.append(point);
+        if (event->type()==QEvent::TouchBegin && !live.isEmpty()) startTouch(owner,live.first());
+        if (!touchOwner) return;
+        if (live.size()>=2) {
+            precisionTimer.stop(); mark->hide();
+            const QPointF center=(live[0].globalPosition()+live[1].globalPosition())/2;
+            const double distance=QLineF(live[0].globalPosition(),live[1].globalPosition()).length();
+            if (gesture!=Gesture::Multi) {
+                releaseAll(); flushCamera(); gesture=Gesture::Multi;
+                DrnasDiagnostics::note(QStringLiteral("INPUT two-finger pan/pinch"));
+            } else {
+                const double ratio=(multiDistance>4 && distance>4) ? distance/multiDistance : 1.0;
+                queueCamera(QPointF(),center-multiCenter,std::log(ratio));
+            }
+            multiCenter=center; multiDistance=distance;
+            return;
+        }
+        // A two-finger gesture stays navigation until EVERY finger is lifted.
+        // Never convert its remaining finger into a click or sketch point.
+        if (gesture==Gesture::Multi) {
+            if (!live.isEmpty()) return;
+            flushCamera(); resetGesture(); return;
+        }
+        const QEventPoint* tracked=nullptr;
+        for (const auto& point:event->points()) if (point.id()==fingerId) {tracked=&point;break;}
+        if (!tracked) return;
+        const QPointF global=tracked->globalPosition();
+        const bool released=tracked->state()==QEventPoint::State::Released;
+        if (gesture==Gesture::Precision) precisionPosition(global);
+        else if ((global-touchStart).manhattanLength()>QApplication::startDragDistance() ||
+                 gesture==Gesture::Orbit || gesture==Gesture::Tool) {
+            precisionTimer.stop();
+            if (gesture==Gesture::Pending) {
+                gesture=toolAtStart ? Gesture::Tool : Gesture::Orbit;
+                if (gesture==Gesture::Tool) {
+                    setPosition(touchStart); mouseReceiver=touchOwner;
+                    sendMouse(QEvent::MouseMove,Qt::NoButton);
+                    mouseButton(Qt::LeftButton,true);
                 }
             }
-            dialogMark->move(top->mapFromGlobal(globalPoint())-QPoint(12,12));
-            dialogMark->show(); dialogMark->raise();
-        } else {
-            if (dialogMark) dialogMark->hide();
-            mark->move(cursor.toPoint()-QPoint(12,12)); mark->show(); mark->raise();
+            if (gesture==Gesture::Orbit) queueCamera(global-touchLast,QPointF());
+            else if (gesture==Gesture::Tool) {
+                setPosition(global); sendMouse(QEvent::MouseMove,Qt::NoButton);
+            }
         }
-    }
-    void movePointer(QPointF delta) {
-        cursor+=delta*(double(speed)/100.0);
-        showPointer(); sendMouse(QEvent::MouseMove,Qt::NoButton);
-    }
-    void beginRelative(const QPointF& p) {
-        relativeActive=true; relativeMoved=false;
-        relativeLast=relativeStart=p; relativeClock.start();
-        showPointer();
-    }
-    void updateRelative(const QPointF& p) {
-        if (!relativeActive) return;
-        if ((p-relativeStart).manhattanLength()>QApplication::startDragDistance()) relativeMoved=true;
-        movePointer(p-relativeLast); relativeLast=p;
-    }
-    void endRelative(const QPointF& p) {
-        if (!relativeActive) return;
-        updateRelative(p); relativeActive=false;
-        if (!relativeMoved && relativeClock.elapsed()<350 && buttons==Qt::NoButton) {
-            mouseButton(Qt::LeftButton,true);
-            mouseButton(Qt::LeftButton,false);
+        touchLast=global;
+        if (released) {
+            precisionTimer.stop();
+            if (gesture==Gesture::Pending || gesture==Gesture::Precision) {
+                if (gesture==Gesture::Pending) setPosition(global);
+                mouseReceiver=touchOwner;
+                sendMouse(QEvent::MouseMove,Qt::NoButton);
+                mouseButton(Qt::LeftButton,true); mouseButton(Qt::LeftButton,false);
+            }
+            flushCamera(); resetGesture();
         }
     }
     void zoomStep() {
         if (QApplication::activeModalWidget()) { queuedZoom=0; zoomTimer.stop(); return; }
-        QWidget* target=nullptr;
-        if (cad) for (auto* view : cad->findChildren<QGraphicsView*>()) {
-            if (view->isVisible() && view->width()>50 && view->height()>50) { target=view->viewport(); break; }
+        QWidget* target=lastViewport;
+        if (!target && cad) for (auto* view : cad->findChildren<QGraphicsView*>()) {
+            if (isCadView(view) && view->isVisible() && view->width()>50 && view->height()>50) { target=view->viewport(); break; }
         }
         if (!target) { queuedZoom=0; zoomTimer.stop(); return; }
         const int delta=std::clamp(queuedZoom,-60,60);
@@ -275,7 +369,7 @@ class DrnasTouchInput final : public QObject {
         QPoint local=target->mapFromGlobal(globalPoint());
         if (!target->rect().contains(local)) local=target->rect().center();
         QWheelEvent event(QPointF(local),QPointF(target->mapToGlobal(local)),QPoint(),QPoint(0,delta),
-                          Qt::NoButton,modifiers,Qt::NoScrollPhase,false);
+                          Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
         deliverEvent(target,&event);
         if (!queuedZoom) zoomTimer.stop();
     }
@@ -294,7 +388,8 @@ class DrnasTouchInput final : public QObject {
         panel->move(std::clamp(panel->x(),0,std::max(0,host->width()-panel->width())),
                     std::clamp(panel->y(),0,std::max(0,host->height()-panel->height())));
         launcher->setGeometry(std::max(0,host->width()-77),std::max(0,host->height()-90),72,34);
-        panel->raise(); launcher->raise();
+        cancelButton->setGeometry(std::max(0,host->width()-160),std::max(0,host->height()-90),78,34);
+        panel->raise(); launcher->raise(); cancelButton->raise();
     }
     void repairWindows() {
         if (!cad || repairing) return;
@@ -305,7 +400,7 @@ class DrnasTouchInput final : public QObject {
             if (!area->property("drnasMobileMdi").toBool()) {
                 area->setProperty("drnasMobileMdi",true);
                 area->setOption(QMdiArea::DontMaximizeSubWindowOnActivation,false);
-                connect(area,&QMdiArea::subWindowActivated,this,[this](QMdiSubWindow*){scheduleRepair();});
+                connect(area,&QMdiArea::subWindowActivated,this,[this](QMdiSubWindow*){resetGesture();lastViewport.clear();scheduleRepair();});
             }
             const QSize available=area->viewport()->size();
             if (available.width()<32 || available.height()<32) continue;
@@ -332,6 +427,8 @@ class DrnasTouchInput final : public QObject {
                           std::clamp(sub->y(),0,std::max(0,available.height()-sub->height())));
             }
         }
+        for (auto* view:cad->findChildren<QGraphicsView*>())
+            if (isCadView(view)) view->viewport()->setAttribute(Qt::WA_AcceptTouchEvents);
         const QRect bounds(host->mapToGlobal(QPoint()),host->size());
         for (QWidget* top : QApplication::topLevelWidgets()) {
             auto* dialog=qobject_cast<QDialog*>(top);
@@ -353,90 +450,50 @@ class DrnasTouchInput final : public QObject {
     }
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
+        if (obj==host && event->type()==QEvent::Destroy) {
+            qApp->removeEventFilter(this); return false;
+        }
         if (injectedEvents.contains(event)) return false;
         if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
             event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick) {
             auto* mouse=static_cast<QMouseEvent*>(event);
             // Our posted mouse events (and their propagated copies) already
-            // contain virtual cursor coordinates; never feed them back into
+            // contain mapped viewport coordinates; never feed them back into
             // the physical-finger tracking path.
             if (!event->spontaneous() && mouse->source()==Qt::MouseEventNotSynthesized) return false;
         }
-        if (auto* popupWidget=qobject_cast<QWidget*>(obj)) {
-            if ((popupWidget->windowType()==Qt::Popup) &&
-                (event->type()==QEvent::Show || event->type()==QEvent::Hide)) {
-                DrnasDiagnostics::note(QStringLiteral("INPUT popup %1 class=%2 buttons=%3")
-                    .arg(event->type()==QEvent::Show ? QStringLiteral("show") : QStringLiteral("hide"))
-                    .arg(QString::fromLatin1(popupWidget->metaObject()->className())).arg(int(buttons)));
-                QTimer::singleShot(0,this,[this]{showPointer();});
-            }
-        }
         auto* inputWidget=qobject_cast<QWidget*>(obj);
-        QWidget* modal=QApplication::activeModalWidget();
-        QWidget* popup=QApplication::activePopupWidget();
-        // Android modal dialogs must receive direct touch/click events. Relative
-        // touchpad translation can otherwise consume the only way to dismiss them.
-        if (modal && inputWidget && (inputWidget==modal || modal->isAncestorOf(inputWidget))) {
-            // Do not release on every child-widget event: that can synthesize a
-            // mouse release between the dialog button's press and release.
-            if (event->type()==QEvent::TouchBegin && (relativeActive || relativeTouchId>=0 || buttons!=Qt::NoButton)) {
-                relativeActive=false;
-                relativeTouchId=-1;
-                releaseAll();
-                DrnasDiagnostics::note(QStringLiteral("INPUT modal direct mode: released relative pointer"));
-            }
-            return false;
+        const bool touchEvent=event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate ||
+                              event->type()==QEvent::TouchEnd;
+        if (event->type()==QEvent::ApplicationDeactivate ||
+            (obj==host && (event->type()==QEvent::Hide || event->type()==QEvent::WindowDeactivate)) ||
+            (obj==touchOwner && (event->type()==QEvent::Hide || event->type()==QEvent::FocusOut)) ||
+            (inputWidget && (inputWidget->windowType()==Qt::Popup || qobject_cast<QDialog*>(inputWidget)) &&
+             event->type()==QEvent::Show)) resetGesture();
+        if (event->type()==QEvent::TouchCancel && touchOwner) {
+            resetGesture(); event->accept(); return true;
         }
-        const bool inApp=inputWidget && (inputWidget==host || host->isAncestorOf(inputWidget) ||
-            (modal && (inputWidget==modal || modal->isAncestorOf(inputWidget))) ||
-            (popup && (inputWidget==popup || popup->isAncestorOf(inputWidget))));
-        // Native Qt menus, the mouse panel AND the floating Tools overlay
-        // need physical finger events. The relative touchpad is for CAD content,
-        // never for actual buttons, sliders or scroll areas in these overlays.
-        const bool inPopup=inputWidget && popup &&
-            (inputWidget==popup || popup->isAncestorOf(inputWidget));
-        const bool inCommands=inputWidget &&
-            (inputWidget==commandsLauncher || inputWidget==commandsPanel ||
-             (commandsPanel && commandsPanel->isAncestorOf(inputWidget)));
-        const bool directControl=inputWidget &&
-            (inputWidget==panel || panel->isAncestorOf(inputWidget) ||
-             inputWidget==launcher || inCommands || inPopup);
-        if (inApp && !directControl) {
-            if (event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate || event->type()==QEvent::TouchEnd) {
-                auto* touch=static_cast<QTouchEvent*>(event);
-                for (const auto& point:touch->points()) {
-                    if (relativeTouchId<0 && point.state()==QEventPoint::State::Pressed) {
-                        relativeTouchId=point.id(); beginRelative(point.globalPosition());
-                    }
-                    if (point.id()!=relativeTouchId) continue;
-                    if (point.state()==QEventPoint::State::Released) {
-                        endRelative(point.globalPosition()); relativeTouchId=-1;
-                    } else updateRelative(point.globalPosition());
-                }
+        // UI widgets keep normal Qt hit testing, focus, scrolling and modality.
+        // Only a sequence which begins inside a CAD viewport belongs to us.
+        const bool mouseEvent=event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
+                              event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick;
+        if ((touchEvent || mouseEvent) && !QApplication::activeModalWidget() && !QApplication::activePopupWidget()) {
+            QWidget* viewport=viewportFor(inputWidget);
+            if (touchEvent && viewport && (!touchOwner || viewport==touchOwner)) {
+                handleTouch(touchOwner ? touchOwner.data() : viewport,static_cast<QTouchEvent*>(event));
                 event->accept(); return true;
             }
-            if (event->type()==QEvent::TouchCancel) {
-                relativeActive=false; relativeTouchId=-1; releaseAll(); event->accept(); return true;
-            }
-            if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
-                event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick) {
+            if (viewport && (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
+                event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick)) {
                 auto* mouse=static_cast<QMouseEvent*>(event);
                 if (mouse->source()!=Qt::MouseEventNotSynthesized) {
-                    if (relativeTouchId<0) {
-                        if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseButtonDblClick)
-                            beginRelative(mouse->globalPosition());
-                        else if (event->type()==QEvent::MouseButtonRelease) endRelative(mouse->globalPosition());
-                        else updateRelative(mouse->globalPosition());
-                    }
-                    event->accept(); return true;
+                    event->accept(); return true; // native touch already handled above
                 }
+                lastViewport=viewport;
             }
         }
-        if (event->type()==QEvent::ApplicationDeactivate || (obj==host && event->type()==QEvent::Hide)) {
-            relativeActive=false; relativeTouchId=-1; releaseAll();
-        }
         if (obj==host && event->type()==QEvent::Resize) {
-            releaseAll();
+            resetGesture();
             QSettings s;
             panel->move(int(s.value(QStringLiteral("touch/panelX"),0.02).toDouble()*host->width()),
                         int(s.value(QStringLiteral("touch/panelY"),0.15).toDouble()*host->height()));
@@ -462,7 +519,7 @@ protected:
                 auto* e=static_cast<QMouseEvent*>(event);
                 cursor=host->mapFromGlobal(e->globalPosition().toPoint());
                 keyReceiver=widget;
-                if (mark->isVisible()) showPointer();
+
             }
         }
         return false;
@@ -477,7 +534,7 @@ public:
             "QPushButton:checked,QPushButton:pressed{background:#278caa;}"));
         auto* outer=new QVBoxLayout(panel); outer->setContentsMargins(5,4,5,5); outer->setSpacing(3);
         auto* heading=new QHBoxLayout;
-        grip=new QLabel(QStringLiteral("Miš i tipke · povuci"),panel); grip->setMinimumHeight(30);
+        grip=new QLabel(QStringLiteral("Dodir i geste · povuci"),panel); grip->setMinimumHeight(30);
         auto* close=new QPushButton(QStringLiteral("×"),panel); close->setFixedWidth(34);
         close->setFocusPolicy(Qt::NoFocus);
         heading->addWidget(grip,1); heading->addWidget(close); outer->addLayout(heading);
@@ -486,19 +543,28 @@ public:
         auto* content=new QWidget(scroll); auto* body=new QVBoxLayout(content);
         body->setContentsMargins(0,0,0,0); body->setSpacing(3); scroll->setWidget(content); outer->addWidget(scroll);
         auto button=[content](const QString& text) { auto* b=new QPushButton(text,content); b->setFocusPolicy(Qt::NoFocus); return b; };
-        auto* mouseRow=new QHBoxLayout;
-        for (auto pair : {std::pair<const char*,Qt::MouseButton>{"LMB",Qt::LeftButton},{"MMB",Qt::MiddleButton},{"RMB",Qt::RightButton}}) {
-            auto* b=button(QString::fromLatin1(pair.first)); mouseKeys.append(b); mouseRow->addWidget(b);
-            connect(b,&QPushButton::pressed,this,[this,pair]{ if (!hold->isChecked()) mouseButton(pair.second,true); });
-            connect(b,&QPushButton::released,this,[this,pair]{ if (!hold->isChecked()) mouseButton(pair.second,false); });
-            connect(b,&QPushButton::clicked,this,[this,pair](bool checked){ if (hold->isChecked()) mouseButton(pair.second,checked); });
-        }
-        hold=button(QStringLiteral("Drži")); hold->setCheckable(true); mouseRow->addWidget(hold);
-        connect(hold,&QPushButton::toggled,this,[this](bool on){ releaseAll(); for (auto* b:mouseKeys) b->setCheckable(on); });
-        auto* reset=button(QStringLiteral("Otpusti")); mouseRow->addWidget(reset);
-        connect(reset,&QPushButton::clicked,this,[this]{releaseAll();}); body->addLayout(mouseRow);
-        auto* pad=new DrnasPointerPad(content); body->addWidget(pad);
-        pad->movePointer=[this](QPointF delta){movePointer(delta);};
+        auto* modes=new QHBoxLayout;
+        toolMode=button(QStringLiteral("Alat / povlačenje")); toolMode->setCheckable(true);
+        toolMode->setObjectName(QStringLiteral("drnasTouchToolMode"));
+        multiSelect=button(QStringLiteral("Višestruki odabir")); multiSelect->setCheckable(true);
+        multiSelect->setObjectName(QStringLiteral("drnasTouchMultiSelect"));
+        toolMode->setToolTip(QStringLiteral("Jedan prst povlači alat; dva prsta pomiču i zumiraju kameru"));
+        modes->addWidget(toolMode); modes->addWidget(multiSelect); body->addLayout(modes);
+        connect(toolMode,&QPushButton::toggled,this,[this]{resetGesture();});
+        connect(multiSelect,&QPushButton::toggled,this,[this](bool on){
+            modifier(Qt::ControlModifier,Qt::Key_Control,on);
+        });
+
+        auto* context=button(QStringLiteral("Izbornik odabira")); body->addWidget(context);
+        connect(context,&QPushButton::clicked,this,[this]{
+            if (!lastViewport || QApplication::activeModalWidget()) return;
+            mouseReceiver=lastViewport;
+            mouseButton(Qt::RightButton,true); mouseButton(Qt::RightButton,false);
+        });
+        auto* help=new QLabel(QStringLiteral("Dodir: odabir · povuci: orbita\n"
+            "Dva prsta: pomak i zoom\nZadrži prst: precizni križić\n"
+            "Skica/zadatak: jedan prst koristi alat"),content);
+        help->setWordWrap(true); body->addWidget(help);
         auto* zoomRow=new QHBoxLayout;
         auto* minus=button(QStringLiteral("−")); minus->setFixedWidth(34);
         auto* plus=button(QStringLiteral("+")); plus->setFixedWidth(34);
@@ -519,7 +585,7 @@ public:
         }
         for (auto pair : {std::pair<const char*,int>{"Esc",Qt::Key_Escape},{"Enter",Qt::Key_Return}}) {
             auto* b=button(QString::fromLatin1(pair.first)); mods->addWidget(b);
-            connect(b,&QPushButton::clicked,this,[this,pair]{if(pair.second==Qt::Key_Escape)releaseAll();sendKey(pair.second);});
+            connect(b,&QPushButton::clicked,this,[this,pair]{if(pair.second==Qt::Key_Escape)resetGesture();sendKey(pair.second);});
         }
         body->addLayout(mods);
         auto* keys=new QHBoxLayout;
@@ -533,19 +599,27 @@ public:
         auto* footer=new QHBoxLayout;
         auto* recover=button(QStringLiteral("Vrati prozore")); footer->addWidget(recover);
         connect(recover,&QPushButton::clicked,this,[this]{releaseAll();repairWindows();constrain();savePosition();DrnasDiagnostics::note(QStringLiteral("INPUT: visible windows recovered"));});
-        auto* gear=button(QStringLiteral("⚙")); gear->setFixedWidth(34); footer->addWidget(gear); body->addLayout(footer);
-        auto* options=new QWidget(content); auto* optionLayout=new QVBoxLayout(options); optionLayout->setContentsMargins(0,0,0,0);
-        optionLayout->addWidget(new QLabel(QStringLiteral("Brzina pokazivača"),options));
-        auto* sensitivity=new QSlider(Qt::Horizontal,options); sensitivity->setRange(25,300);
-        QSettings settings; speed=std::clamp(settings.value(QStringLiteral("touch/speed"),100).toInt(),25,300); sensitivity->setValue(speed); optionLayout->addWidget(sensitivity);
-        connect(sensitivity,&QSlider::valueChanged,this,[this](int value){speed=value;QSettings s;s.setValue(QStringLiteral("touch/speed"),value);});
-        body->addWidget(options); options->hide();
-        connect(gear,&QPushButton::clicked,this,[this,options]{options->setVisible(!options->isVisible());constrain();});
+        body->addLayout(footer);
+        QSettings settings;
         connect(close,&QPushButton::clicked,panel,&QWidget::hide);
-        launcher=new QPushButton(QStringLiteral("Miš"),host); launcher->setObjectName(QStringLiteral("drnasTouchInputLauncher"));
+        launcher=new QPushButton(QStringLiteral("Geste"),host); launcher->setObjectName(QStringLiteral("drnasTouchInputLauncher"));
         launcher->setFocusPolicy(Qt::NoFocus); launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
         connect(launcher,&QPushButton::clicked,this,[this]{panel->setVisible(!panel->isVisible());constrain();});
+        cancelButton=new QPushButton(QStringLiteral("Odustani"),host);
+        cancelButton->setObjectName(QStringLiteral("drnasTouchCancel"));
+        cancelButton->setFocusPolicy(Qt::NoFocus);
+        cancelButton->setStyleSheet(launcher->styleSheet());
+        connect(cancelButton,&QPushButton::clicked,this,[this]{resetGesture();sendKey(Qt::Key_Escape);});
         mark=new DrnasPointerMark(host); mark->hide();
+        precisionTimer.setSingleShot(true); precisionTimer.setInterval(500); precisionTimer.setTimerType(Qt::PreciseTimer);
+        connect(&precisionTimer,&QTimer::timeout,this,[this]{
+            if (gesture==Gesture::Pending && touchOwner &&
+                !QApplication::activeModalWidget() && !QApplication::activePopupWidget()) {
+                gesture=Gesture::Precision; precisionPosition(touchLast);
+            }
+        });
+        cameraTimer.setSingleShot(true); cameraTimer.setInterval(16);
+        connect(&cameraTimer,&QTimer::timeout,this,[this]{flushCamera();});
         cursor=QPointF(host->width()/2.0,host->height()/2.0);
         panel->move(int(settings.value(QStringLiteral("touch/panelX"),0.02).toDouble()*host->width()),
                     int(settings.value(QStringLiteral("touch/panelY"),0.15).toDouble()*host->height()));
@@ -562,7 +636,6 @@ public:
         constrain(); panel->hide(); launcher->show();
         qApp->installEventFilter(this);
         scheduleRepair();
-        showPointer();
-        DrnasDiagnostics::note(QStringLiteral("INPUT: default full-screen relative touchpad, tap to click; mobile MDI maximize enabled"));
+        DrnasDiagnostics::note(QStringLiteral("INPUT: direct touch; viewport orbit/pan/pinch; relative mouse removed"));
     }
 };

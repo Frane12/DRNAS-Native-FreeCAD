@@ -996,8 +996,10 @@ finally:
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, toolbar);
-    new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
-        invoke(script, QStringLiteral("Mouse / keyboard controls"));
+    new DrnasTouchInput(shell, freecad, [](const QString& script) {
+        QString error;
+        if (!runOriginalFreeCADPython(script,error))
+            DrnasDiagnostics::note(QStringLiteral("INPUT Python: ")+error);
     });
 }
 
