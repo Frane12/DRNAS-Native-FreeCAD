@@ -80,7 +80,9 @@ jobs:
           if [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
-            run_id="40139472497"
+            # Always package the most recent verified native compile. The old
+            # fixed run predates Android SAF and silently rejected new fixes.
+            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=feature/full-freecad-android&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
           fi
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
