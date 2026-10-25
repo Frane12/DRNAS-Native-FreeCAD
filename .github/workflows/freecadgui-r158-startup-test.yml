@@ -1,6 +1,6 @@
-name: DRNAS FreeCAD R158 startup comparison APK
+name: DRNAS FreeCAD R158 portrait comparison APK
 # Isolated R158 startup test on #196, built on the feature branch for SDK caches.
-# Checkout is pinned to test/ui05-r158-render-startup's immutable commit.
+# Checkout is pinned to test/ui05-r158-portrait's immutable commit.
 # Repackage the already-compiled native FreeCAD artifact when Android-only
 # integration changes. No full FreeCAD C++ rebuild is triggered on these paths.
 # The main-branch workflow_run controller still dispatches packaging after a
@@ -93,7 +93,7 @@ jobs:
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
           # Package the latest integration glue on our trusted feature branch.
           # Native binary provenance remains pinned to the successful source SHA.
-          package_sha="9534fe25c3b58c22e168d87bfe6083cc8655850d"
+          package_sha="e65966bb32bd654dee3284a75d41a1888eb3569c"
           [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
@@ -383,7 +383,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: DRNAS-FreeCAD-R158-Startup-Test-APK-${{ github.run_id }}-${{ github.run_attempt }}
+          name: DRNAS-FreeCAD-R158-Portrait-Test-APK-${{ github.run_id }}-${{ github.run_attempt }}
           path: out/integrated-freecad-qtapk/
           retention-days: 30
           if-no-files-found: warn
