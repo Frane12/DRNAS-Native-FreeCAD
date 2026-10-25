@@ -78,7 +78,7 @@ class DrnasRenderLab final : public QObject {
     QTimer poll;
     QString directory;
     QByteArray previousDirty;
-    int stage=3;
+    int stage=0;
     bool watching=false, busy=false, axes=false, nativeStages=false;
     QActionGroup* stages;
     QAction* axesAction;
@@ -136,8 +136,6 @@ class DrnasRenderLab final : public QObject {
         return QString::fromUtf8(json.mid(1,json.size()-2));
     }
     bool execute(const QString& script) {
-        if (QApplication::activeModalWidget() ||
-            (upstream && upstream->window()->property("drnasEmbeddedModalActive").toBool())) return false;
         QString error;
         if (python(script,error)) return true;
         DrnasDiagnostics::note(QStringLiteral("RENDER_LAB ERROR: ")+error);
@@ -165,9 +163,7 @@ class DrnasRenderLab final : public QObject {
         return true;
     }
     void tick(bool force=false) {
-        if (busy || (stage!=0 && stage!=3) || !upstream || !upstream->updatesEnabled() ||
-            QApplication::activeModalWidget() || QApplication::activePopupWidget() ||
-            upstream->window()->property("drnasEmbeddedModalActive").toBool() ||
+        if (busy || stage!=0 || !upstream || !upstream->updatesEnabled() ||
             QGuiApplication::applicationState()!=Qt::ApplicationActive ||
             !upstream->window()->windowHandle() ||
             !upstream->window()->windowHandle()->isExposed()) return;
@@ -175,27 +171,12 @@ class DrnasRenderLab final : public QObject {
         if (!watching) watching=execute(QStringLiteral(
             "import drnas_android_runtime as _drnas_runtime\n"
             "_drnas_runtime._drnas_render_watch(%1)\n").arg(argument()));
-        if (!watching) { busy=false; return; }
+        if (!watching || !ensurePanel()) { busy=false; return; }
+        panel->setGeometry(areaViewport->rect());
+        panel->show(); panel->raise();
         QFile dirty(directory+QStringLiteral("/dirty"));
         QByteArray revision;
         if (dirty.open(QIODevice::ReadOnly)) revision=dirty.readAll();
-        if (stage==3) {
-            // Run only after document notifications have returned to Qt's
-            // event loop, never inside finger dispatch or QDialog::exec().
-            if (force || revision!=previousDirty) {
-                bool ready=false;
-                for (auto* gl:upstream->findChildren<QOpenGLWidget*>())
-                    if (gl->isVisible() && gl->isValid() && gl->width()>32 && gl->height()>32)
-                        ready=true;
-                if (ready && execute(QStringLiteral("_drnas_runtime._drnas_mobile_view_tick()\n")))
-                    previousDirty=revision;
-            }
-            busy=false;
-            return;
-        }
-        if (!ensurePanel()) { busy=false; return; }
-        panel->setGeometry(areaViewport->rect());
-        panel->show(); panel->raise();
         if (force || revision!=previousDirty) {
             previousDirty=revision;
             DrnasDiagnostics::note(QStringLiteral("RENDER_BASELINE SNAPSHOT_BEGIN"));
@@ -270,7 +251,7 @@ public:
             action->setObjectName(QStringLiteral("drnasRenderStage%1").arg(i));
             action->setCheckable(true); action->setData(i); stages->addAction(action);
             action->setEnabled(i==0 || i==5 || supported);
-            if (i==stage) action->setChecked(true);
+            if (i==0) action->setChecked(true);
             QObject::connect(action,&QAction::triggered,this,[this,i]{setStage(i);});
         }
         const bool gpuReady = dlsym(RTLD_DEFAULT, "drnas_gpu_color_version") != nullptr;
@@ -304,21 +285,18 @@ public:
         axesAction->setCheckable(true); axesAction->setEnabled(false);
         axesAction->setToolTip(QStringLiteral("Zasebni test prethodno problematičnog križa osi; samo faza 4"));
         QObject::connect(axesAction,&QAction::triggered,this,[this](bool value){axes=value;setStage(stage);});
-        qputenv("DRNAS_ENABLE_COIN_REDRAW","1");
-        qputenv("DRNAS_RENDER_STAGE","3");
-        qputenv("DRNAS_COIN_FBO_SYNC","1");
+        qputenv("DRNAS_ENABLE_COIN_REDRAW","0");
+        qputenv("DRNAS_RENDER_STAGE","0");
+        qputenv("DRNAS_COIN_FBO_SYNC","0");
         qputenv("DRNAS_RENDER_AXES","0");
         poll.setInterval(750);
         QTimer::singleShot(2400,this,[this]{auditWarnings();inspectCoinWindow(QStringLiteral("startup"));});
         QObject::connect(&poll,&QTimer::timeout,this,[this]{tick();});
         QObject::connect(qApp,&QCoreApplication::aboutToQuit,this,[this]{poll.stop();});
-        // Finish original GUI initialization before requesting the first redraw.
-        // The reference GL widget is allocated only after explicit stage 0.
-        QTimer::singleShot(1500,this,[this]{
-            poll.start();
-            if (stage==3) setStage(3);
-        });
-        DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=Coin3D stage=3").arg(supported));
+        // The toolbar is installed before Gui startup finishes. Delay allocation
+        // of the reference GL widget until the original workspace is initialized.
+        QTimer::singleShot(1500,this,[this]{poll.start();tick(true);});
+        DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=reference").arg(supported));
     }
     void setStage(int value) {
         if (value==4) {
@@ -326,7 +304,6 @@ public:
             return;
         }
         stage=value;
-        previousDirty.clear();
         if (stage!=4) axes=false;
         axesAction->setEnabled(false);
         for (auto* action:stages->actions()) action->setChecked(action->data().toInt()==stage);

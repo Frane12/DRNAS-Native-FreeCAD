@@ -19,9 +19,7 @@ import java.util.Locale;
 
 /** Runs before Qt starts, so display scaling and touch coordinates agree. */
 public final class StartupActivity extends Activity {
-    private static final int PC_DESKTOP = -1024;
-    private static final int DESKTOP_800 = -800, DESKTOP_640 = -640;
-    private static final int[] LONG_EDGES = {DESKTOP_800, DESKTOP_640, PC_DESKTOP, 0, 960, 1280, 1600, 1920};
+    private static final int[] LONG_EDGES = {0, 960, 1280, 1600, 1920};
     private static final String PREFS = "drnas_startup_display";
     private RadioGroup choices;
     private RadioGroup viewportTests;
@@ -38,10 +36,7 @@ public final class StartupActivity extends Activity {
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         metrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
-        // Migrate the old tiny 1024x768 test once to the larger 800x600 UI.
-        // Subsequent launches preserve the explicit user selection.
-        int saved = preferences.getBoolean("touchLandscapeChoiceSaved", false)
-                ? preferences.getInt("longEdge", DESKTOP_800) : DESKTOP_800;
+        int saved = preferences.getInt("longEdge", 0);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout panel = new LinearLayout(this);
@@ -55,34 +50,26 @@ public final class StartupActivity extends Activity {
         title.setTextSize(26);
         panel.addView(title);
         TextView help = new TextView(this);
-        help.setText("FreeCAD s Android rasporedom i izvornim ikonama. "
-                + "Osnovne naredbe su gore, a alate odabrane grupe možeš pomicati prstom. "
-                + "Model koristi punu širinu zaslona.\n\n"
-                + "Nakon pokretanja automatski se otvara Part Design.");
+        help.setText("Odaberi radnu rezoluciju prije pokretanja. Veća rezolucija daje više prostora i manje kontrole.\n\nNakon pokretanja automatski se otvara Part Design.");
         help.setTextColor(Color.rgb(215, 232, 245));
         help.setTextSize(17);
         help.setPadding(0, dp(12), 0, dp(8));
         panel.addView(help);
         choices = new RadioGroup(this);
-        int nativeWidth = Math.round(Math.max(metrics.widthPixels, metrics.heightPixels) / metrics.density);
-        int nativeHeight = Math.round(Math.min(metrics.widthPixels, metrics.heightPixels) / metrics.density);
+        int nativeWidth = Math.round(metrics.widthPixels / metrics.density);
+        int nativeHeight = Math.round(metrics.heightPixels / metrics.density);
         for (int edge : LONG_EDGES) {
             RadioButton radio = new RadioButton(this);
             radio.setId(View.generateViewId());
             radio.setTag(edge);
             int width = nativeWidth;
             int height = nativeHeight;
-            if (edge < 0) {
-                width = -edge;
-                height = width * 3 / 4;
-            } else if (edge != 0) {
+            if (edge != 0) {
                 double ratio = (double) edge / Math.max(nativeWidth, nativeHeight);
                 width = (int) Math.round(nativeWidth * ratio);
                 height = (int) Math.round(nativeHeight * ratio);
             }
-            radio.setText(edge < 0 ? (edge == DESKTOP_800 ? "Android — standardne kontrole (preporučeno)" :
-                    edge == DESKTOP_640 ? "Android — veće kontrole" : "Android — manje kontrole") :
-                    (edge == 0 ? "Automatski — " : "") + width + " × " + height);
+            radio.setText((edge == 0 ? "Automatski — " : "") + width + " × " + height);
             radio.setTextSize(19);
             radio.setTextColor(Color.WHITE);
             radio.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(110, 205, 255)));
@@ -111,7 +98,7 @@ public final class StartupActivity extends Activity {
             radio.setMinHeight(dp(48));
             radio.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(110, 205, 255)));
             viewportTests.addView(radio);
-            if (mode.equals("B")) radio.setChecked(true);
+            if (mode.equals("A")) radio.setChecked(true);
         }
         panel.addView(viewportTests);
         Button start = new Button(this);
@@ -134,22 +121,12 @@ public final class StartupActivity extends Activity {
         RadioButton selected = findViewById(choices.getCheckedRadioButtonId());
         int edge = (Integer) selected.getTag();
         double logicalLong = Math.max(metrics.widthPixels, metrics.heightPixels) / (double) metrics.density;
-        // Normalize the short physical edge to the selected logical height.
-        // Qt applies this scale before both painting and native touch delivery.
-        // A centered 4:3 CAD viewport fits without
-        // nonuniform scaling; side gutters preserve the screen aspect ratio.
-        double scale = edge < 0
-                ? (Math.min(metrics.widthPixels, metrics.heightPixels) / metrics.density) / (-edge * 3.0 / 4.0)
-                : (edge == 0 ? 1.0 : logicalLong / edge);
+        double scale = edge == 0 ? 1.0 : logicalLong / edge;
         // Android's Os.setenv updates the native process environment before
         // QtActivity loads Qt. No root, display-mode override or extra GL surface.
         try {
             Os.setenv("QT_SCALE_FACTOR", String.format(Locale.ROOT, "%.6f", scale), true);
-            Os.setenv("QT_STYLE_OVERRIDE", "Fusion", true);
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
-            Os.setenv("DRNAS_PC_DESKTOP_MODE", edge < 0 ? "1" : "0", true);
-            Os.setenv("DRNAS_DESKTOP_WIDTH", edge < 0 ? Integer.toString(-edge) : "0", true);
-            Os.setenv("DRNAS_ANDROID_COMMAND_UI", "1", true);
             RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
             Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
             Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "0", true);
@@ -157,13 +134,11 @@ public final class StartupActivity extends Activity {
             Log.e("DRNAS", "Startup display configuration failed", error);
             return;
         }
-        preferences.edit().putInt("longEdge", edge)
-                .putBoolean("touchLandscapeChoiceSaved", true).apply();
+        preferences.edit().putInt("longEdge", edge).apply();
         starting = true;
         Intent intent = new Intent();
-        intent.setClassName(getPackageName(), "org.drnas.freecad.bootstrap.DesktopQtActivity");
+        intent.setClassName(getPackageName(), "org.qtproject.qt.android.bindings.QtActivity");
         startActivity(intent);
         finish();
     }
 }
-

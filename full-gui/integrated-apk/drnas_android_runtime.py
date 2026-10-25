@@ -120,85 +120,6 @@ def _drnas_part_commands():
 # Render Lab exports actual document BReps. No primitive substitutes and no
 # changes to the document, ViewProviders, or saved material properties.
 _drnas_render_observer = None
-_drnas_framed_documents = {}
-_drnas_coin_module = None
-_drnas_view_audits = {}
-
-
-def _drnas_load_coin_bindings():
-    """Register genuine Pivy SWIG types before FreeCAD wraps a Coin pointer."""
-    global _drnas_coin_module
-    if _drnas_coin_module is None:
-        # find_spec('pivy') only checks a path. It never loads _coin or creates
-        # the shared SWIG runtime type table used by getCameraNode().
-        from pivy import coin
-        _drnas_coin_module = coin
-        _drnas_mark('COIN_BINDINGS loaded=' + str(coin.__file__)
-                    + ' runtimes=' + repr(sorted(name for name in sys.modules
-                                                if 'swig_runtime_data' in name)))
-    return _drnas_coin_module
-
-
-def _drnas_mobile_view_tick():
-    """Frame the first real shape after the portrait viewport has settled."""
-    import FreeCADGui as Gui
-    doc = App.ActiveDocument
-    gui_doc = Gui.activeDocument()
-    if doc is None or gui_doc is None:
-        return
-    # Record the real document without changing visibility, materials or shapes.
-    # Only log a changed snapshot, not every redraw/gesture.
-    snapshot = []
-    for obj in doc.Objects:
-        if not hasattr(obj, 'Shape'):
-            continue
-        try:
-            shape, provider = obj.Shape, getattr(obj, 'ViewObject', None)
-            snapshot.append((obj.Name, getattr(obj, 'TypeId', '?'),
-                shape.isNull(), getattr(provider, 'Visibility', None),
-                len(getattr(shape, 'Faces', [])), len(getattr(shape, 'Edges', [])),
-                str(getattr(shape, 'BoundBox', None)),
-                getattr(provider, 'DisplayMode', None), getattr(provider, 'Transparency', None)))
-        except Exception as error:
-            snapshot.append((obj.Name, 'inspection failed', str(error)))
-    signature = repr(snapshot)
-    if _drnas_view_audits.get(doc.Name) != (doc, signature):
-        _drnas_view_audits[doc.Name] = (doc, signature)
-        _drnas_mark('GEOMETRY_STATE doc=' + doc.Name
-                    + ' fields=name,type,null,visible,faces,edges,bounds,display,transparency '
-                    + signature)
-    visible = [obj for obj in doc.Objects
-               if obj.isDerivedFrom('Part::Feature')
-               and getattr(obj, 'ViewObject', None) is not None
-               and obj.ViewObject.Visibility and hasattr(obj, 'Shape')
-               and not obj.Shape.isNull()]
-    view = gui_doc.activeView()
-    if not visible or not hasattr(view, 'fitAll'):
-        return
-    # Do this once per document, not on each camera gesture or recompute.
-    # Preserve real ViewProviders, visibility, materials and subsequent views.
-    if _drnas_framed_documents.get(doc.Name) is not doc:
-        _drnas_mark('FIRST_BREP candidates=' + repr([
-            (obj.Name, obj.TypeId, str(getattr(obj.Shape, 'BoundBox', None)))
-            for obj in visible]))
-        # Report the real Python/C++ bridge independently of camera framing.
-        # A binding error must not prevent the native fit/redraw operations.
-        try:
-            _drnas_load_coin_bindings()
-            camera = view.getCameraNode()
-            if camera is None:
-                raise RuntimeError('Active 3D view has no Coin camera')
-            root = view.getSceneGraph()
-            _drnas_mark('COIN_BRIDGE PASS camera=' + str(camera.getTypeId().getName())
-                        + ' scene_children=' + str(root.getNumChildren()))
-        except Exception:
-            _drnas_mark('COIN_BRIDGE FAIL\n' + traceback.format_exc())
-        view.viewAxonometric()
-        view.fitAll()
-        _drnas_framed_documents[doc.Name] = doc
-        _drnas_mark('PORTRAIT FIRST_SHAPE framed doc=' + doc.Name
-                    + ' visible=' + repr([obj.Name for obj in visible]))
-    view.redraw()
 
 
 def _drnas_render_watch(directory):
@@ -221,16 +142,8 @@ def _drnas_render_watch(directory):
         slotDeletedObject = dirty
         slotRecomputedDocument = dirty
         slotCreatedDocument = dirty
+        slotDeletedDocument = dirty
         slotActivateDocument = dirty
-
-        def slotDeletedDocument(self, doc):
-            # App and Gui observers pass different wrapper types.
-            document = getattr(doc, 'Document', doc)
-            name = getattr(document, 'Name', None)
-            if name is not None:
-                _drnas_framed_documents.pop(name, None)
-                _drnas_view_audits.pop(name, None)
-            self.dirty()
 
     _drnas_render_observer = Observer()
     App.addDocumentObserver(_drnas_render_observer)
@@ -336,4 +249,3 @@ if not getattr(App, '__drnas_runtime_installed__', False):
     App.__drnas_runtime_installed__ = True
     _drnas_storage_test()
     _drnas_material_test()
-

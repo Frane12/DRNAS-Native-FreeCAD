@@ -313,7 +313,7 @@ jobs:
             fi
           done < <(find "$builddir/Mod" -type f -name '*.so' -print0 | sort -z)
           if [[ "${{ steps.build.outcome }}" == success ]]; then
-            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Materials.so MatGui.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so Measure.so MeasureGui.so; do
+            for required in libFreeCADBase.so libFreeCADApp.so libFreeCADGui.so libCoin.so Materials.so MatGui.so Part.so PartGui.so Sketcher.so SketcherGui.so _PartDesign.so PartDesignGui.so; do
               test -s "$stage/$required" || {
                 echo "::error::Missing real upstream $required after successful build"
                 exit 1

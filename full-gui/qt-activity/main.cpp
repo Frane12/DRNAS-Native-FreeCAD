@@ -6,7 +6,6 @@
 #include "DrnasDebugCenter.h"
 #include "LiveGuiLab.h"
 #include "DrnasRenderSurfaceGuard.h"
-#include "DrnasReadablePalette.h"
 
 // Safe Android native bootstrap. Do NOT dlopen FreeCADGui/Coin3D here.
 // Loading untested native DSOs on the startup thread can abort before the
@@ -21,7 +20,6 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     // Begin private, persistent startup logging before any FreeCAD dlopen.
     DrnasDiagnostics::start();
-    new DrnasReadablePalette(&app);
     DrnasDiagnostics::note(QStringLiteral("Creating Android GUI bootstrap shell"));
     // Do not clear QSettings "nativeProbe/pending" from a previous crash.
     // The next launch can display the exact native library being tested.

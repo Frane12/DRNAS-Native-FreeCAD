@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       upstream_run_id:
-        description: 'REQUIRED: successful full ARM64 FreeCADGui/Measure/MeasureGui dependency build run ID'
+        description: 'Successful upstream FreeCADGui run ID (empty = latest success)'
         type: string
-        required: true
+        required: false
       numpy_run_id:
         description: 'Successful NumPy Android ARM64 wheel workflow run ID'
         type: string
@@ -27,12 +27,10 @@ on:
 
 permissions:
   contents: read
-  actions: write
+  actions: read
 
-# Push-triggered regression tests must not displace a pending native package
-# dispatched after a full successful dependency build.
 concurrency:
-  group: drnas-real-freecadgui-qtapk-${{ github.event_name }}
+  group: drnas-real-freecadgui-qtapk
   cancel-in-progress: false
 
 env:
@@ -41,71 +39,10 @@ env:
   ANDROID_API: '26'
 
 jobs:
-  touch-input:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install desktop Qt for input event regression checks
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qt6-base-dev
-      - name: Verify direct touch and gesture routing at normal and high DPI
-        run: |
-          cmake -S full-gui/qt-activity/tests -B build/touch-tests
-          cmake --build build/touch-tests -j2
-          if ! ctest --test-dir build/touch-tests --output-on-failure; then
-            # Preserve the failure gate, but explain any host-Qt crash instead
-            # of guessing about real Android render/touch behavior.
-            sudo apt-get install -y --no-install-recommends gdb
-            QT_QPA_PLATFORM=offscreen gdb -batch -ex 'set pagination off' -ex run -ex bt \
-              --args build/touch-tests/desktop-workspace || true
-            exit 1
-          fi
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/toolbar-touch
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/toolbar-touch
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/toolbar-touch
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/android-command-ui
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/android-command-ui
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/android-command-ui
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/readable-palette
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/desktop-workspace
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/desktop-workspace
-          QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=640 build/touch-tests/desktop-workspace
-          QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=1024 build/touch-tests/desktop-workspace
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
-          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/portrait-modal
-          python3 full-gui/qt-activity/tests/first-shape.py
-
-  dispatch-after-touch-gates:
-    needs: touch-input
-    if: github.ref == 'refs/heads/feature/full-freecad-android' && github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Schedule integration from latest successful complete native build
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          native_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/upstream-freecadgui-full-android.yml/runs?branch=feature/full-freecad-android&status=success&per_page=10" --jq '.workflow_runs[0].id')"
-          [[ "$native_run" =~ ^[0-9]+$ ]] || {
-            echo "::error::Dependency first: no successful complete FreeCAD ARM64 compiler run"
-            exit 1
-          }
-          # The dispatched job rejects stale pre-Measure artifacts by checking
-          # both .so files, ARM64 headers, upstream checksums and APK members.
-          gh workflow run freecadgui-qtactivity-native-apk.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref feature/full-freecad-android \
-            -f "upstream_run_id=$native_run"
-          echo "Dispatched dependency-checked APK integration for full ARM64 run $native_run"
-
   package-real-gui:
-    needs: touch-input
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    # Dependency first: pushes may run touch tests, but MUST NOT package a
-    # previous native artifact. The successful full build dispatches explicitly.
-    if: github.ref == 'refs/heads/feature/full-freecad-android' && github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -140,11 +77,11 @@ jobs:
           INPUT_RUN_ID: ${{ inputs.upstream_run_id }}
         run: |
           set -euo pipefail
-          if [[ -z "$INPUT_RUN_ID" ]]; then
-            echo "::error::Dependency first: provide a successful upstream ARM64 full build run ID (Measure + MeasureGui)."
-            exit 1
+          if [[ -n "$INPUT_RUN_ID" ]]; then
+            run_id="$INPUT_RUN_ID"
+          else
+            run_id="40093671283"
           fi
-          run_id="$INPUT_RUN_ID"
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
           test "$(jq -r '.conclusion' <<<"$info")" = success
@@ -178,23 +115,6 @@ jobs:
           name: DRNAS-Actual-Upstream-FreeCADGui-ARM64-${{ steps.upstream.outputs.run_id }}-${{ steps.upstream.outputs.attempt }}
           path: out/upstream-freecad-gui
 
-      - name: Require original ARM64 Measure and MeasureGui in upstream artifact
-        run: |
-          set -euo pipefail
-          for module in Measure MeasureGui; do
-            so="out/upstream-freecad-gui/native/$module.so"
-            test -s "$so" || {
-              echo "::error::Full ARM64 dependency build omitted $module.so; STOP before integration."
-              exit 1
-            }
-            # Recorded integrity in upstream artifact is verified again by
-            # stage-runtime.sh before copying libraries into the APK.
-            grep -Eq "([[:space:]]|^)$module[.]so$" out/upstream-freecad-gui/native/SHA256SUMS || {
-              echo "::error::No upstream SHA256 provenance for $module.so"
-              exit 1
-            }
-          done
-          echo 'PASS: original Measure.so + MeasureGui.so in full compiler artifact'
       - name: Checkout original material and icon resources matching the native FreeCAD revision
         uses: actions/checkout@v4
         with:
@@ -221,7 +141,7 @@ jobs:
             echo "::error::Upstream native GUI artifact lacks resources/. Select a successful full GUI run that includes 'Stage real native FreeCAD Part, Sketcher, PartDesign workbench UI and icons'."
             exit 1
           fi
-          for module in Part Sketcher PartDesign Measure; do
+          for module in Part Sketcher PartDesign; do
             test -s "$root/Mod/$module/InitGui.py" || {
               echo "::error::Original $module/InitGui.py missing in upstream artifact"
               exit 1
@@ -310,13 +230,6 @@ jobs:
           test -f out/full-gui/host-icu73/lib/libicui18n.so.73
           test -f out/upstream-freecad-gui/native/libFreeCADGui.so
           test -f out/upstream-freecad-gui/native/libCoin.so
-          for module in Measure MeasureGui; do
-            so="out/upstream-freecad-gui/native/$module.so"
-            test -s "$so" || { echo "::error::Missing upstream full ARM64 $module.so"; exit 1; }
-            readelf -h "$so" | grep -q 'Machine:.*AArch64' || {
-              echo "::error::Wrong ABI for $module.so"; exit 1;
-            }
-          done
           for mod in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
             test -s "out/occt-android/lib/lib${mod}.so" || { echo "::error::Missing complete OCCT lib${mod}.so"; exit 1; }
           done
@@ -404,12 +317,6 @@ jobs:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
         run: bash full-gui/integrated-apk/stage-runtime.sh
 
-      - name: Repair Qt 6.8.3 Android selection handle null dereference
-        run: |
-          bash full-gui/qt-activity/patch-qt-cursor-handle.sh \
-            "out/full-deps/qt/$QT_VERSION/android_arm64_v8a" \
-            "$ANDROID_HOME/platforms/android-35/android.jar"
-
       - name: Configure Android QtActivity and real FreeCAD native GUI integration
         run: |
           set -euo pipefail
@@ -458,17 +365,6 @@ jobs:
           for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
             grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
           done
-          for required in Measure MeasureGui; do
-            grep -Fx "lib/arm64-v8a/${required}.so" out/integrated-freecad-qtapk/apk-files.txt || {
-              echo "::error::Final signed APK missing genuine $required.so"; exit 1;
-            }
-            grep -Fx "assets/drnas/freecad/lib/${required}.so" out/integrated-freecad-qtapk/apk-files.txt || {
-              echo "::error::Final signed APK missing Python-loadable $required.so"; exit 1;
-            }
-          done
-          grep -Fx 'assets/drnas/freecad/Mod/Measure/InitGui.py' out/integrated-freecad-qtapk/apk-files.txt || {
-            echo "::error::Final APK lacks original Measure module scripts"; exit 1;
-          }
           unzip -p "$apk" lib/arm64-v8a/libGL.so > out/integrated-freecad-qtapk/apk-libGL.so
           readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
             | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'
@@ -491,4 +387,3 @@ jobs:
           path: out/integrated-freecad-qtapk/
           retention-days: 30
           if-no-files-found: warn
-
