@@ -3,8 +3,10 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListView>
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QPointer>
@@ -13,12 +15,43 @@
 #include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QStyledItemDelegate>
+#include <QStyle>
+#include <QStyleOptionViewItem>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidgetAction>
+#include <algorithm>
 #include "StartupDiagnostics.h"
+
+// Keep the combo's existing popup and input handling, with readable wrapped
+// labels and touch-sized rows. The source menus/actions remain unchanged.
+class DrnasCommandGroupDelegate final : public QStyledItemDelegate {
+    QListView* list;
+public:
+    explicit DrnasCommandGroupDelegate(QListView* view)
+        :QStyledItemDelegate(view),list(view) {}
+    QSize sizeHint(const QStyleOptionViewItem& option,const QModelIndex& index) const override {
+        QStyleOptionViewItem item(option);
+        initStyleOption(&item,index);
+        const int width=std::max(120,list->viewport()->width());
+        const int textWidth=std::max(60,width-list->iconSize().width()-36);
+        const int textHeight=item.fontMetrics.boundingRect(
+            QRect(0,0,textWidth,10000),Qt::TextWordWrap,item.text).height();
+        return QSize(width,std::max(56,textHeight+16));
+    }
+    void paint(QPainter* painter,const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        QStyleOptionViewItem item(option);
+        initStyleOption(&item,index);
+        item.features|=QStyleOptionViewItem::WrapText;
+        item.textElideMode=Qt::ElideNone;
+        auto* style=item.widget ? item.widget->style() : QApplication::style();
+        style->drawControl(QStyle::CE_ItemViewItem,&item,painter,item.widget);
+    }
+};
 
 // Android presents the upstream actions; FreeCAD still owns their command IDs,
 // icons, handlers, state, menus, docks, document and Coin viewport.
@@ -31,6 +64,7 @@ class DrnasAndroidCommandUi final : public QWidget {
     struct Group {
         QString key,title;
         QList<QPointer<QAction>> actions;
+        QIcon icon;
     };
     QList<Group> catalog;
     QStringList signature;
@@ -44,6 +78,12 @@ class DrnasAndroidCommandUi final : public QWidget {
     }
     static bool usable(QAction* action) {
         return action && !action->isSeparator() && !qobject_cast<QWidgetAction*>(action);
+    }
+    static QIcon groupIcon(const QIcon& original,const QList<QPointer<QAction>>& actions) {
+        if (!original.isNull()) return original;
+        for (const auto& action:actions)
+            if (action && !action->icon().isNull()) return action->icon();
+        return {}; // No invented artwork when upstream provides no icon.
     }
     QToolButton* originalButton(QAction* action) const {
         if (!cad) return nullptr;
@@ -100,6 +140,7 @@ class DrnasAndroidCommandUi final : public QWidget {
         visitedMenus.insert(menu);
         Group group{QStringLiteral("menu:%1").arg(quintptr(menu),0,16),path,{}};
         for (auto* action:menu->actions()) if (usable(action)) group.actions.append(action);
+        group.icon=groupIcon(menu->icon(),group.actions);
         if (!group.actions.isEmpty()) found.append(group);
         for (auto* action:menu->actions())
             if (action->menu()) collectMenu(action->menu(),path+QStringLiteral(" / ")+caption(action->text()),found);
@@ -152,6 +193,7 @@ class DrnasAndroidCommandUi final : public QWidget {
             Group group{QStringLiteral("bar:%1").arg(quintptr(bar),0,16),caption(bar->windowTitle()),{}};
             if (group.title.isEmpty()) group.title=bar->objectName();
             for (auto* action:bar->actions()) if (usable(action)) group.actions.append(action);
+            group.icon=groupIcon(bar->toggleViewAction()->icon(),group.actions);
             if (!group.actions.isEmpty()) found.append(group);
         }
         visitedMenus.clear();
@@ -160,13 +202,14 @@ class DrnasAndroidCommandUi final : public QWidget {
         QStringList next;
         for (const auto& group:found) {
             next.append(group.key+group.title);
+            next.append(QString::number(group.icon.cacheKey()));
             for (const auto& action:group.actions) next.append(QString::number(quintptr(action.data()),16));
         }
         if (signature!=next) {
             signature=next;catalog=found;
             const QString selected=groups->currentData().toString();
             QSignalBlocker blocker(groups);groups->clear();
-            for (const auto& group:catalog) groups->addItem(group.title,group.key);
+            for (const auto& group:catalog) groups->addItem(group.icon,group.title,group.key);
             const int previous=groups->findData(selected);
             if (previous>=0) groups->setCurrentIndex(previous);
             showGroup();
@@ -195,7 +238,7 @@ protected:
         auto* widget=qobject_cast<QWidget*>(object);
         const bool upstream=widget && (widget==cad || cad->isAncestorOf(widget));
         const auto type=event->type();
-        if (upstream && (type==QEvent::ActionAdded || type==QEvent::ActionRemoved ||
+        if (upstream && (type==QEvent::ActionAdded || type==QEvent::ActionRemoved || type==QEvent::ActionChanged ||
             type==QEvent::ChildAdded || type==QEvent::ChildRemoved ||
             (qobject_cast<QToolBar*>(widget) && (type==QEvent::Show || type==QEvent::Hide || type==QEvent::WindowTitleChange)) ||
             (qobject_cast<QMenuBar*>(widget) && type==QEvent::Show)))
@@ -236,7 +279,21 @@ public:
         strip->setStyleSheet(QStringLiteral("QToolButton::menu-button{width:24px;}"));
         auto* stripLayout=new QHBoxLayout(strip);stripLayout->setContentsMargins(4,0,4,2);stripLayout->setSpacing(4);
         groups=new QComboBox(strip);groups->setObjectName(QStringLiteral("drnasAndroidGroups"));
-        groups->setFixedWidth(156);groups->setMinimumHeight(48);
+        groups->setFixedWidth(176);groups->setMinimumHeight(48);
+        groups->setIconSize(QSize(28,28));
+        QFont groupFont=groups->font();
+        if (groupFont.pointSizeF()>0) groupFont.setPointSizeF(groupFont.pointSizeF()*1.25);
+        else if (groupFont.pixelSize()>0) groupFont.setPixelSize(qRound(groupFont.pixelSize()*1.25));
+        groups->setFont(groupFont);
+        if (auto* list=qobject_cast<QListView*>(groups->view())) {
+            list->setFont(groupFont);list->setIconSize(QSize(28,28));
+            list->setWordWrap(true);list->setTextElideMode(Qt::ElideNone);
+            list->setUniformItemSizes(false);list->setResizeMode(QListView::Adjust);
+            list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+            const int available=std::max(120,host->width()-24);
+            list->setMinimumWidth(std::min(420,available));list->setMaximumWidth(available);
+            groups->setItemDelegate(new DrnasCommandGroupDelegate(list));
+        }
         groups->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         groups->setMinimumContentsLength(8);stripLayout->addWidget(groups);
         toolsContent=new QWidget(this);toolsLayout=new QHBoxLayout(toolsContent);
@@ -256,3 +313,4 @@ public:
         qApp->installEventFilter(this);refreshTimer.start();
     }
 };
+

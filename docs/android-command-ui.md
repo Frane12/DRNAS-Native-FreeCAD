@@ -55,6 +55,13 @@ scrollbar and cancels the pending command. A stationary tap produces one
 balanced click through the existing 120 ms debounce. The UI does not rebuild
 its button rows during an active finger sequence, embedded modal or popup.
 
+The left group selector uses the original menu icon, or an existing command icon
+from that same group when the menu has none. Labels are 25% larger, icons are
+28 logical pixels, and popup rows are at least 56 logical pixels high. Long
+group paths wrap to additional lines instead of being elided. The popup width
+is bounded by the host, and its existing Qt selection/input behavior is retained.
+Changes to source action icons refresh the group icon after the popup closes.
+
 The underlying desktop presentation can be selected by developers using
 `DRNAS_ANDROID_COMMAND_UI=0` before startup. Normal Android launches explicitly
 enable the new command UI.
@@ -96,3 +103,4 @@ and retention of explicitly paired dark diagnostic colors. All tested text and
 background pairs exceed a 4.5:1 contrast ratio, including disabled text.
 
 Upstream reference: [FreeCAD Action.cpp](https://github.com/FreeCAD/FreeCAD/blob/d4ffc7f725973e073907746e88d320d3e438fd34/src/Gui/Action.cpp).
+
