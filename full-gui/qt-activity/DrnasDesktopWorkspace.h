@@ -2,7 +2,6 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
-#include <QHBoxLayout>
 #include <QMainWindow>
 #include <QPalette>
 #include <QPointer>
@@ -22,8 +21,12 @@ class DrnasDesktopWorkspace final : public QWidget {
             double(width())/pcWidth, double(height())/pcHeight),0.001,1.0);
         const QSize target(std::max(1,int(std::floor(pcWidth*fitScale))),
                            std::max(1,int(std::floor(pcHeight*fitScale))));
-        if (cad->size()!=target || cad->minimumSize()!=target || cad->maximumSize()!=target) {
-            cad->setFixedSize(target);
+        // Do not setFixedSize(): that propagates 768px min-height into the
+        // native QtActivity window and blocks rotation/keyboard resizing.
+        const QRect wanted(QPoint((width()-target.width())/2,
+                                  (height()-target.height())/2), target);
+        if (cad->geometry()!=wanted) {
+            cad->setGeometry(wanted);
             DrnasDiagnostics::note(QStringLiteral(
                 "PC DESKTOP layout: surface=%1x%2 CAD=%3x%4 inset=%5x%6 dpr=%7")
                 .arg(width()).arg(height()).arg(target.width()).arg(target.height())
@@ -45,17 +48,14 @@ public:
         QPalette bg=palette();
         bg.setColor(QPalette::Window,QColor(19,29,42));
         setPalette(bg);
-        auto* row=new QHBoxLayout(this);
-        row->setContentsMargins(0,0,0,0);
-        row->setSpacing(0);
-        row->setSizeConstraint(QLayout::SetNoConstraint);
     }
     void attach(QMainWindow* window) {
         cad=window;
         cad->setMinimumSize(0,0);
+        cad->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
         cad->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Ignored);
-        layout()->addWidget(cad);
-        static_cast<QHBoxLayout*>(layout())->setAlignment(cad,Qt::AlignCenter);
+        // This direct child has no parent layout minimum-size contribution.
+        // Every widget retains native Qt hit testing at its real location.
         fit();
     }
 };

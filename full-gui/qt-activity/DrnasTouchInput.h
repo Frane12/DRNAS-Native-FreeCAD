@@ -460,7 +460,10 @@ if _drnas_doc:
         QList<QEventPoint> live;
         for (const auto& point:event->points())
             if (point.state()!=QEventPoint::State::Released) live.append(point);
-        if (event->type()==QEvent::TouchBegin && !live.isEmpty()) startTouch(owner,live.first());
+        // Qt can deliver another TouchBegin when a second finger lands.
+        // Do not reset the gesture/anchor that the first finger owns.
+        if (event->type()==QEvent::TouchBegin && !live.isEmpty() && !touchOwner)
+            startTouch(owner,live.first());
         if (!touchOwner) return;
         if (live.size()>=2) {
             precisionTimer.stop(); mark->hide();
