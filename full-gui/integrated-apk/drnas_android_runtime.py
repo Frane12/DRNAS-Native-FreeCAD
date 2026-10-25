@@ -122,6 +122,7 @@ def _drnas_part_commands():
 _drnas_render_observer = None
 _drnas_framed_documents = {}
 _drnas_coin_module = None
+_drnas_view_audits = {}
 
 
 def _drnas_load_coin_bindings():
@@ -145,6 +146,27 @@ def _drnas_mobile_view_tick():
     gui_doc = Gui.activeDocument()
     if doc is None or gui_doc is None:
         return
+    # Record the real document without changing visibility, materials or shapes.
+    # Only log a changed snapshot, not every redraw/gesture.
+    snapshot = []
+    for obj in doc.Objects:
+        if not hasattr(obj, 'Shape'):
+            continue
+        try:
+            shape, provider = obj.Shape, getattr(obj, 'ViewObject', None)
+            snapshot.append((obj.Name, getattr(obj, 'TypeId', '?'),
+                shape.isNull(), getattr(provider, 'Visibility', None),
+                len(getattr(shape, 'Faces', [])), len(getattr(shape, 'Edges', [])),
+                str(getattr(shape, 'BoundBox', None)),
+                getattr(provider, 'DisplayMode', None), getattr(provider, 'Transparency', None)))
+        except Exception as error:
+            snapshot.append((obj.Name, 'inspection failed', str(error)))
+    signature = repr(snapshot)
+    if _drnas_view_audits.get(doc.Name) != (doc, signature):
+        _drnas_view_audits[doc.Name] = (doc, signature)
+        _drnas_mark('GEOMETRY_STATE doc=' + doc.Name
+                    + ' fields=name,type,null,visible,faces,edges,bounds,display,transparency '
+                    + signature)
     visible = [obj for obj in doc.Objects
                if obj.isDerivedFrom('Part::Feature')
                and getattr(obj, 'ViewObject', None) is not None
@@ -207,6 +229,7 @@ def _drnas_render_watch(directory):
             name = getattr(document, 'Name', None)
             if name is not None:
                 _drnas_framed_documents.pop(name, None)
+                _drnas_view_audits.pop(name, None)
             self.dirty()
 
     _drnas_render_observer = Observer()

@@ -29,7 +29,7 @@ sys.modules["FreeCADGui"] = gui
 doc = NS(Name="Unnamed", Objects=[])
 app = NS(ActiveDocument=doc)
 scope = {"App": app, "_drnas_framed_documents": {}, "_drnas_mark": marks.append,
-         'sys': sys, 'traceback': traceback, '_drnas_coin_module': None}
+         'sys': sys, 'traceback': traceback, '_drnas_coin_module': None, '_drnas_view_audits': {}}
 exec(compile(ast.Module(body=[loader], type_ignores=[]), str(source), 'exec'), scope)
 exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), scope)
 tick = scope[function.name]

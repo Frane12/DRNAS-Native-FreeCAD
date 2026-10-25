@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QFontMetrics>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListView>
@@ -254,6 +255,13 @@ public:
         setMinimumSize(0,0);setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Ignored);
         auto* outer=new QVBoxLayout(this);outer->setContentsMargins(0,0,0,0);outer->setSpacing(0);
         outer->setSizeConstraint(QLayout::SetNoConstraint);
+        auto* commandFrame=new QFrame(this);
+        commandFrame->setObjectName(QStringLiteral("drnasAndroidToolbarFrame"));
+        commandFrame->setStyleSheet(QStringLiteral(
+            "QFrame#drnasAndroidToolbarFrame{background:#d3dfea;border:2px solid #526e88;border-radius:6px;}"));
+        auto* commandLayout=new QVBoxLayout(commandFrame);
+        commandLayout->setContentsMargins(4,4,4,4);commandLayout->setSpacing(3);
+        outer->addWidget(commandFrame);
         auto* header=new QWidget(this);header->setObjectName(QStringLiteral("drnasAndroidHeader"));
         header->setStyleSheet(QStringLiteral(
             "QToolButton,QPushButton{min-width:48px;min-height:44px;padding:2px;}"));
@@ -276,7 +284,7 @@ public:
         menuButton->setPopupMode(QToolButton::InstantPopup);
         auto* menu=new QMenu(menuButton);menuButton->setMenu(menu);
         connect(menu,&QMenu::aboutToShow,this,[this,menuButton]{openMenu(menuButton);});
-        row->addWidget(menuButton);outer->addWidget(header);
+        row->addWidget(menuButton);commandLayout->addWidget(header);
         auto* strip=new QWidget(this);strip->setObjectName(QStringLiteral("drnasAndroidToolStrip"));
         strip->setStyleSheet(QStringLiteral("QToolButton::menu-button{width:24px;}"));
         auto* stripLayout=new QHBoxLayout(strip);stripLayout->setContentsMargins(4,0,4,2);stripLayout->setSpacing(4);
@@ -301,7 +309,7 @@ public:
         toolsContent=new QWidget(this);toolsLayout=new QHBoxLayout(toolsContent);
         toolsLayout->setContentsMargins(0,0,0,0);toolsLayout->setSpacing(4);
         toolsLayout->setSizeConstraint(QLayout::SetMinimumSize);
-        stripLayout->addWidget(scroller(toolsContent,76),1);outer->addWidget(strip);
+        stripLayout->addWidget(scroller(toolsContent,76),1);commandLayout->addWidget(strip);
         original->setParent(this,Qt::Widget);original->setMinimumSize(0,0);
         original->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Ignored);
         if (original->layout()) original->layout()->setSizeConstraint(QLayout::SetNoConstraint);
