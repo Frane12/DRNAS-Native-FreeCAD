@@ -20,6 +20,12 @@
 #include <QDockWidget>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
+#include <QUrl>
+#ifdef Q_OS_ANDROID
+#include <QJniObject>
+#include <QNativeInterface>
+#endif
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <cstdlib>
@@ -892,6 +898,107 @@ finally:
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
+
+    // A/B file-open route. The stock Std_Open command still exists; this
+    // distinct action prevents its blocking desktop modal QFileDialog from
+    // keeping a nested Qt/Android event loop alive during a document import.
+    // No changes to Coin3D, FBO, EGL, touch or the pinned Measure libraries.
+    auto* asyncOpenAction = toolbar->addAction(QStringLiteral("ANDROID OPEN (LAB)"));
+    asyncOpenAction->setObjectName(QStringLiteral("drnasAndroidAsyncFileOpen"));
+    asyncOpenAction->setToolTip(QStringLiteral(
+        "Test asynchronous Android document picker, SAF copy, then FreeCADGui.open"));
+    QObject::connect(asyncOpenAction, &QAction::triggered, shell,
+        [asyncOpenAction, guardedShell = QPointer<QMainWindow>(shell), report] {
+        if (!guardedShell) return;
+        DrnasDiagnostics::note(QStringLiteral(
+            "OPEN_ASYNC START: independent file action (original Std_Open unchanged)"));
+        asyncOpenAction->setEnabled(false);
+        auto* dialog = new QFileDialog(guardedShell.data(),
+            QStringLiteral("Open FreeCAD document"));
+        dialog->setObjectName(QStringLiteral("drnasAsyncFileDialog"));
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setAcceptMode(QFileDialog::AcceptOpen);
+        dialog->setFileMode(QFileDialog::ExistingFile);
+        dialog->setNameFilters(QStringList{
+            QStringLiteral("CAD files (*.FCStd *.FCBak *.step *.stp *.iges *.igs *.stl *.obj *.brep *.brp)"),
+            QStringLiteral("All files (*)")});
+        QObject::connect(dialog, &QDialog::finished, guardedShell.data(),
+            [dialog = QPointer<QFileDialog>(dialog),
+             action = QPointer<QAction>(asyncOpenAction), report](int status) {
+            if (action) action->setEnabled(true);
+            if (status != QDialog::Accepted || !dialog) {
+                DrnasDiagnostics::note(QStringLiteral("OPEN_ASYNC CANCELLED"));
+                return;
+            }
+            const QList<QUrl> urls = dialog->selectedUrls();
+            const QStringList files = dialog->selectedFiles();
+            QString picked;
+            if (!urls.isEmpty() && urls.first().isValid()) {
+                picked = urls.first().isLocalFile()
+                    ? urls.first().toLocalFile()
+                    : urls.first().toString(QUrl::FullyEncoded);
+            }
+            if (picked.isEmpty()) picked = files.value(0);
+            DrnasDiagnostics::note(QStringLiteral(
+                "OPEN_ASYNC PICKER_ACCEPTED scheme=%1 suffix=%2")
+                .arg(QUrl(picked).scheme(), QFileInfo(picked).suffix()));
+            // Let the Android file picker close fully before any Python/FreeCAD
+            // work that might synchronously construct a new Coin3D document.
+            QTimer::singleShot(500, qApp, [picked, report] {
+                if (picked.isEmpty()) {
+                    report(QStringLiteral("Android Open: empty selection"));
+                    return;
+                }
+                QString staged = picked;
+#ifdef Q_OS_ANDROID
+                if (picked.startsWith(QStringLiteral("content://"), Qt::CaseInsensitive)) {
+                    DrnasDiagnostics::note(QStringLiteral("OPEN_ASYNC SAF_COPY_BEGIN"));
+                    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+                    const QJniObject uri = QJniObject::fromString(picked);
+                    const QJniObject result = QJniObject::callStaticObjectMethod(
+                        "org/drnas/freecad/bootstrap/AndroidDocumentBridge",
+                        "cacheForOpen",
+                        "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;",
+                        context.object<jobject>(), uri.object<jstring>());
+                    staged = result.isValid() ? result.toString() : QString();
+                    DrnasDiagnostics::note(QStringLiteral(
+                        "OPEN_ASYNC SAF_COPY_END valid=%1 error=%2")
+                        .arg(QFileInfo(staged).isFile()).arg(staged.startsWith(QStringLiteral("ERROR:"))));
+                }
+#endif
+                if (!QFileInfo(staged).isFile()) {
+                    DrnasDiagnostics::note(QStringLiteral(
+                        "OPEN_ASYNC STOP invalid local file; source scheme=%1").arg(QUrl(picked).scheme()));
+                    report(QStringLiteral("Android Open: cannot read selected file"));
+                    return;
+                }
+                const QString suffix = QFileInfo(staged).suffix().toLower();
+                DrnasDiagnostics::note(QStringLiteral(
+                    "OPEN_ASYNC IMPORT_BEGIN suffix=%1 size=%2")
+                    .arg(suffix).arg(QFileInfo(staged).size()));
+                const QString script = QStringLiteral(
+                    "import base64, FreeCADGui as Gui, traceback\\n"
+                    "_drnas_async_path = base64.b64decode('%1').decode('utf-8')\\n"
+                    "_drnas_mark('OPEN_ASYNC PY_IMPORT_BEGIN')\\n"
+                    "try:\\n"
+                    "    Gui.open(_drnas_async_path)\\n"
+                    "    _drnas_mark('OPEN_ASYNC PY_IMPORT_END')\\n"
+                    "except BaseException:\\n"
+                    "    _drnas_mark('OPEN_ASYNC PY_IMPORT_EXCEPTION ' + traceback.format_exc())\\n"
+                    "    raise\\n"
+                ).arg(QString::fromLatin1(staged.toUtf8().toBase64()));
+                QString error;
+                const bool ok = runOriginalFreeCADPython(script, error);
+                DrnasDiagnostics::note(QStringLiteral(
+                    "OPEN_ASYNC IMPORT_END ok=%1 suffix=%2 error=%3")
+                    .arg(ok).arg(suffix).arg(error));
+                report(ok ? QStringLiteral("Android Open: file imported")
+                          : QStringLiteral("Android Open: ") + error);
+            });
+        });
+        dialog->open(); // returns without nesting FreeCAD's desktop event loop
+    });
+
     // A deterministic real FreeCAD/Part smoke object for Android Coin3D.
     // No mock triangles or direct GL calls: this exercises document creation,
     // ViewProvider, Coin scene traversal and Qt presentation together.
