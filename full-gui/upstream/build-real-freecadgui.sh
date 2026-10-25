@@ -385,6 +385,10 @@ PY_DRNAS_HOME
 """
 workbench_diagnostics_patch = ('python3 "$ROOT/full-gui/upstream/patch-workbench-diagnostics.py" "$SOURCE"\n'
                                'python3 "$ROOT/full-gui/upstream/patch-document-diagnostics.py" "$SOURCE"\n')
+# Bring the Android native-pick content:// bridge into the authentic upstream
+# FreeCADGui compile. No extra build is launched here: the next manually
+# dispatched full native build compiles this patch along with its other patches.
+android_document_open_patch = ('python3 "$ROOT/full-gui/upstream/patch-android-document-open.py" "$SOURCE"\n')
 # Android's Bionic runtime does not ship desktop fontconfig headers/libs.
 # Preserve FreeCAD Sketcher's real TrueType/OpenType font discovery via Qt
 # and the device's actual font directories, without a dummy fontconfig shim.
@@ -413,7 +417,7 @@ path.write_text(source)
 print('Android Sketcher FontProvider uses Qt and real Android fonts, not Linux fontconfig')
 PY_ANDROID_FONTS
 """
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+android_home_patch+workbench_diagnostics_patch+android_sketcher_fonts_patch+config_marker)
+s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+android_home_patch+workbench_diagnostics_patch+android_document_open_patch+android_sketcher_fonts_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
