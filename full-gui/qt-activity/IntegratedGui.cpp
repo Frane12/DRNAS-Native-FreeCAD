@@ -730,57 +730,119 @@ finally:
     auto* renderLab = new DrnasRenderLab(shell, freecad, toolbar,
         [](const QString& code, QString& error) { return runOriginalFreeCADPython(code,error); });
 
-    // M-AB: loading native MeasureGui registers Coin types and a selection
-    // observer. Compare the same document before/after this explicit import.
+    // M0: retain identical binaries while separating both imports and camera framing.
     const QString measureStatePath =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
         + QStringLiteral("/measure-import-state.json");
     auto measureState = [measureStatePath](const QString& phase) {
-        const QString script = QStringLiteral(
-            "import sys, json, base64\n"
-            "_drnas_mab_state = {name: {'loaded': name in sys.modules, "
-            "'file': getattr(sys.modules.get(name), '__file__', None)} "
-            "for name in ('Measure', 'MeasureGui')}\n"
-            "with open(base64.b64decode('%1').decode('utf-8'), 'w') as _drnas_mab_file:\n"
-            "    json.dump(_drnas_mab_state, _drnas_mab_file)\n")
-            .arg(QString::fromLatin1(measureStatePath.toUtf8().toBase64()));
+        const QString script = QStringLiteral(R"M0(
+import sys, json, base64
+import FreeCAD as App, FreeCADGui as Gui
+_drnas_m0 = {'modules': {name: {'loaded': name in sys.modules,
+    'file': getattr(sys.modules.get(name), '__file__', None)}
+    for name in ('Measure', 'MeasureGui')}, 'objects': []}
+_drnas_m0_doc = App.ActiveDocument
+if _drnas_m0_doc is not None:
+    _drnas_m0['document'] = _drnas_m0_doc.Name
+    for _drnas_m0_obj in _drnas_m0_doc.Objects:
+        if not hasattr(_drnas_m0_obj, 'Shape'):
+            continue
+        try:
+            _drnas_m0_shape = _drnas_m0_obj.Shape
+            _drnas_m0_item = {'name': _drnas_m0_obj.Name,
+                'visible': bool(_drnas_m0_obj.ViewObject.Visibility),
+                'null': bool(_drnas_m0_shape.isNull())}
+            if not _drnas_m0_shape.isNull():
+                _drnas_m0_bb = _drnas_m0_shape.BoundBox
+                _drnas_m0_item['bbox'] = [getattr(_drnas_m0_bb, key)
+                    for key in ('XMin', 'YMin', 'ZMin', 'XMax', 'YMax', 'ZMax')]
+            _drnas_m0['objects'].append(_drnas_m0_item)
+        except Exception as _drnas_m0_error:
+            _drnas_m0['objects'].append({'error': str(_drnas_m0_error)})
+if Gui.activeDocument() is not None:
+    try:
+        _drnas_m0['camera'] = Gui.activeDocument().activeView().getCamera()
+    except Exception as _drnas_m0_error:
+        _drnas_m0['camera_error'] = str(_drnas_m0_error)
+with open(base64.b64decode('%1').decode('utf-8'), 'w') as _drnas_m0_file:
+    json.dump(_drnas_m0, _drnas_m0_file)
+)M0").arg(QString::fromLatin1(measureStatePath.toUtf8().toBase64()));
         QString error;
         const bool ok = runOriginalFreeCADPython(script, error);
         QFile file(measureStatePath);
         const QString state = ok && file.open(QIODevice::ReadOnly)
             ? QString::fromUtf8(file.readAll()) : error;
-        DrnasDiagnostics::note(QStringLiteral("MEASURE_AB %1 ok=%2 state=%3")
+        DrnasDiagnostics::note(QStringLiteral("MEASURE_M0 %1 ok=%2 state=%3")
             .arg(phase).arg(ok).arg(state));
     };
-    auto* measureGuiAction = new QAction(QStringLiteral("MeasureGui ON"), toolbar);
+    auto* measureAction = new QAction(QStringLiteral("1 Measure ON"), toolbar);
+    measureAction->setObjectName(QStringLiteral("drnasMeasureCoreImport"));
+    auto* measureGuiAction = new QAction(QStringLiteral("2 MeasureGui ON"), toolbar);
     measureGuiAction->setObjectName(QStringLiteral("drnasMeasureGuiImport"));
-    measureGuiAction->setToolTip(QStringLiteral("M-AB: load MeasureGui once, after testing the same document without it"));
+    measureGuiAction->setEnabled(false);
+    auto* fitTestAction = new QAction(QStringLiteral("Fit view (test)"), toolbar);
+    fitTestAction->setObjectName(QStringLiteral("drnasMeasureFitTest"));
     if (auto* gpuButton = toolbar->findChild<QToolButton*>(QStringLiteral("drnasGpuExperiments"));
         gpuButton && gpuButton->menu()) {
-        gpuButton->menu()->insertAction(gpuButton->menu()->actions().value(0), measureGuiAction);
+        QAction* first = gpuButton->menu()->actions().value(0);
+        for (auto* action : {measureAction, measureGuiAction, fitTestAction})
+            gpuButton->menu()->insertAction(first, action);
     }
+    QObject::connect(measureAction, &QAction::triggered, toolbar,
+        [measureAction, measureGuiAction, measureState, report] {
+            measureState(QStringLiteral("BEFORE_CORE_IMPORT"));
+            DrnasDiagnostics::note(QStringLiteral("MEASURE_M0 CORE_IMPORT_BEGIN"));
+            measureAction->setEnabled(false);
+            QString error;
+            const bool ok = runOriginalFreeCADPython(QStringLiteral(
+                "import FreeCADGui as Gui\n"
+                "if Gui.activeDocument() is None:\n"
+                "    raise RuntimeError('Create a document and test Coin3D first')\n"
+                "import Measure\n"
+                "Gui.activeDocument().activeView().redraw()\n"), error);
+            DrnasDiagnostics::note(QStringLiteral("MEASURE_M0 CORE_IMPORT_END ok=%1 error=%2")
+                .arg(ok).arg(error));
+            measureState(QStringLiteral("AFTER_CORE_IMPORT"));
+            measureAction->setEnabled(!ok);
+            measureGuiAction->setEnabled(ok);
+            if (ok) measureAction->setText(QStringLiteral("1 Measure loaded"));
+            report(ok ? QStringLiteral("Measure loaded: compare same view")
+                      : QStringLiteral("Measure import: ") + error);
+        });
     QObject::connect(measureGuiAction, &QAction::triggered, toolbar,
         [measureGuiAction, measureState, report] {
             measureState(QStringLiteral("BEFORE_GUI_IMPORT"));
-            DrnasDiagnostics::note(QStringLiteral("MEASURE_AB GUI_IMPORT_BEGIN"));
+            DrnasDiagnostics::note(QStringLiteral("MEASURE_M0 GUI_IMPORT_BEGIN"));
             measureGuiAction->setEnabled(false);
             QString error;
             const bool ok = runOriginalFreeCADPython(QStringLiteral(
                 "import FreeCADGui as Gui\n"
                 "if Gui.activeDocument() is None:\n"
-                "    raise RuntimeError('Create a document and test Coin3D before loading MeasureGui')\n"
+                "    raise RuntimeError('Create a document and test Coin3D first')\n"
                 "import MeasureGui\n"
                 "Gui.activeDocument().activeView().redraw()\n"), error);
-            DrnasDiagnostics::note(QStringLiteral("MEASURE_AB GUI_IMPORT_END ok=%1 error=%2")
+            DrnasDiagnostics::note(QStringLiteral("MEASURE_M0 GUI_IMPORT_END ok=%1 error=%2")
                 .arg(ok).arg(error));
             measureState(QStringLiteral("AFTER_GUI_IMPORT"));
             measureGuiAction->setEnabled(!ok);
-            if (ok) measureGuiAction->setText(QStringLiteral("MeasureGui loaded"));
-            report(ok ? QStringLiteral("MeasureGui loaded: compare same Coin3D view")
+            if (ok) measureGuiAction->setText(QStringLiteral("2 MeasureGui loaded"));
+            report(ok ? QStringLiteral("MeasureGui loaded: compare same view")
                       : QStringLiteral("MeasureGui import: ") + error);
         });
+    QObject::connect(fitTestAction, &QAction::triggered, toolbar, [measureState, report] {
+        measureState(QStringLiteral("BEFORE_EXPLICIT_FIT"));
+        QString error;
+        const bool ok = runOriginalFreeCADPython(QStringLiteral(
+            "import FreeCADGui as Gui\n"
+            "if Gui.activeDocument() is None:\n"
+            "    raise RuntimeError('Create a document first')\n"
+            "Gui.activeDocument().activeView().fitAll()\n"
+            "Gui.activeDocument().activeView().redraw()\n"), error);
+        measureState(QStringLiteral("AFTER_EXPLICIT_FIT"));
+        report(ok ? QStringLiteral("Fit view test OK") : error);
+    });
     QTimer::singleShot(2600, toolbar, [measureState] {
-        measureState(QStringLiteral("STARTUP_MEASURE_ONLY"));
+        measureState(QStringLiteral("STARTUP_BOTH_DEFERRED"));
     });
     // Choose before New in a fresh launch. Never compare A/B by switching
     // already-mutated Coin/GL state within an existing document.
@@ -1112,7 +1174,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // which is visible even when Android incorrectly overlays the menus.
         if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
                 QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05 M-AB"), window->statusBar());
+            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05 M0"), window->statusBar());
             marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
             marker->setStyleSheet(QStringLiteral(
                 "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"

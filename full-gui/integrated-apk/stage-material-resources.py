@@ -58,17 +58,18 @@ def stage(source, destination):
     if not (destination / "Mod/Measure/InitGui.py").is_file():
         raise SystemExit("Failed to stage authentic Measure GUI startup script")
 
-    # M-AB: keep the genuine core import; defer only the GUI module until
-    # the explicit on-device action. Preserve the original script separately.
+    # M0: preserve original source and defer both native imports independently.
     measure_init = destination / "Mod/Measure/InitGui.py"
     original_init = measure_init.read_text(encoding="utf-8")
-    gui_import = "import MeasureGui"
-    if original_init.splitlines().count(gui_import) != 1:
-        raise SystemExit("Pinned Measure GUI import anchor changed")
+    for name in ("Measure", "MeasureGui"):
+        if original_init.splitlines().count("import " + name) != 1:
+            raise SystemExit("Pinned Measure import anchor changed: " + name)
     (measure_init.parent / "InitGui.upstream.txt").write_text(original_init, encoding="utf-8")
-    measure_init.write_text(original_init.replace(
-        gui_import, "# DRNAS M-AB: MeasureGui is loaded only by GPU TEST > MeasureGui ON", 1),
-        encoding="utf-8")
+    deferred = original_init
+    for name in ("Measure", "MeasureGui"):
+        deferred = deferred.replace("import " + name + "\n",
+            "# DRNAS M0: explicit GPU TEST action loads " + name + "\n", 1)
+    measure_init.write_text(deferred, encoding="utf-8")
     # InitGui scripts resolve workbench icons via the same ResourceDir.
     for module in ("Material", "Part", "Sketcher", "PartDesign", "Measure"):
         count += copy_tree(source / "src/Mod" / module / "Gui/Resources",
