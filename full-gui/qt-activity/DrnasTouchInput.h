@@ -31,6 +31,7 @@
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include "StartupDiagnostics.h"
+#include "DrnasDraggableLauncher.h"
 
 class DrnasPointerMark final : public QWidget {
 public:
@@ -97,6 +98,7 @@ class DrnasTouchInput final : public QObject {
     QWidget* panel;
     QLabel* grip;
     QPushButton* launcher;
+    DrnasDraggableLauncher* launcherDrag = nullptr;
     QPushButton* hold;
     DrnasPointerMark* mark;
     QPointer<DrnasPointerMark> dialogMark;
@@ -291,7 +293,7 @@ class DrnasTouchInput final : public QObject {
         panel->setFixedHeight(std::max(60,std::min(350,host->height()-80)));
         panel->move(std::clamp(panel->x(),0,std::max(0,host->width()-panel->width())),
                     std::clamp(panel->y(),0,std::max(0,host->height()-panel->height())));
-        launcher->setGeometry(std::max(0,host->width()-77),std::max(0,host->height()-90),72,34);
+        if (launcherDrag) launcherDrag->place();
         panel->raise(); launcher->raise();
     }
     void repairWindows() {
@@ -390,8 +392,20 @@ protected:
             (popup && (inputWidget==popup || popup->isAncestorOf(inputWidget))));
         // Keep the compact mouse/key panel directly operable. Everywhere
         // else is a relative touchpad; lifting a finger never warps the cursor.
-        const bool directControl=inputWidget &&
-            (inputWidget==panel || panel->isAncestorOf(inputWidget) || inputWidget==launcher);
+        const auto isDirectOverlay = [this](QWidget* widget) {
+            for (QWidget* p = widget; p; p = p->parentWidget()) {
+                if (p == panel || p == launcher) return true;
+                const QString name = p->objectName();
+                if (name == QStringLiteral("drnasFloatingCommandsLauncher") ||
+                    name == QStringLiteral("drnasDebugLauncher") ||
+                    name == QStringLiteral("drnasLiveLabButton") ||
+                    name == QStringLiteral("drnasFloatingCommands") ||
+                    name == QStringLiteral("drnasDebugPanel") ||
+                    name == QStringLiteral("drnasLiveLabPanel")) return true;
+            }
+            return false;
+        };
+        const bool directControl = isDirectOverlay(inputWidget);
         if (inApp && !directControl) {
             if (event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate || event->type()==QEvent::TouchEnd) {
                 auto* touch=static_cast<QTouchEvent*>(event);
@@ -535,6 +549,9 @@ public:
         connect(close,&QPushButton::clicked,panel,&QWidget::hide);
         launcher=new QPushButton(QStringLiteral("Miš"),host); launcher->setObjectName(QStringLiteral("drnasTouchInputLauncher"));
         launcher->setFocusPolicy(Qt::NoFocus); launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
+        launcher->setFixedSize(72,34);
+        launcherDrag = new DrnasDraggableLauncher(host, launcher,
+            QStringLiteral("drnasOverlay/mouse"), 108, true, this);
         connect(launcher,&QPushButton::clicked,this,[this]{panel->setVisible(!panel->isVisible());constrain();});
         mark=new DrnasPointerMark(host); mark->hide();
         cursor=QPointF(host->width()/2.0,host->height()/2.0);

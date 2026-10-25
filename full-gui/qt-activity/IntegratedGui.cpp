@@ -7,6 +7,7 @@
 #include "StartupDiagnostics.h"
 #include "DrnasDebugCenter.h"
 #include "DrnasTouchInput.h"
+#include "DrnasDraggableLauncher.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -447,6 +448,7 @@ class DrnasFloatingCommands : public QObject {
     QMainWindow* host;
     QWidget* panel;
     QPushButton* launcher;
+    DrnasDraggableLauncher* launcherDrag = nullptr;
     QWidget* grip;
     QPoint dragOffset;
     bool dragging = false;
@@ -456,8 +458,7 @@ class DrnasFloatingCommands : public QObject {
         panel->adjustSize();
         panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
                     std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
-        launcher->setGeometry(std::max(0, host->width()-92),
-                              std::max(0, host->height()-84), 80, 44);
+        if (launcherDrag) launcherDrag->place();
         panel->raise(); launcher->raise();
     }
 protected:
@@ -502,6 +503,9 @@ public:
         layout->addWidget(toolbar);
         launcher = new QPushButton(QStringLiteral("Tools"), host);
         launcher->setObjectName(QStringLiteral("drnasFloatingCommandsLauncher"));
+        launcher->setFixedSize(80,44);
+        launcherDrag = new DrnasDraggableLauncher(host, launcher,
+            QStringLiteral("drnasOverlay/tools"), 54, true, this);
         launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
         connect(launcher, &QPushButton::clicked, this, [this] {
             panel->setVisible(!panel->isVisible()); constrain();

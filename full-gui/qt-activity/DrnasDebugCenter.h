@@ -4,6 +4,7 @@
 // This panel is always a child of the QtActivity host: it MUST NOT create a
 // QDialog, QWindow, QOpenGLWidget, new EGLSurface or a second QApplication.
 #include "StartupDiagnostics.h"
+#include "DrnasDraggableLauncher.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -39,6 +40,7 @@
 class DrnasDebugCenter final : public QObject {
     QPointer<QMainWindow> host_;
     QPushButton* launcher_ = nullptr;
+    DrnasDraggableLauncher* launcherDrag_ = nullptr;
     QScrollArea* panel_ = nullptr;
     QLabel* info_ = nullptr;
     QLabel* feedback_ = nullptr;
@@ -117,7 +119,7 @@ class DrnasDebugCenter final : public QObject {
         const int usableWidth = std::max(100, r.width() - 10);
         const int width = std::min(460, usableWidth);
         const int height = std::min(540, std::max(100, r.height() - 74));
-        launcher_->setGeometry(r.left() + 5, r.bottom() - 47, 67, 42);
+        if (launcherDrag_) launcherDrag_->place();
         panel_->setGeometry(r.left() + 5,
                             std::max(r.top() + 2, r.bottom() - height - 53),
                             width, height);
@@ -338,6 +340,9 @@ public:
         active_ = this;
         launcher_ = new QPushButton(QStringLiteral("DBG"), host);
         launcher_->setObjectName(QStringLiteral("drnasDebugLauncher"));
+        launcher_->setFixedSize(67,42);
+        launcherDrag_ = new DrnasDraggableLauncher(host, launcher_,
+            QStringLiteral("drnasOverlay/debug"), 5, false, this);
         launcher_->setStyleSheet(QStringLiteral(
             "QPushButton{background:#245878;color:white;border:1px solid #8ab5ce;"
             "border-radius:6px;font-weight:bold;font-size:13px;}"));

@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include "StartupDiagnostics.h"
+#include "DrnasDraggableLauncher.h"
 
 // All LAB surfaces are ordinary child widgets. Never create a second Android
 // window or OpenGL surface, and never consume or synthesize input events.
@@ -42,6 +43,7 @@ public:
 class DrnasLiveGuiLab : public QObject {
     QMainWindow* host;
     QPushButton* launcher;
+    DrnasDraggableLauncher* launcherDrag = nullptr;
     QScrollArea* panel;
     DrnasLabOutline* outline;
     QLabel* info;
@@ -81,7 +83,7 @@ class DrnasLiveGuiLab : public QObject {
         const QRect r = host->contentsRect();
         const int w = std::max(1, std::min(440, r.width() - 12));
         const int h = std::max(1, std::min(330, r.height() - 64));
-        launcher->setGeometry(r.right() - 77, r.bottom() - 47, 72, 42);
+        if (launcherDrag) launcherDrag->place();
         panel->setGeometry(r.right() - w - 5, r.bottom() - h - 53, w, h);
         outline->setGeometry(host->rect());
         outline->raise(); panel->raise(); launcher->raise();
@@ -131,6 +133,9 @@ public:
     explicit DrnasLiveGuiLab(QMainWindow* window) : QObject(window), host(window) {
         launcher = new QPushButton(QStringLiteral("LAB"), host);
         launcher->setObjectName(QStringLiteral("drnasLiveLabButton"));
+        launcher->setFixedSize(72,42);
+        launcherDrag = new DrnasDraggableLauncher(host, launcher,
+            QStringLiteral("drnasOverlay/lab"), 5, true, this);
         launcher->setStyleSheet(QStringLiteral("background:#304c65;color:white;border:1px solid #91b4cc;border-radius:6px;"));
         panel = new QScrollArea(host);
         panel->setObjectName(QStringLiteral("drnasLiveLabPanel"));
