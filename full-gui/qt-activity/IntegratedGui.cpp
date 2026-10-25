@@ -3,6 +3,7 @@
 #include "DrnasRenderLab.h"
 #include <algorithm>
 #include <utility>
+#include <memory>
 #include <QApplication>
 #include "StartupDiagnostics.h"
 #include "DrnasDebugCenter.h"
@@ -1004,9 +1005,20 @@ finally:
     coinRender->setVisible(false); // Replaced by explicit Render Lab phases.
     auto* renderLab = new DrnasRenderLab(shell, freecad, toolbar,
         [](const QString& code, QString& error) { return runOriginalFreeCADPython(code,error); });
-    // R264 boot sequencing: leave the known-good Coin3D/GL4ES rendering
-    // untouched. Only load the original Measure native extensions once the
-    // stage-3 FreeCAD document QOpenGLWidget is initialized and exposed.
+    // Android render isolation A/B: keep original Coin3D GUI, GL4ES and
+    // 1-second scheduling unchanged, but don't auto-import Measure by default.
+    // MeasureGui installs QuickMeasure (selection observer) at import time, so
+    // first prove the document geometry renders with these modules not forced.
+    // Users can enable the delayed imports using AUTO MEASURE; preference persists.
+    auto* measureAutoAction = toolbar->addAction(QStringLiteral("AUTO MEASURE"));
+    measureAutoAction->setObjectName(QStringLiteral("drnasMeasureAutoImportToggle"));
+    measureAutoAction->setCheckable(true);
+    measureAutoAction->setToolTip(QStringLiteral(
+        "A/B rendering: OFF avoids forced Measure imports; ON loads Measure "
+        "1s after the first Coin frame, MeasureGui 1s later. Restart to compare."));
+    const QString measureAutoKey = QStringLiteral("nativeProbe/measureAutoEnabled");
+    measureAutoAction->setChecked(QSettings().value(measureAutoKey, false).toBool());
+
     auto* measureTimerRaw = new QTimer(toolbar);
     measureTimerRaw->setObjectName(QStringLiteral("drnasMeasureDelayedBoot"));
     measureTimerRaw->setSingleShot(true);
@@ -1014,29 +1026,74 @@ finally:
     measureTimerRaw->setProperty("attempts", 0);
     const QPointer<QTimer> measureTimer(measureTimerRaw);
     const QPointer<QMainWindow> measureWindow(freecad);
+    const QPointer<QAction> measureAction(measureAutoAction);
+    auto frameWidget = std::make_shared<QPointer<QOpenGLWidget>>();
+    auto framePresented = std::make_shared<bool>(false);
+
+    QObject::connect(measureAutoAction, &QAction::toggled, toolbar,
+                     [measureTimer, measureAutoKey](bool enabled) {
+        QSettings state;
+        state.setValue(measureAutoKey, enabled);
+        state.sync();
+        DrnasDiagnostics::note(QStringLiteral(
+            "MEASURE_AB auto=%1 (persisted; no Coin viewport changes)").arg(enabled));
+        if (!measureTimer) return;
+        if (!enabled) {
+            measureTimer->stop();
+        } else if (measureTimer->property("stage").toInt() < 2) {
+            measureTimer->start(0);
+        }
+    });
+
     QObject::connect(measureTimerRaw, &QTimer::timeout, toolbar,
-                     [measureTimer, measureWindow] {
-        if (!measureTimer || !measureWindow) return;
+                     [measureTimer, measureWindow, measureAction,
+                      frameWidget, framePresented] {
+        if (!measureTimer || !measureWindow || !measureAction
+            || !measureAction->isChecked()) return;
         const int attempts = measureTimer->property("attempts").toInt() + 1;
         measureTimer->setProperty("attempts", attempts);
         auto* mdi = measureWindow->findChild<QMdiArea*>();
         auto* doc = mdi ? mdi->activeSubWindow() : nullptr;
         auto* widget = doc ? doc->findChild<QOpenGLWidget*>() : nullptr;
+        if (widget && frameWidget->data() != widget) {
+            *frameWidget = widget;
+            *framePresented = false;
+            DrnasDiagnostics::note(QStringLiteral(
+                "MEASURE_BOOT FRAME_WATCH: waiting for first QOpenGLWidget frameSwapped"));
+            QObject::connect(widget, &QOpenGLWidget::frameSwapped,
+                             measureTimer.data(),
+                             [measureTimer, frameWidget, framePresented,
+                              watched = QPointer<QOpenGLWidget>(widget)] {
+                if (!measureTimer || !watched || frameWidget->data() != watched.data())
+                    return;
+                if (!*framePresented) {
+                    *framePresented = true;
+                    DrnasDiagnostics::note(QStringLiteral(
+                        "MEASURE_BOOT FRAME_PRESENTED: first Coin Qt frame completed"));
+                    measureTimer->start(1000);
+                }
+            });
+            // Schedule an ordinary Qt paint, NOT a GL/Coin context operation.
+            // Without this, a static viewport may never swap after connecting.
+            widget->update();
+        }
         QWindow* surface = measureWindow->window()->windowHandle();
         const bool ready = QGuiApplication::applicationState() == Qt::ApplicationActive
             && measureWindow->isVisible() && surface && surface->isExposed()
             && qgetenv("DRNAS_RENDER_STAGE") == QByteArray("3")
             && widget && widget->isValid() && widget->isVisible()
-            && widget->width() > 0 && widget->height() > 0;
+            && widget->width() > 0 && widget->height() > 0
+            && *framePresented;
         if (!ready) {
             if (attempts == 1 || attempts % 30 == 0)
                 DrnasDiagnostics::note(QStringLiteral(
-                    "MEASURE_BOOT WAIT: stage-3 Coin document EGL viewport not ready; attempts=%1")
+                    "MEASURE_BOOT WAIT: first completed Coin frame unavailable; attempts=%1")
                     .arg(attempts));
             measureTimer->start(1000);
             return;
         }
         const int phase = measureTimer->property("stage").toInt();
+        if (phase >= 2) return;
         const QString name = phase == 0 ? QStringLiteral("Measure")
                                         : QStringLiteral("MeasureGui");
         const QString key = QStringLiteral("nativeProbe/measureBootPending");
@@ -1044,9 +1101,16 @@ finally:
         crashGuard.setValue(key, name);
         crashGuard.sync();
         DrnasDiagnostics::note(QStringLiteral("MEASURE_BOOT %1 IMPORT_BEGIN").arg(name));
+        // Log whether some original FreeCAD workbench already imported them.
         const QString script = phase == 0
-            ? QStringLiteral("import Measure\n")
-            : QStringLiteral("import MeasureGui\n");
+            ? QStringLiteral(
+                "import sys\n"
+                "_drnas_mark('MEASURE_AB PRE_CORE gui_loaded=' + str('MeasureGui' in sys.modules))\n"
+                "import Measure\n")
+            : QStringLiteral(
+                "import sys\n"
+                "_drnas_mark('MEASURE_AB PRE_GUI core_loaded=' + str('Measure' in sys.modules))\n"
+                "import MeasureGui\n");
         QString error;
         const bool ok = runOriginalFreeCADPython(script, error);
         DrnasDiagnostics::note(QStringLiteral(
@@ -1067,10 +1131,13 @@ finally:
                 "MEASURE_BOOT COMPLETE: core and GUI loaded sequentially"));
         }
     });
-    // Delayed relative to GUI initialization, then wait for the first
-    // document/Coin viewport. Never import against an absent EGLSurface.
-    QTimer::singleShot(1000, toolbar, [measureTimer] {
-        if (!measureTimer) return;
+    QTimer::singleShot(1000, toolbar, [measureTimer, measureAction] {
+        if (!measureTimer || !measureAction) return;
+        if (!measureAction->isChecked()) {
+            DrnasDiagnostics::note(QStringLiteral(
+                "MEASURE_AB CONTROL: auto OFF; skipped forced Measure and MeasureGui imports"));
+            return;
+        }
         QSettings crashGuard;
         const QString key = QStringLiteral("nativeProbe/measureBootPending");
         const QString interrupted = crashGuard.value(key).toString();
@@ -1083,7 +1150,7 @@ finally:
             return;
         }
         DrnasDiagnostics::note(QStringLiteral(
-            "MEASURE_BOOT ARMED: delay=1000ms; awaiting Coin viewport"));
+            "MEASURE_BOOT ARMED: wait first Coin frame, then 1000ms + 1000ms"));
         measureTimer->start(0);
     });
     QObject::connect(coinBoxTest, &QAction::triggered, shell,
