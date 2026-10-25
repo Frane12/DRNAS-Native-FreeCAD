@@ -429,7 +429,11 @@ if _drnas_doc:
     }
     void precisionPosition(const QPointF& finger) {
         if (!touchOwner) return;
-        QPoint local=touchOwner->mapFromGlobal((finger+QPointF(0,-42)).toPoint());
+        // Desktop selection must hit under the actual finger. The optional
+        // 42px lifted pointer is retained only for the legacy phone layout.
+        const QPointF source = qEnvironmentVariable("DRNAS_PC_DESKTOP_MODE") == QStringLiteral("1")
+            ? finger : finger + QPointF(0,-42);
+        QPoint local=touchOwner->mapFromGlobal(source.toPoint());
         local.setX(std::clamp(local.x(),0,std::max(0,touchOwner->width()-1)));
         local.setY(std::clamp(local.y(),0,std::max(0,touchOwner->height()-1)));
         setPosition(touchOwner->mapToGlobal(local));
@@ -756,6 +760,21 @@ protected:
                               event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick;
         if ((touchEvent || mouseEvent) && !activeDialog() && !QApplication::activePopupWidget()) {
             QWidget* viewport=viewportFor(inputWidget);
+            if (touchEvent && !viewport) {
+                // Some QtActivity touch sequences arrive on the host instead
+                // of the deepest FreeCAD QGraphicsView child. Hit-test in
+                // global *logical* Qt coordinates, never physical pixels.
+                const auto* t=static_cast<QTouchEvent*>(event);
+                if (!t->points().isEmpty()) {
+                    const QPoint global=t->points().first().globalPosition().toPoint();
+                    QWidget* hit=QApplication::widgetAt(global);
+                    if (!hit || (hit!=host && !host->isAncestorOf(hit))) {
+                        const QPoint local=host->mapFromGlobal(global);
+                        hit=host->childAt(local);
+                    }
+                    viewport=viewportFor(hit);
+                }
+            }
             if (touchEvent && viewport && (!touchOwner || viewport==touchOwner)) {
                 handleTouch(touchOwner ? touchOwner.data() : viewport,static_cast<QTouchEvent*>(event));
                 event->accept(); return true;

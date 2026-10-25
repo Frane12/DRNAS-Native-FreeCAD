@@ -8,6 +8,7 @@
 #include "DrnasDebugCenter.h"
 #include "DrnasTouchInput.h"
 #include "DrnasPortraitLayout.h"
+#include "DrnasDesktopWorkspace.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -1060,7 +1061,11 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (!beforeFirstShow) {
             window->hide(); // Best-effort fallback; can recreate EGLSurface.
         }
-        window->setParent(shell, Qt::Widget);
+        const bool pcDesktop = qEnvironmentVariable("DRNAS_PC_DESKTOP_MODE") == QStringLiteral("1");
+        DrnasDesktopWorkspace* desktop = pcDesktop ? new DrnasDesktopWorkspace(shell) : nullptr;
+        // Reparent only once, before showing FreeCAD or starting GL composition.
+        // The desktop wrapper stays inside the same native Android QtActivity surface.
+        window->setParent(desktop ? static_cast<QWidget*>(desktop) : static_cast<QWidget*>(shell), Qt::Widget);
         window->setWindowFlags(Qt::Widget);
         window->setMinimumSize(0, 0);
         window->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
@@ -1075,10 +1080,18 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         }
         if (shell->menuBar()) shell->menuBar()->hide();
         if (shell->statusBar()) shell->statusBar()->hide();
-        shell->setCentralWidget(window);
+        if (desktop) {
+            window->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+            shell->setCentralWidget(desktop);
+            desktop->attach(window);
+            DrnasDiagnostics::note(QStringLiteral("PC DESKTOP: 1024x768 logical 4:3 workspace; "
+                "Qt owns scaled paint, mouse and touch coordinates; no OpenGL interception"));
+        } else {
+            shell->setCentralWidget(window);
+        }
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
         installOriginalFreeCADTouchControls(shell, window);
-        new DrnasPortraitLayout(shell,window,[] {
+        if (!desktop) new DrnasPortraitLayout(shell,window,[] {
             QString error;
             if (!runOriginalFreeCADPython(QStringLiteral(
                     "import FreeCADGui as Gui\nGui.runCommand('Std_DockOverlayAll', 0)\n"),error))
@@ -1707,7 +1720,10 @@ public:
              "Real native OCCT 3D viewport  •  FreeCADGui documents: next stage"));
 #endif
         const QRect available=QGuiApplication::primaryScreen()->availableGeometry();
-        resize(std::min(available.width(),950),std::min(available.height(),1400));
+        if (qEnvironmentVariable("DRNAS_PC_DESKTOP_MODE") == QStringLiteral("1"))
+            resize(available.size());  // Landscape QtActivity surface hosts centered 1024x768.
+        else
+            resize(std::min(available.width(),950),std::min(available.height(),1400));
     }
 private:
 #ifndef DRNAS_FREECAD_FULL_INTEGRATION

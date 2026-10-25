@@ -19,7 +19,8 @@ import java.util.Locale;
 
 /** Runs before Qt starts, so display scaling and touch coordinates agree. */
 public final class StartupActivity extends Activity {
-    private static final int[] LONG_EDGES = {0, 960, 1280, 1600, 1920};
+    private static final int PC_DESKTOP = -1024;
+    private static final int[] LONG_EDGES = {PC_DESKTOP, 0, 960, 1280, 1600, 1920};
     private static final String PREFS = "drnas_startup_display";
     private RadioGroup choices;
     private RadioGroup viewportTests;
@@ -36,7 +37,10 @@ public final class StartupActivity extends Activity {
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         metrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
-        int saved = preferences.getInt("longEdge", 0);
+        // First launch after this update chooses the requested PC profile.
+        // Subsequent launches preserve the explicit user selection.
+        int saved = preferences.getBoolean("pcDesktopChoiceSaved", false)
+                ? preferences.getInt("longEdge", PC_DESKTOP) : PC_DESKTOP;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout panel = new LinearLayout(this);
@@ -50,7 +54,10 @@ public final class StartupActivity extends Activity {
         title.setTextSize(26);
         panel.addView(title);
         TextView help = new TextView(this);
-        help.setText("Odaberi radnu rezoluciju prije pokretanja. Veća rezolucija daje više prostora i manje kontrole.\n\nNakon pokretanja automatski se otvara Part Design.");
+        help.setText("PC 1024 × 768: vodoravan FreeCAD, točne Qt koordinate dodira i prikaza; "
+                + "4:3 radna površina je centrirana bez rastezanja. "
+                + "Bočni rubovi ostaju slobodni. Ostali načini zadržavaju stari prikaz.\n\n"
+                + "Nakon pokretanja automatski se otvara Part Design.");
         help.setTextColor(Color.rgb(215, 232, 245));
         help.setTextSize(17);
         help.setPadding(0, dp(12), 0, dp(8));
@@ -64,12 +71,16 @@ public final class StartupActivity extends Activity {
             radio.setTag(edge);
             int width = nativeWidth;
             int height = nativeHeight;
-            if (edge != 0) {
+            if (edge == PC_DESKTOP) {
+                width = 1024;
+                height = 768;
+            } else if (edge != 0) {
                 double ratio = (double) edge / Math.max(nativeWidth, nativeHeight);
                 width = (int) Math.round(nativeWidth * ratio);
                 height = (int) Math.round(nativeHeight * ratio);
             }
-            radio.setText((edge == 0 ? "Automatski — " : "") + width + " × " + height);
+            radio.setText(edge == PC_DESKTOP ? "PC radna površina — 1024 × 768 (4:3)" :
+                    (edge == 0 ? "Automatski — " : "") + width + " × " + height);
             radio.setTextSize(19);
             radio.setTextColor(Color.WHITE);
             radio.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(110, 205, 255)));
@@ -121,12 +132,18 @@ public final class StartupActivity extends Activity {
         RadioButton selected = findViewById(choices.getCheckedRadioButtonId());
         int edge = (Integer) selected.getTag();
         double logicalLong = Math.max(metrics.widthPixels, metrics.heightPixels) / (double) metrics.density;
-        double scale = edge == 0 ? 1.0 : logicalLong / edge;
+        // In landscape, normalize the *short* physical screen edge to 768
+        // Qt logical units. A centered 1024x768 CAD viewport fits without
+        // nonuniform scaling; side gutters preserve the screen aspect ratio.
+        double scale = edge == PC_DESKTOP
+                ? (Math.min(metrics.widthPixels, metrics.heightPixels) / metrics.density) / 768.0
+                : (edge == 0 ? 1.0 : logicalLong / edge);
         // Android's Os.setenv updates the native process environment before
         // QtActivity loads Qt. No root, display-mode override or extra GL surface.
         try {
             Os.setenv("QT_SCALE_FACTOR", String.format(Locale.ROOT, "%.6f", scale), true);
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
+            Os.setenv("DRNAS_PC_DESKTOP_MODE", edge == PC_DESKTOP ? "1" : "0", true);
             RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
             Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
             Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "0", true);
@@ -134,10 +151,13 @@ public final class StartupActivity extends Activity {
             Log.e("DRNAS", "Startup display configuration failed", error);
             return;
         }
-        preferences.edit().putInt("longEdge", edge).apply();
+        preferences.edit().putInt("longEdge", edge)
+                .putBoolean("pcDesktopChoiceSaved", true).apply();
         starting = true;
         Intent intent = new Intent();
-        intent.setClassName(getPackageName(), "org.qtproject.qt.android.bindings.QtActivity");
+        intent.setClassName(getPackageName(), edge == PC_DESKTOP
+                ? "org.drnas.freecad.bootstrap.DesktopQtActivity"
+                : "org.qtproject.qt.android.bindings.QtActivity");
         startActivity(intent);
         finish();
     }
