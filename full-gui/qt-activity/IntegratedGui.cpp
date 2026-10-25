@@ -1274,6 +1274,15 @@ finally:
     });
     QTimer::singleShot(1000, toolbar, [measureTimer, measureAction] {
         if (!measureTimer || !measureAction) return;
+        // Audit imports BEFORE our timer acts. This detects other FreeCAD
+        // initialization routes, including workbench startup paths.
+        QString auditError;
+        const bool auditOk = runOriginalFreeCADPython(QStringLiteral(
+            "import sys\n"
+            "_drnas_mark('MEASURE_BOOT STARTUP_AUDIT core=' + str('Measure' in sys.modules) + "
+            "' gui=' + str('MeasureGui' in sys.modules))\n"), auditError);
+        DrnasDiagnostics::note(QStringLiteral(
+            "MEASURE_BOOT STARTUP_AUDIT sent=%1 error=%2").arg(auditOk).arg(auditError));
         if (!measureAction->isChecked()) {
             DrnasDiagnostics::note(QStringLiteral(
                 "MEASURE_AB CONTROL: auto OFF; skipped forced Measure and MeasureGui imports"));

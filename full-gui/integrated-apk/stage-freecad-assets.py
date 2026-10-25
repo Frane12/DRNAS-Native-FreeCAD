@@ -16,6 +16,37 @@ REQUIRED = {
 }
 
 
+
+def defer_measure_init_gui(path: Path):
+    """Suppress upstream Measure/InitGui.py's eager native imports on Android.
+
+    The original C++ extensions remain packaged unmodified. GUI/Qt may import
+    this resource before the first valid Coin3D frame; the Android AUTO MEASURE
+    timer is the only intentional *DRNAS* import path after startup. Fail the
+    build if upstream changes the exact import contract.
+    """
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    targets = {"import Measure", "import MeasureGui"}
+    found = {target: 0 for target in targets}
+    for i, line in enumerate(lines):
+        statement = line.strip()
+        if statement in targets:
+            found[statement] += 1
+            newline = "\r\n" if line.endswith("\r\n") else "\n"
+            lines[i] = "# DRNAS Android: native " + statement[7:] + " deferred until AUTO MEASURE" + newline
+    if any(count != 1 for count in found.values()):
+        raise SystemExit(
+            f"Unsafe Measure InitGui change: expected one import each, got {found} in {path}"
+        )
+    updated = "".join(lines)
+    compile(updated, str(path), "exec")
+    path.write_text(updated, encoding="utf-8")
+    print("PASS: original Measure/InitGui.py eager Measure and MeasureGui imports "
+          "disabled in Android APK; native binaries retained")
+
+
+
 def main():
     if len(sys.argv) != 4:
         raise SystemExit("Usage: stage-freecad-assets.py upstream-resources asset-dir relocated-ELFs")
@@ -33,6 +64,10 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(file, target)
         names.append(relative.as_posix())
+    # Original FreeCAD src/Mod/Measure/InitGui.py directly imports Measure and
+    # MeasureGui during GUI startup. In QtActivity this can run BEFORE Coin
+    # ever presents a frame, bypassing Android's delayed Measure controls.
+    defer_measure_init_gui(bundle / "freecad" / "Mod" / "Measure" / "InitGui.py")
     # Android's native library extractor can ignore Python extension ELF names
     # such as Part.so (no "lib" prefix). Ship the exact relocated binaries in
     # app-private FreeCAD/lib as a reliable CPython and module-loader fallback.
