@@ -20,7 +20,8 @@ import java.util.Locale;
 /** Runs before Qt starts, so display scaling and touch coordinates agree. */
 public final class StartupActivity extends Activity {
     private static final int PC_DESKTOP = -1024;
-    private static final int[] LONG_EDGES = {PC_DESKTOP, 0, 960, 1280, 1600, 1920};
+    private static final int DESKTOP_800 = -800, DESKTOP_640 = -640;
+    private static final int[] LONG_EDGES = {DESKTOP_800, DESKTOP_640, PC_DESKTOP, 0, 960, 1280, 1600, 1920};
     private static final String PREFS = "drnas_startup_display";
     private RadioGroup choices;
     private RadioGroup viewportTests;
@@ -37,10 +38,10 @@ public final class StartupActivity extends Activity {
         preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         metrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
-        // First launch after this update chooses the requested PC profile.
+        // Migrate the old tiny 1024x768 test once to the larger 800x600 UI.
         // Subsequent launches preserve the explicit user selection.
-        int saved = preferences.getBoolean("pcDesktopChoiceSaved", false)
-                ? preferences.getInt("longEdge", PC_DESKTOP) : PC_DESKTOP;
+        int saved = preferences.getBoolean("touchLandscapeChoiceSaved", false)
+                ? preferences.getInt("longEdge", DESKTOP_800) : DESKTOP_800;
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout panel = new LinearLayout(this);
@@ -54,32 +55,34 @@ public final class StartupActivity extends Activity {
         title.setTextSize(26);
         panel.addView(title);
         TextView help = new TextView(this);
-        help.setText("PC 1024 × 768: vodoravan FreeCAD, točne Qt koordinate dodira i prikaza; "
+        help.setText("Vodoravni FreeCAD: 800 × 600 za veće kontrole, 640 × 480 za još veće. "
+                + "Prikaz i dodir koriste iste Qt koordinate; "
                 + "4:3 radna površina je centrirana bez rastezanja. "
-                + "Bočni rubovi ostaju slobodni. Ostali načini zadržavaju stari prikaz.\n\n"
+                + "Bočni rubovi ostaju slobodni.\n\n"
                 + "Nakon pokretanja automatski se otvara Part Design.");
         help.setTextColor(Color.rgb(215, 232, 245));
         help.setTextSize(17);
         help.setPadding(0, dp(12), 0, dp(8));
         panel.addView(help);
         choices = new RadioGroup(this);
-        int nativeWidth = Math.round(metrics.widthPixels / metrics.density);
-        int nativeHeight = Math.round(metrics.heightPixels / metrics.density);
+        int nativeWidth = Math.round(Math.max(metrics.widthPixels, metrics.heightPixels) / metrics.density);
+        int nativeHeight = Math.round(Math.min(metrics.widthPixels, metrics.heightPixels) / metrics.density);
         for (int edge : LONG_EDGES) {
             RadioButton radio = new RadioButton(this);
             radio.setId(View.generateViewId());
             radio.setTag(edge);
             int width = nativeWidth;
             int height = nativeHeight;
-            if (edge == PC_DESKTOP) {
-                width = 1024;
-                height = 768;
+            if (edge < 0) {
+                width = -edge;
+                height = width * 3 / 4;
             } else if (edge != 0) {
                 double ratio = (double) edge / Math.max(nativeWidth, nativeHeight);
                 width = (int) Math.round(nativeWidth * ratio);
                 height = (int) Math.round(nativeHeight * ratio);
             }
-            radio.setText(edge == PC_DESKTOP ? "PC radna površina — 1024 × 768 (4:3)" :
+            radio.setText(edge < 0 ? "PC radna površina — " + width + " × " + height + " (4:3)"
+                    + (edge == DESKTOP_800 ? " — preporučeno" : "") :
                     (edge == 0 ? "Automatski — " : "") + width + " × " + height);
             radio.setTextSize(19);
             radio.setTextColor(Color.WHITE);
@@ -132,18 +135,20 @@ public final class StartupActivity extends Activity {
         RadioButton selected = findViewById(choices.getCheckedRadioButtonId());
         int edge = (Integer) selected.getTag();
         double logicalLong = Math.max(metrics.widthPixels, metrics.heightPixels) / (double) metrics.density;
-        // In landscape, normalize the *short* physical screen edge to 768
-        // Qt logical units. A centered 1024x768 CAD viewport fits without
+        // Normalize the short physical edge to the selected logical height.
+        // Qt applies this scale before both painting and native touch delivery.
+        // A centered 4:3 CAD viewport fits without
         // nonuniform scaling; side gutters preserve the screen aspect ratio.
-        double scale = edge == PC_DESKTOP
-                ? (Math.min(metrics.widthPixels, metrics.heightPixels) / metrics.density) / 768.0
+        double scale = edge < 0
+                ? (Math.min(metrics.widthPixels, metrics.heightPixels) / metrics.density) / (-edge * 3.0 / 4.0)
                 : (edge == 0 ? 1.0 : logicalLong / edge);
         // Android's Os.setenv updates the native process environment before
         // QtActivity loads Qt. No root, display-mode override or extra GL surface.
         try {
             Os.setenv("QT_SCALE_FACTOR", String.format(Locale.ROOT, "%.6f", scale), true);
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
-            Os.setenv("DRNAS_PC_DESKTOP_MODE", edge == PC_DESKTOP ? "1" : "0", true);
+            Os.setenv("DRNAS_PC_DESKTOP_MODE", edge < 0 ? "1" : "0", true);
+            Os.setenv("DRNAS_DESKTOP_WIDTH", edge < 0 ? Integer.toString(-edge) : "0", true);
             RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
             Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
             Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "0", true);
@@ -152,10 +157,10 @@ public final class StartupActivity extends Activity {
             return;
         }
         preferences.edit().putInt("longEdge", edge)
-                .putBoolean("pcDesktopChoiceSaved", true).apply();
+                .putBoolean("touchLandscapeChoiceSaved", true).apply();
         starting = true;
         Intent intent = new Intent();
-        intent.setClassName(getPackageName(), edge == PC_DESKTOP
+        intent.setClassName(getPackageName(), edge < 0
                 ? "org.drnas.freecad.bootstrap.DesktopQtActivity"
                 : "org.qtproject.qt.android.bindings.QtActivity");
         startActivity(intent);

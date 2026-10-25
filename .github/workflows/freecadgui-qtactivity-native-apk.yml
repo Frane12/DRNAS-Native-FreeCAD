@@ -61,8 +61,13 @@ jobs:
             exit 1
           fi
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
+          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/toolbar-touch
+          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/toolbar-touch
+          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/toolbar-touch
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/desktop-workspace
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/desktop-workspace
+          QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=640 build/touch-tests/desktop-workspace
+          QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=1024 build/touch-tests/desktop-workspace
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/portrait-modal
           python3 full-gui/qt-activity/tests/first-shape.py

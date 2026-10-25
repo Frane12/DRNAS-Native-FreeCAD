@@ -13,6 +13,7 @@
 #include <QDialog>
 #include <QFileDialog>
 #include <QEvent>
+#include <QElapsedTimer>
 #include <QFrame>
 #include <QGraphicsView>
 #include <QKeyEvent>
@@ -32,12 +33,14 @@
 #include <QSet>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QTimer>
 #include <QTouchEvent>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QWindow>
 #include "StartupDiagnostics.h"
 
 class DrnasPostedMouseEvent final : public QMouseEvent {
@@ -102,6 +105,13 @@ class DrnasTouchInput final : public QObject {
     QPointF uiTouchStart;
     int uiTouchId = -1;
     bool uiTouchCancelled = false;
+    QElapsedTimer inputClock;
+    QPointer<QWidget> lastUiClickTarget;
+    QPointer<QWidget> lastUiTouchTarget;
+    qint64 lastUiClickMs=-1, lastUiTouchMs=-1;
+    QPointF lastUiTouchPosition;
+    int tapDebounceMs=120;
+    static constexpr int duplicateMouseMs=250;
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
@@ -197,7 +207,7 @@ class DrnasTouchInput final : public QObject {
         // enters QMenu::exec(). A synchronous press could otherwise suspend
         // mouseButton(false) and leave an emulated button pressed.
         QCoreApplication::postEvent(target.data(),new DrnasPostedMouseEvent(
-            type,local,window,global,button,buttons,modifiers));
+            type,local,window,global,button,buttons,modifiers,Qt::MouseEventSynthesizedByApplication));
     }
     void mouseButton(Qt::MouseButton button, bool down) {
         if (down) {
@@ -290,32 +300,61 @@ class DrnasTouchInput final : public QObject {
         // Never fall through a modal window into a CAD command underneath it.
         return nullptr;
     }
+    bool ownsInput(QObject* object) const {
+        if (auto* widget=qobject_cast<QWidget*>(object))
+            return widget==host || host->isAncestorOf(widget);
+        if (auto* window=qobject_cast<QWindow*>(object)) {
+            if (window==host->windowHandle()) return true;
+            for (auto* root:{QApplication::activePopupWidget(),activeDialog()})
+                if (root && (root==host || host->isAncestorOf(root)) &&
+                    window==root->windowHandle()) return true;
+        }
+        return false;
+    }
+    void clearUiTouch() {
+        uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
+    }
+    void rememberUiTouch(const QPointF& global) {
+        lastUiTouchMs=inputClock.elapsed();lastUiTouchPosition=global;
+    }
     void postUiClick(QWidget* button,const QPointF& global) {
         if (!button || !button->isVisible() || !button->isEnabled()) return;
+        const qint64 now=inputClock.elapsed();
+        if (lastUiClickTarget==button && lastUiClickMs>=0 && now-lastUiClickMs<tapDebounceMs) {
+            DrnasDiagnostics::note(QStringLiteral("INPUT UI debounce: duplicate suppressed elapsed=%1ms limit=%2ms")
+                .arg(now-lastUiClickMs).arg(tapDebounceMs));
+            return;
+        }
+        lastUiClickTarget=button;lastUiClickMs=now;
         const QPointF local=button->mapFromGlobal(global.toPoint());
         const QPointF window=button->window()->mapFromGlobal(global.toPoint());
         // Both events are queued before executing QAction/QMenu handlers.
         // Avoid QMenu::exec() reentrancy inside QTouchEvent dispatch.
-        QCoreApplication::postEvent(button,new DrnasPostedMouseEvent(QEvent::MouseMove,
-            local,window,global,Qt::NoButton,Qt::NoButton,Qt::NoModifier));
+        // No hover/move before a UI tap: it can activate desktop dock overlays.
         QCoreApplication::postEvent(button,new DrnasPostedMouseEvent(QEvent::MouseButtonPress,
-            local,window,global,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier));
+            local,window,global,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier,Qt::MouseEventSynthesizedByApplication));
         QCoreApplication::postEvent(button,new DrnasPostedMouseEvent(QEvent::MouseButtonRelease,
-            local,window,global,Qt::LeftButton,Qt::NoButton,Qt::NoModifier));
-        DrnasDiagnostics::note(QStringLiteral("INPUT UI touch click target=%1/%2 logical=%3,%4 dpr=%5")
+            local,window,global,Qt::LeftButton,Qt::NoButton,Qt::NoModifier,Qt::MouseEventSynthesizedByApplication));
+        DrnasDiagnostics::note(QStringLiteral("INPUT UI touch click target=%1/%2 global=%3,%4 local=%5,%6 dpr=%7 debounce=%8ms label=%9")
             .arg(QString::fromLatin1(button->metaObject()->className()),button->objectName())
-            .arg(int(global.x())).arg(int(global.y())).arg(button->devicePixelRatioF()));
+            .arg(global.x()).arg(global.y()).arg(local.x()).arg(local.y())
+            .arg(button->devicePixelRatioF()).arg(tapDebounceMs)
+            .arg(qobject_cast<QAbstractButton*>(button) ? qobject_cast<QAbstractButton*>(button)->text() : QString()));
     }
     bool handleUiTouch(QTouchEvent* event) {
+        // A second finger over a toolbar must stay in the existing CAD gesture.
+        if (touchOwner) return false;
         if (event->type()==QEvent::TouchBegin && uiTouchId<0) {
             if (event->points().size()!=1) return false;
             const QEventPoint& p=event->points().first();
             QWidget* button=controlAtFinger(p.globalPosition());
             if (!button) return false;
             uiTouchTarget=button;
+            lastUiTouchTarget=button;
             uiTouchId=p.id();
             uiTouchStart=p.globalPosition();
             uiTouchCancelled=false;
+            rememberUiTouch(uiTouchStart);
             DrnasDiagnostics::note(QStringLiteral("INPUT UI touch begin target=%1/%2 modal=%3")
                 .arg(QString::fromLatin1(button->metaObject()->className()),button->objectName())
                 .arg(activeDialog()!=nullptr));
@@ -327,6 +366,7 @@ class DrnasTouchInput final : public QObject {
         const QEventPoint* tracked=nullptr;
         for (const QEventPoint& p:event->points())
             if (p.id()==uiTouchId) {tracked=&p;break;}
+        if (tracked) rememberUiTouch(tracked->globalPosition());
         const bool finishing=event->type()==QEvent::TouchEnd ||
             (tracked && tracked->state()==QEventPoint::State::Released);
         if (tracked && (tracked->globalPosition()-uiTouchStart).manhattanLength() >
@@ -337,7 +377,7 @@ class DrnasTouchInput final : public QObject {
             const QPointF release=tracked ? tracked->globalPosition():uiTouchStart;
             const bool sameButton=target && controlAtFinger(release)==target;
             const bool click=!uiTouchCancelled && sameButton;
-            uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
+            clearUiTouch();
             if (click) postUiClick(target.data(),release);
         }
         event->accept();
@@ -722,7 +762,20 @@ protected:
             // Our posted mouse events (and their propagated copies) already
             // contain mapped viewport coordinates; never feed them back into
             // the physical-finger tracking path.
-            if (!event->spontaneous() && mouse->source()==Qt::MouseEventNotSynthesized) return false;
+            if (dynamic_cast<DrnasPostedMouseEvent*>(event) ||
+                (!event->spontaneous() && mouse->source()==Qt::MouseEventSynthesizedByApplication)) return false;
+            const bool fromTouch=mouse->source()!=Qt::MouseEventNotSynthesized ||
+                (mouse->pointingDevice() && mouse->pointingDevice()->type()==QInputDevice::DeviceType::TouchScreen);
+            // Raw touch is already ours. Discard only its duplicate mouse
+            // stream, including Qt's press/double-click/release after TouchEnd.
+            // An ordinary mouse and unhandled UI controls retain native input.
+            const bool recent=lastUiTouchMs>=0 && inputClock.elapsed()-lastUiTouchMs<=duplicateMouseMs &&
+                QLineF(lastUiTouchPosition,mouse->globalPosition()).length()<=std::max(24,QApplication::startDragDistance()*2) &&
+                lastUiTouchTarget && controlAtFinger(mouse->globalPosition())==lastUiTouchTarget;
+            if (fromTouch && ownsInput(obj) && (uiTouchId>=0 || recent)) {
+                event->accept();return true;
+            }
+            if (!event->spontaneous() && mouse->source()==Qt::MouseEventNotSynthesized && !fromTouch) return false;
         }
         auto* inputWidget=qobject_cast<QWidget*>(obj);
         const bool touchEvent=event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate ||
@@ -730,7 +783,7 @@ protected:
         const bool dialogTransition=inputWidget && qobject_cast<QDialog*>(inputWidget) &&
             (event->type()==QEvent::Show || event->type()==QEvent::Hide);
         if (dialogTransition) {
-            uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
+            clearUiTouch();
             prepareUiTouch();
             if (event->type()==QEvent::Hide) QTimer::singleShot(0,this,[this]{
                 if (activeDialog() || QApplication::activePopupWidget()) return;
@@ -740,14 +793,15 @@ protected:
                 DrnasDiagnostics::note(QStringLiteral("INPUT UI: modal closed; host input restored"));
             });
         }
-        if (event->type()==QEvent::ApplicationDeactivate ||
+        const bool interrupt=event->type()==QEvent::ApplicationDeactivate ||
             (obj==host && (event->type()==QEvent::Hide || event->type()==QEvent::WindowDeactivate)) ||
             (obj==touchOwner && (event->type()==QEvent::Hide || event->type()==QEvent::FocusOut)) ||
             dialogTransition ||
             (inputWidget && inputWidget->windowType()==Qt::Popup &&
-             event->type()==QEvent::Show)) resetGesture();
+             event->type()==QEvent::Show);
+        if (interrupt) {clearUiTouch();resetGesture();}
         if (event->type()==QEvent::TouchCancel && uiTouchId>=0) {
-            uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
+            clearUiTouch();
             event->accept();return true;
         }
         if (event->type()==QEvent::TouchCancel && touchOwner) {
@@ -756,8 +810,20 @@ protected:
         // Toolbars use direct absolute-position tap routing, separately from
         // CAD gestures. Even if Android delivers a touch to the embedded main
         // window rather than its QToolButton, hit-test the original toolbar.
-        if (touchEvent && handleUiTouch(static_cast<QTouchEvent*>(event)))
-            return true;
+        if (touchEvent && ownsInput(obj)) {
+            auto* touch=static_cast<QTouchEvent*>(event);
+            if (event->type()==QEvent::TouchBegin && !touch->points().isEmpty()) {
+                const QPointF global=touch->points().first().globalPosition();
+                const QPointF local=host->mapFromGlobal(global);
+                QWidget* hit=host->childAt(local.toPoint());
+                DrnasDiagnostics::note(QStringLiteral("INPUT HIT receiver=%1 global=%2,%3 host=%4,%5 dpr=%6 hit=%7")
+                    .arg(QString::fromLatin1(obj->metaObject()->className()))
+                    .arg(global.x()).arg(global.y()).arg(local.x()).arg(local.y())
+                    .arg(host->devicePixelRatioF())
+                    .arg(hit ? QString::fromLatin1(hit->metaObject()->className()) : QStringLiteral("none")));
+            }
+            if (handleUiTouch(touch)) return true;
+        }
         // UI widgets keep normal Qt hit testing, focus, scrolling and modality.
         // Only a sequence which begins inside a CAD viewport belongs to us.
         const bool mouseEvent=event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
@@ -797,6 +863,7 @@ protected:
             }
         }
         if (obj==host && event->type()==QEvent::Resize) {
+            clearUiTouch();
             resetGesture();
             QSettings s;
             panel->move(int(s.value(QStringLiteral("touch/panelX"),0.02).toDouble()*host->width()),
@@ -904,6 +971,20 @@ public:
         connect(recover,&QPushButton::clicked,this,[this]{releaseAll();repairWindows();constrain();savePosition();DrnasDiagnostics::note(QStringLiteral("INPUT: visible windows recovered"));});
         body->addLayout(footer);
         QSettings settings;
+        inputClock.start();
+        bool debounceOverride=false;
+        const int overrideMs=qEnvironmentVariableIntValue("DRNAS_TOUCH_DEBOUNCE_MS",&debounceOverride);
+        tapDebounceMs=std::clamp(debounceOverride ? overrideMs :
+            settings.value(QStringLiteral("touch/debounceMs"),120).toInt(),0,400);
+        auto* debounceRow=new QHBoxLayout;
+        debounceRow->addWidget(new QLabel(QStringLiteral("Zaštita ponovnog klika"),content));
+        auto* debounce=new QSpinBox(content);debounce->setRange(0,400);debounce->setSingleStep(10);
+        debounce->setSuffix(QStringLiteral(" ms"));debounce->setValue(tapDebounceMs);
+        debounce->setObjectName(QStringLiteral("drnasTouchDebounceMs"));
+        debounceRow->addWidget(debounce);body->addLayout(debounceRow);
+        connect(debounce,qOverload<int>(&QSpinBox::valueChanged),this,[this](int ms){
+            tapDebounceMs=ms;QSettings s;s.setValue(QStringLiteral("touch/debounceMs"),ms);
+        });
         connect(close,&QPushButton::clicked,panel,&QWidget::hide);
         launcher=new QPushButton(QStringLiteral("Geste"),host); launcher->setObjectName(QStringLiteral("drnasTouchInputLauncher"));
         launcher->setFocusPolicy(Qt::NoFocus); launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));

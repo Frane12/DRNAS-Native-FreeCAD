@@ -7,6 +7,11 @@ cmake -S full-gui/qt-activity/tests -B build/touch-tests
 cmake --build build/touch-tests
 ctest --test-dir build/touch-tests --output-on-failure
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/toolbar-touch
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/toolbar-touch
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/toolbar-touch
+QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=640 build/touch-tests/desktop-workspace
+QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=1024 build/touch-tests/desktop-workspace
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/portrait-modal
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/surface-lifecycle
@@ -24,7 +29,8 @@ not establish Coin rendering correctness or Android device behavior.
 
 ## Phone acceptance checks
 
-1. Start in portrait (marker **DRNAS P06**) and create a sphere/cube in the existing Coin view.
+1. Start in landscape, select **800 × 600**, tap the original toolbar's **New**,
+   then create a sphere/cube in the existing Coin view. Repeat at **640 × 480**.
 2. Tap faces and edges at the touched location. No persistent mouse cursor appears.
 3. Drag one finger to orbit; no selection click occurs when lifting it.
 4. Pan and pinch with two fingers, then lift one followed by the other. No extra
@@ -43,10 +49,14 @@ not establish Coin rendering correctness or Android device behavior.
 9. Interrupt a drag by backgrounding the app, then return. No held click should
    remain. **Odustani** must cancel an active tool with the gesture panel closed.
 
-The app locks both activities to portrait. Model, Properties and Tasks share
-bottom dock tabs, with restored overlays disabled and desktop drag title bars
-removed. Wide original task forms stay reachable inside scroll areas. The
-portrait test includes upstream's `Model` dock, 600-pixel task forms, late
+The app locks its activities to landscape for this test. The default centered
+4:3 profile is 800 × 600, with 640 × 480 and 1024 × 768 alternatives. Display
+scaling is configured before Qt starts; touch uses that same Qt coordinate
+system. Native toolbar icons are 24 logical pixels with 36-pixel button minima,
+and the desktop font is no longer reduced by 20%. Finger debounce defaults to
+120 ms and is adjustable from 0 to 400 ms in **Geste**. The separate
+portrait fixture remains as regression coverage for the legacy dock adapter.
+It includes upstream's `Model` dock, 600-pixel task forms, late
 workbench panels, and verifies that the host remains exactly 400 by 869 at
 DPR 1, 2 and 3.
 Internal dialogs stay on QtActivity's surface while keeping exec/done results;
@@ -60,3 +70,9 @@ camera changes. Coin/GL4ES and verified ARM64 dependencies remain in use.
 The surface lifecycle regression confirms that displaying, hiding and restoring
 the QtActivity-like host never suspends ordinary QWidget paint or update events.
 Android EGL/QRhi and Coin3D surface recovery still require a physical-device test.
+
+`toolbar-touch` enters the actual native QWindow and verifies a balanced New
+click, small finger movement, a rapid duplicate tap, a different command during
+debounce, duplicate Qt/system/touch-device mouse input, ordinary mouse clicks,
+TouchCancel, application deactivation/resume, and a drag off the button. The
+same harness failed on the prior code at the repeated-tap assertion.

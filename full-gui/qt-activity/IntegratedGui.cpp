@@ -389,7 +389,14 @@ void compactOriginalAndroidFreeCADChrome(QMainWindow* window)
         bar->setAttribute(Qt::WA_AcceptTouchEvents, true);
         for (QToolButton* button : bar->findChildren<QToolButton*>())
             button->setAttribute(Qt::WA_AcceptTouchEvents, true);
-        bar->setIconSize(QSize(18, 18));
+        const bool desktop=qEnvironmentVariable("DRNAS_PC_DESKTOP_MODE")==QStringLiteral("1");
+        bar->setIconSize(desktop ? QSize(24,24) : QSize(18,18));
+        if (desktop) {
+            // Stock QToolButtons stay the hit targets; enlarge the same widgets
+            // rather than painting large icons over smaller clickable bounds.
+            for (auto* button:bar->findChildren<QToolButton*>())
+                if (button->defaultAction()) button->setMinimumSize(36,36);
+        }
         bar->setMovable(false);
         if (bar->isFloating()) window->addToolBar(Qt::TopToolBarArea, bar);
         bar->setFloatable(false);
@@ -1039,16 +1046,17 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
                 << "topLevel=" << window->isWindow()
                 << "nativeHandle=" << (window->windowHandle() != nullptr);
 
-        // Reduce oversized desktop UI furniture before Android measures it.
+        const bool pcDesktop = qEnvironmentVariable("DRNAS_PC_DESKTOP_MODE") == QStringLiteral("1");
+        // Preserve the stock font in the lower-resolution landscape profiles.
         QFont compactFont = window->font();
-        if (compactFont.pointSizeF() > 0) {
+        if (!pcDesktop && compactFont.pointSizeF() > 0) {
             compactFont.setPointSizeF(std::max(7.0, compactFont.pointSizeF() * 0.80));
-        } else if (compactFont.pixelSize() > 0) {
+        } else if (!pcDesktop && compactFont.pixelSize() > 0) {
             compactFont.setPixelSize(std::max(9, compactFont.pixelSize() * 4 / 5));
         }
         window->setFont(compactFont);
         for (QToolBar* toolbar : window->findChildren<QToolBar*>()) {
-            toolbar->setIconSize(QSize(18, 18));
+            toolbar->setIconSize(pcDesktop ? QSize(24,24) : QSize(18,18));
         }
         // Original menus remain alive for the Android Menu dropdown; don't
         // spend a second full-width row on the embedded desktop menu bar.
@@ -1061,7 +1069,6 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (!beforeFirstShow) {
             window->hide(); // Best-effort fallback; can recreate EGLSurface.
         }
-        const bool pcDesktop = qEnvironmentVariable("DRNAS_PC_DESKTOP_MODE") == QStringLiteral("1");
         DrnasDesktopWorkspace* desktop = pcDesktop ? new DrnasDesktopWorkspace(shell) : nullptr;
         // Reparent only once, before showing FreeCAD or starting GL composition.
         // The desktop wrapper stays inside the same native Android QtActivity surface.
@@ -1084,8 +1091,10 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
             window->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
             shell->setCentralWidget(desktop);
             desktop->attach(window);
-            DrnasDiagnostics::note(QStringLiteral("PC DESKTOP: 1024x768 logical 4:3 workspace; "
-                "Qt owns scaled paint, mouse and touch coordinates; no OpenGL interception"));
+            const QSize profile=DrnasDesktopWorkspace::startupSize();
+            DrnasDiagnostics::note(QStringLiteral("PC DESKTOP: %1x%2 logical 4:3 workspace; "
+                "Qt owns scaled paint, mouse and touch coordinates; no OpenGL interception")
+                .arg(profile.width()).arg(profile.height()));
         } else {
             shell->setCentralWidget(window);
         }
@@ -1467,6 +1476,8 @@ public:
                     }
                     if (embedded) {
                         auto* freecadWindow = qobject_cast<QMainWindow*>(centralWidget());
+                        if (!freecadWindow && centralWidget())
+                            freecadWindow=centralWidget()->findChild<QMainWindow*>();
                         compactOriginalAndroidFreeCADChrome(freecadWindow);
                         auto* commandBar = findChild<QToolBar*>(
                             QStringLiteral("drnasAndroidFreeCADCommands"));

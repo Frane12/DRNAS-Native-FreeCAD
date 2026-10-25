@@ -166,6 +166,7 @@ int main(int argc,char** argv) {
     QTest::touchEvent(newButton,device).press(25,center,newButton).commit();
     QTest::touchEvent(newButton,device).release(25,center,newButton).commit();drain();
     check(newTriggers==1,"direct original FreeCAD toolbar touch must trigger New once");
+    QTest::qWait(140); // Next deliberate tap is outside the finger debounce.
     // Android integration: the parent can receive touch instead of the child.
     // Route by global logical coordinates; never use devicePixelRatio here.
     const QPoint throughHost=host.mapFromGlobal(newButton->mapToGlobal(center));

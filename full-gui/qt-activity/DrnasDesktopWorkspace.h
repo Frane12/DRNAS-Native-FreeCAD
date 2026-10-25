@@ -9,18 +9,18 @@
 #include <QWidget>
 #include "StartupDiagnostics.h"
 
-// Center a genuine 1024x768 FreeCAD MainWindow on Android's wide landscape
+// Center a genuine 4:3 FreeCAD MainWindow on Android's wide landscape
 // surface. Native Qt paints and hit-tests one logical coordinate system;
 // never resample a Coin3D framebuffer or independently scale mouse events.
 class DrnasDesktopWorkspace final : public QWidget {
     QPointer<QMainWindow> cad;
-    static constexpr int pcWidth=1024, pcHeight=768;
+    QSize logicalSize;
     void fit() {
         if (!cad || width()<1 || height()<1) return;
         const double fitScale=std::clamp(std::min(
-            double(width())/pcWidth, double(height())/pcHeight),0.001,1.0);
-        const QSize target(std::max(1,int(std::floor(pcWidth*fitScale))),
-                           std::max(1,int(std::floor(pcHeight*fitScale))));
+            double(width())/logicalSize.width(), double(height())/logicalSize.height()),0.001,1.0);
+        const QSize target(std::max(1,int(std::floor(logicalSize.width()*fitScale))),
+                           std::max(1,int(std::floor(logicalSize.height()*fitScale))));
         // Do not setFixedSize(): that propagates 768px min-height into the
         // native QtActivity window and blocks rotation/keyboard resizing.
         const QRect wanted(QPoint((width()-target.width())/2,
@@ -40,7 +40,13 @@ protected:
         fit();
     }
 public:
-    explicit DrnasDesktopWorkspace(QWidget* parent=nullptr) : QWidget(parent) {
+    static QSize startupSize() {
+        const int width=qEnvironmentVariableIntValue("DRNAS_DESKTOP_WIDTH");
+        // These correspond to StartupActivity's three tested 4:3 profiles.
+        return width==640 ? QSize(640,480) : width==1024 ? QSize(1024,768) : QSize(800,600);
+    }
+    explicit DrnasDesktopWorkspace(QWidget* parent=nullptr,QSize size=startupSize())
+        : QWidget(parent),logicalSize(size) {
         setObjectName(QStringLiteral("drnasPcDesktopWorkspace"));
         setMinimumSize(0,0);
         setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Expanding);
