@@ -9,6 +9,7 @@ ctest --test-dir build/touch-tests --output-on-failure
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/portrait-modal
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/surface-lifecycle
 python3 full-gui/qt-activity/tests/first-shape.py
 ```
 
@@ -55,3 +56,7 @@ choices, blocked background commands, actual native-window touch entry, and
 toolbar input after dismissal at DPR 1 and 2. Deferred framing fits the first
 real shape once per document, without replacing geometry or resetting later
 camera changes. Coin/GL4ES and verified ARM64 dependencies remain in use.
+
+The surface lifecycle regression confirms that displaying, hiding and restoring
+the QtActivity-like host never suspends ordinary QWidget paint or update events.
+Android EGL/QRhi and Coin3D surface recovery still require a physical-device test.
