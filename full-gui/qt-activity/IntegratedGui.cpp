@@ -27,6 +27,9 @@
 #include <dlfcn.h>
 #include <QComboBox>
 #include <QGuiApplication>
+#include <QImage>
+#include <QMdiArea>
+#include <QMdiSubWindow>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMainWindow>
@@ -736,6 +739,15 @@ finally:
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
+    // A deterministic real FreeCAD/Part smoke object for Android Coin3D.
+    // No mock triangles or direct GL calls: this exercises document creation,
+    // ViewProvider, Coin scene traversal and Qt presentation together.
+    // Place beside NEW + so it remains accessible inside the floating Tools.
+    auto* coinBoxTest = toolbar->addAction(QStringLiteral("COIN KOCKA"));
+    coinBoxTest->setObjectName(QStringLiteral("drnasCoinBoxSmoke"));
+    coinBoxTest->setToolTip(QStringLiteral(
+        "Create a real 10 mm FreeCAD Part::Box, activate Coin3D, fit view and audit framebuffer"));
+
     // Session-only opt-in. A crash restarts with the blank viewport fallback.
     auto* coinRender = toolbar->addAction(QStringLiteral("TEST Coin render"));
     coinRender->setObjectName(QStringLiteral("drnasTestCoinRender"));
@@ -760,6 +772,68 @@ finally:
     coinRender->setVisible(false); // Replaced by explicit Render Lab phases.
     auto* renderLab = new DrnasRenderLab(shell, freecad, toolbar,
         [](const QString& code, QString& error) { return runOriginalFreeCADPython(code,error); });
+    QObject::connect(coinBoxTest, &QAction::triggered, shell,
+        [invoke, renderLab, cad = QPointer<QMainWindow>(freecad)] {
+            DrnasDiagnostics::note(QStringLiteral("COIN_SMOKE BEGIN: genuine Part::Box; no diagnostic triangle"));
+            renderLab->setStage(3);
+            invoke(QStringLiteral(R"DRNAS(
+import FreeCAD as App, FreeCADGui as Gui, Part
+_doc = App.activeDocument()
+if _doc is None:
+    _doc = App.newDocument()
+_obj = _doc.getObject('DRNAS_CoinCube')
+if _obj is None:
+    _obj = _doc.addObject('Part::Box', 'DRNAS_CoinCube')
+_obj.Length = 10
+_obj.Width = 10
+_obj.Height = 10
+_doc.recompute()
+_gui_doc = Gui.getDocument(_doc.Name)
+if _gui_doc is None:
+    raise RuntimeError('COIN_SMOKE: missing FreeCAD GUI document')
+_provider = _gui_doc.getObject(_obj.Name)
+if _provider is None:
+    raise RuntimeError('COIN_SMOKE: missing ViewProvider for Part::Box')
+_provider.Visibility = True
+_view = _gui_doc.activeView()
+_view.viewAxonometric()
+_view.fitAll()
+_view.redraw()
+_bb = _obj.Shape.BoundBox
+_drnas_mark('COIN_SMOKE shape type=%s null=%s solids=%s faces=%s visible=%s bbox=(%.3f,%.3f,%.3f) doc=%s' %
+            (_obj.TypeId, _obj.Shape.isNull(), len(_obj.Shape.Solids),
+             len(_obj.Shape.Faces), _provider.Visibility,
+             _bb.XLength, _bb.YLength, _bb.ZLength, _doc.Name))
+)DRNAS"), QStringLiteral("Coin3D real cube"));
+            // Once native/Qt have presented the frame, read the actual Qt
+            // framebuffer. Its pixels distinguish a retained orange GL4ES
+            // test triangle from genuine FreeCAD geometry.
+            QTimer::singleShot(750, cad.data() ? cad.data() : qApp,
+                [cad] {
+                    if (!cad) return;
+                    auto* mdi = cad->findChild<QMdiArea*>();
+                    auto* sub = mdi ? mdi->activeSubWindow() : nullptr;
+                    auto* gl = sub ? sub->findChild<QOpenGLWidget*>() : nullptr;
+                    if (!gl || !gl->isVisible() || !gl->isValid() ||
+                        gl->width() <= 0 || gl->height() <= 0) {
+                        DrnasDiagnostics::note(QStringLiteral(
+                            "COIN_SMOKE FRAME unavailable: no active visible valid Coin QOpenGLWidget"));
+                        return;
+                    }
+                    const QImage pixels = gl->grabFramebuffer();
+                    const QString center = pixels.isNull()
+                        ? QStringLiteral("NULL")
+                        : pixels.pixelColor(pixels.width()/2, pixels.height()/2).name(QColor::HexArgb);
+                    const QString corner = pixels.isNull()
+                        ? QStringLiteral("NULL")
+                        : pixels.pixelColor(2, 2).name(QColor::HexArgb);
+                    DrnasDiagnostics::note(QStringLiteral(
+                        "COIN_SMOKE FRAME gl=%1x%2 dpr=%3 fbo=%4 image=%5x%6 center=%7 corner=%8 activeMDI=%9")
+                        .arg(gl->width()).arg(gl->height()).arg(gl->devicePixelRatioF())
+                        .arg(gl->defaultFramebufferObject()).arg(pixels.width())
+                        .arg(pixels.height()).arg(center, corner).arg(sub != nullptr));
+                });
+        });
     // Choose before New in a fresh launch. Never compare A/B by switching
     // already-mutated Coin/GL state within an existing document.
     const QString initialAb = qgetenv("DRNAS_VIEWPORT_AB") == QByteArray("B")
