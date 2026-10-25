@@ -52,7 +52,14 @@ jobs:
         run: |
           cmake -S full-gui/qt-activity/tests -B build/touch-tests
           cmake --build build/touch-tests -j2
-          ctest --test-dir build/touch-tests --output-on-failure
+          if ! ctest --test-dir build/touch-tests --output-on-failure; then
+            # Preserve the failure gate, but explain any host-Qt crash instead
+            # of guessing about real Android render/touch behavior.
+            sudo apt-get install -y --no-install-recommends gdb
+            QT_QPA_PLATFORM=offscreen gdb -batch -ex 'set pagination off' -ex run -ex bt \
+              --args build/touch-tests/desktop-workspace || true
+            exit 1
+          fi
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/desktop-workspace
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/desktop-workspace

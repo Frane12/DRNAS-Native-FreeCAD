@@ -88,6 +88,7 @@ class DrnasTouchInput final : public QObject {
     enum class Gesture { Idle, Pending, Orbit, Tool, Precision, Multi };
     Gesture gesture=Gesture::Idle;
     QPointer<QWidget> touchOwner;
+    bool hostRoutedTouch=false;
     QPointF touchStart, touchLast, multiCenter;
     int fingerId=-1;
     double multiDistance=0;
@@ -361,7 +362,7 @@ class DrnasTouchInput final : public QObject {
         precisionTimer.stop(); cameraTimer.stop();
         orbitDelta=QPointF(); panDelta=QPointF(); zoomLog=0;
         gesture=Gesture::Idle; fingerId=-1; multiDistance=0;
-        touchOwner.clear(); cameraOwner.clear(); mark->hide();
+        touchOwner.clear(); cameraOwner.clear(); hostRoutedTouch=false; mark->hide();
         releaseAll();
     }
     bool editingTool() const {
@@ -763,23 +764,27 @@ protected:
                               event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick;
         if ((touchEvent || mouseEvent) && !activeDialog() && !QApplication::activePopupWidget()) {
             QWidget* viewport=viewportFor(inputWidget);
-            if (touchEvent && !viewport) {
-                // Some QtActivity touch sequences arrive on the host instead
-                // of the deepest FreeCAD QGraphicsView child. Hit-test in
-                // global *logical* Qt coordinates, never physical pixels.
+            // Only a *new* host-originated stream gets retargeted. Never
+            // reprocess events bubbling up from a correctly routed viewport:
+            // duplicate synthetic touches used to reset multi-finger gestures.
+            bool fromHost=false;
+            if (touchEvent && !viewport && inputWidget==host &&
+                (!touchOwner || hostRoutedTouch)) {
                 const auto* t=static_cast<QTouchEvent*>(event);
                 if (!t->points().isEmpty()) {
                     const QPoint global=t->points().first().globalPosition().toPoint();
                     QWidget* hit=QApplication::widgetAt(global);
-                    if (!hit || (hit!=host && !host->isAncestorOf(hit))) {
-                        const QPoint local=host->mapFromGlobal(global);
-                        hit=host->childAt(local);
-                    }
+                    if (!hit || (hit!=host && !host->isAncestorOf(hit)))
+                        hit=host->childAt(host->mapFromGlobal(global));
                     viewport=viewportFor(hit);
+                    fromHost=viewport!=nullptr;
                 }
             }
             if (touchEvent && viewport && (!touchOwner || viewport==touchOwner)) {
+                const bool beginning=!touchOwner;
                 handleTouch(touchOwner ? touchOwner.data() : viewport,static_cast<QTouchEvent*>(event));
+                if (fromHost && beginning && touchOwner) hostRoutedTouch=true;
+                if (!touchOwner) hostRoutedTouch=false;
                 event->accept(); return true;
             }
             if (viewport && (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
