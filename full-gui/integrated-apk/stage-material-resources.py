@@ -57,6 +57,20 @@ def stage(source, destination):
         count += 1
     if not (destination / "Mod/Measure/InitGui.py").is_file():
         raise SystemExit("Failed to stage authentic Measure GUI startup script")
+    # R264 delayed boot: keep original source for audit, but do not import
+    # either native Measure extension during FreeCAD's early GUI InitGui.
+    measure_init = destination / "Mod/Measure/InitGui.py"
+    upstream_init = measure_init.read_text(encoding="utf-8")
+    deferred_init = upstream_init
+    for mod in ("Measure", "MeasureGui"):
+        if upstream_init.splitlines().count("import " + mod) != 1:
+            raise SystemExit("Unexpected Measure InitGui anchor: " + mod)
+        deferred_init = deferred_init.replace(
+            "import " + mod + "\n",
+            "# Android delayed import of " + mod + "\n", 1)
+    (measure_init.parent / "InitGui.upstream.txt").write_text(
+        upstream_init, encoding="utf-8")
+    measure_init.write_text(deferred_init, encoding="utf-8")
     # InitGui scripts resolve workbench icons via the same ResourceDir.
     for module in ("Material", "Part", "Sketcher", "PartDesign", "Measure"):
         count += copy_tree(source / "src/Mod" / module / "Gui/Resources",
