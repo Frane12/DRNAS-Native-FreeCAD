@@ -729,6 +729,59 @@ finally:
     coinRender->setVisible(false); // Replaced by explicit Render Lab phases.
     auto* renderLab = new DrnasRenderLab(shell, freecad, toolbar,
         [](const QString& code, QString& error) { return runOriginalFreeCADPython(code,error); });
+
+    // M-AB: loading native MeasureGui registers Coin types and a selection
+    // observer. Compare the same document before/after this explicit import.
+    const QString measureStatePath =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/measure-import-state.json");
+    auto measureState = [measureStatePath](const QString& phase) {
+        const QString script = QStringLiteral(
+            "import sys, json, base64\n"
+            "_drnas_mab_state = {name: {'loaded': name in sys.modules, "
+            "'file': getattr(sys.modules.get(name), '__file__', None)} "
+            "for name in ('Measure', 'MeasureGui')}\n"
+            "with open(base64.b64decode('%1').decode('utf-8'), 'w') as _drnas_mab_file:\n"
+            "    json.dump(_drnas_mab_state, _drnas_mab_file)\n")
+            .arg(QString::fromLatin1(measureStatePath.toUtf8().toBase64()));
+        QString error;
+        const bool ok = runOriginalFreeCADPython(script, error);
+        QFile file(measureStatePath);
+        const QString state = ok && file.open(QIODevice::ReadOnly)
+            ? QString::fromUtf8(file.readAll()) : error;
+        DrnasDiagnostics::note(QStringLiteral("MEASURE_AB %1 ok=%2 state=%3")
+            .arg(phase).arg(ok).arg(state));
+    };
+    auto* measureGuiAction = new QAction(QStringLiteral("MeasureGui ON"), toolbar);
+    measureGuiAction->setObjectName(QStringLiteral("drnasMeasureGuiImport"));
+    measureGuiAction->setToolTip(QStringLiteral("M-AB: load MeasureGui once, after testing the same document without it"));
+    if (auto* gpuButton = toolbar->findChild<QToolButton*>(QStringLiteral("drnasGpuExperiments"));
+        gpuButton && gpuButton->menu()) {
+        gpuButton->menu()->insertAction(gpuButton->menu()->actions().value(0), measureGuiAction);
+    }
+    QObject::connect(measureGuiAction, &QAction::triggered, toolbar,
+        [measureGuiAction, measureState, report] {
+            measureState(QStringLiteral("BEFORE_GUI_IMPORT"));
+            DrnasDiagnostics::note(QStringLiteral("MEASURE_AB GUI_IMPORT_BEGIN"));
+            measureGuiAction->setEnabled(false);
+            QString error;
+            const bool ok = runOriginalFreeCADPython(QStringLiteral(
+                "import FreeCADGui as Gui\n"
+                "if Gui.activeDocument() is None:\n"
+                "    raise RuntimeError('Create a document and test Coin3D before loading MeasureGui')\n"
+                "import MeasureGui\n"
+                "Gui.activeDocument().activeView().redraw()\n"), error);
+            DrnasDiagnostics::note(QStringLiteral("MEASURE_AB GUI_IMPORT_END ok=%1 error=%2")
+                .arg(ok).arg(error));
+            measureState(QStringLiteral("AFTER_GUI_IMPORT"));
+            measureGuiAction->setEnabled(!ok);
+            if (ok) measureGuiAction->setText(QStringLiteral("MeasureGui loaded"));
+            report(ok ? QStringLiteral("MeasureGui loaded: compare same Coin3D view")
+                      : QStringLiteral("MeasureGui import: ") + error);
+        });
+    QTimer::singleShot(2600, toolbar, [measureState] {
+        measureState(QStringLiteral("STARTUP_MEASURE_ONLY"));
+    });
     // Choose before New in a fresh launch. Never compare A/B by switching
     // already-mutated Coin/GL state within an existing document.
     const QString initialAb = qgetenv("DRNAS_VIEWPORT_AB") == QByteArray("B")
@@ -1059,7 +1112,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // which is visible even when Android incorrectly overlays the menus.
         if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
                 QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05"), window->statusBar());
+            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05 M-AB"), window->statusBar());
             marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
             marker->setStyleSheet(QStringLiteral(
                 "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
