@@ -27,6 +27,15 @@ for package, modules in {'PySide6':['QtCore','QtGui','QtWidgets'], 'shiboken6':[
     for module in modules:
         assert list(folder.glob(module+'*.so')), (package,module)
 
+# The updated CAD and Pivy payloads must use the same native SWIG registry.
+coin_extensions = list((bundle/'python-bindings/pivy').glob('_coin*.so'))
+assert len(coin_extensions) == 1, 'Ambiguous Pivy native extension'
+base_runtime = set(re.findall(rb'swig_runtime_data([0-9]+)', (native/'libFreeCADBase.so').read_bytes()))
+pivy_runtime = set(re.findall(rb'swig_runtime_data([0-9]+)', coin_extensions[0].read_bytes()))
+assert len(base_runtime) == 1 and base_runtime == pivy_runtime, (
+    'FreeCADBase/Pivy SWIG runtime mismatch', base_runtime, pivy_runtime)
+print('PASS: updated FreeCADBase/Pivy share SWIG runtime ' + next(iter(base_runtime)).decode())
+
 # Match the native Coin ABI symbols actually referenced by the prebuilt CAD.
 def symbols(path, defined):
     flag = '--defined-only' if defined else '--undefined-only'

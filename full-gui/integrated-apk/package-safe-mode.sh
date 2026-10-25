@@ -13,6 +13,9 @@ mkdir -p "$OUT"
 for lib in FreeCADGui FreeCADApp FreeCADBase Coin GL GLU; do
     test -s "$STAGE/lib${lib}.so"
 done
+for module in Measure MeasureGui; do
+    test -s "$STAGE/$module.so"
+done
 test -x "$SDK_BUILDTOOLS/zipalign"
 test -x "$SDK_BUILDTOOLS/apksigner"
 command -v zip >/dev/null

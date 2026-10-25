@@ -129,7 +129,10 @@ public final class StartupActivity extends Activity {
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
             RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
             Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
-            Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "0", true);
+            Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "1", true);
+            Os.setenv("DRNAS_RENDER_STAGE", "3", true);
+            Os.setenv("DRNAS_COIN_FBO_SYNC", "1", true);
+            Os.setenv("DRNAS_RENDER_AXES", "0", true);
         } catch (android.system.ErrnoException error) {
             Log.e("DRNAS", "Startup display configuration failed", error);
             return;

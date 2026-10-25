@@ -56,6 +56,9 @@ copy_sos() {
 }
 # Qt libraries are provided by androiddeployqt, not duplicated as extras.
 copy_sos "$NATIVE"
+for module in Measure MeasureGui; do
+    test -s "$STAGE/$module.so" || { echo "::error::Updated native build lacks $module.so"; exit 1; }
+done
 copy_sos "$ARTIFACT/opengl-compat/lib"
 copy_sos "$ROOT/out/occt-android/lib"
 copy_sos "$ROOT/out/full-deps/boost/lib"

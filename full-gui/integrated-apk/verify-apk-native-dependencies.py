@@ -62,6 +62,7 @@ def inspect(apk):
             "libCoin.so", "libFreeCADGui.so", "libFreeCADApp.so",
             "Part.so", "PartGui.so", "Sketcher.so", "SketcherGui.so",
             "_PartDesign.so", "PartDesignGui.so", "Materials.so", "MatGui.so",
+            "Measure.so", "MeasureGui.so",
             "libFreeCADBase.so", "libQt6Network_arm64-v8a.so",
             "libQt6PrintSupport_arm64-v8a.so", "libQt6Xml_arm64-v8a.so",
         }

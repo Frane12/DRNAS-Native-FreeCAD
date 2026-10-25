@@ -78,7 +78,7 @@ class DrnasRenderLab final : public QObject {
     QTimer poll;
     QString directory;
     QByteArray previousDirty;
-    int stage=0;
+    int stage=3;
     bool watching=false, busy=false, axes=false, nativeStages=false;
     QActionGroup* stages;
     QAction* axesAction;
@@ -285,18 +285,18 @@ public:
         axesAction->setCheckable(true); axesAction->setEnabled(false);
         axesAction->setToolTip(QStringLiteral("Zasebni test prethodno problematičnog križa osi; samo faza 4"));
         QObject::connect(axesAction,&QAction::triggered,this,[this](bool value){axes=value;setStage(stage);});
-        qputenv("DRNAS_ENABLE_COIN_REDRAW","0");
-        qputenv("DRNAS_RENDER_STAGE","0");
-        qputenv("DRNAS_COIN_FBO_SYNC","0");
+        qputenv("DRNAS_ENABLE_COIN_REDRAW","1");
+        qputenv("DRNAS_RENDER_STAGE","3");
+        qputenv("DRNAS_COIN_FBO_SYNC","1");
         qputenv("DRNAS_RENDER_AXES","0");
         poll.setInterval(750);
         QTimer::singleShot(2400,this,[this]{auditWarnings();inspectCoinWindow(QStringLiteral("startup"));});
         QObject::connect(&poll,&QTimer::timeout,this,[this]{tick();});
         QObject::connect(qApp,&QCoreApplication::aboutToQuit,this,[this]{poll.stop();});
-        // The toolbar is installed before Gui startup finishes. Delay allocation
-        // of the reference GL widget until the original workspace is initialized.
-        QTimer::singleShot(1500,this,[this]{poll.start();tick(true);});
-        DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=reference").arg(supported));
+        // Finish original GUI startup before requesting a native Coin redraw.
+        // The reference widget remains lazy until explicitly selected.
+        QTimer::singleShot(1500,this,[this]{poll.start();if(stage==3) setStage(3);});
+        DrnasDiagnostics::note(QStringLiteral("RENDER_LAB installed; native stages=%1; default=Coin3D stage 3").arg(supported));
     }
     void setStage(int value) {
         if (value==4) {

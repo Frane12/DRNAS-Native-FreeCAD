@@ -456,8 +456,8 @@ class DrnasFloatingCommands : public QObject {
         panel->adjustSize();
         panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
                     std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
-        launcher->setGeometry(std::max(0, host->width()/2-28),
-                              std::max(0, host->height()-40), 56, 34);
+        launcher->setGeometry(std::max(0, host->width()-92),
+                              std::max(0, host->height()-84), 80, 44);
         panel->raise(); launcher->raise();
     }
 protected:
@@ -735,7 +735,7 @@ finally:
         ? QStringLiteral("B") : QStringLiteral("A");
     auto* abStatus = new QLabel(QStringLiteral("A/B: ") + initialAb, toolbar);
     const bool abAvailable = dlsym(RTLD_DEFAULT, "drnas_viewport_ab_version") != nullptr;
-    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; render remains off")
+    DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; default Coin3D stage 3")
         .arg(initialAb).arg(abAvailable));
     for (const char mode : {'A', 'B'}) {
         auto* action = toolbar->addAction(QStringLiteral("TEST %1").arg(QChar(mode)));
@@ -1059,7 +1059,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // which is visible even when Android incorrectly overlays the menus.
         if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
                 QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05"), window->statusBar());
+            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05.1"), window->statusBar());
             marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
             marker->setStyleSheet(QStringLiteral(
                 "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
