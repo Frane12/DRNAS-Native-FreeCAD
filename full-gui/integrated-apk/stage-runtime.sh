@@ -33,7 +33,7 @@ readelf --dyn-syms --wide "$ARTIFACT/opengl-compat/lib/libGL.so" \
     exit 1
 }
 readelf --dyn-syms --wide "$ARTIFACT/opengl-compat/lib/libGL.so" \
-    | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_state_bridge_version" { found=1 } END { exit !found }' || {
+    | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }' || {
     echo "::error::GL4ES lacks Qt/GLES hardware state synchronization." >&2
     exit 1
 }

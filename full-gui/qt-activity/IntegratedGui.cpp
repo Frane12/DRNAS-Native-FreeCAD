@@ -384,7 +384,7 @@ void compactOriginalAndroidFreeCADChrome(QMainWindow* window)
         menu->hide();
     }
     for (QToolBar* bar : window->findChildren<QToolBar*>()) {
-        bar->setIconSize(QSize(24, 24));
+        if (bar->iconSize()!=QSize(24, 24)) bar->setIconSize(QSize(24, 24));
         bar->setMovable(false);
         if (bar->isFloating()) window->addToolBar(Qt::TopToolBarArea, bar);
         bar->setFloatable(false);
@@ -1021,7 +1021,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         }
         window->setFont(compactFont);
         for (QToolBar* toolbar : window->findChildren<QToolBar*>()) {
-            toolbar->setIconSize(QSize(24, 24));
+            toolif (bar->iconSize()!=QSize(24, 24)) bar->setIconSize(QSize(24, 24));
         }
         // Original menus remain alive for the Android Menu dropdown; don't
         // spend a second full-width row on the embedded desktop menu bar.
@@ -1059,7 +1059,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // which is visible even when Android incorrectly overlays the menus.
         if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
                 QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05.1"), window->statusBar());
+            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05.2"), window->statusBar());
             marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
             marker->setStyleSheet(QStringLiteral(
                 "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"

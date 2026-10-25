@@ -164,10 +164,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file
+          sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
           mkdir -p out/integrated-freecad-qtapk
+
+      - name: Test GUI resize and real GL4ES state isolation before packaging
+        run: bash full-gui/qt-activity/tests/check-render-isolation.sh
 
       - name: Restore Qt GUI 6.8.3 native SDK
         id: qt
@@ -264,15 +267,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py') }}
       - name: Build and require exported Qt framebuffer bridge
         run: |
           set -euo pipefail
           gl=out/upstream-freecad-gui/opengl-compat/lib/libGL.so
-          if ! readelf --dyn-syms --wide "$gl" 2>/dev/null | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'; then
+          if ! readelf --dyn-syms --wide "$gl" 2>/dev/null | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'; then
             bash full-gui/upstream/build-android-gl4es-glu.sh
           fi
-          readelf --dyn-syms --wide "$gl" | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'
+          readelf --dyn-syms --wide "$gl" | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
           for name in GL GLU; do
             readelf -h "out/upstream-freecad-gui/opengl-compat/lib/lib${name}.so" | grep -q AArch64
           done
@@ -282,7 +285,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py') }}
 
       - name: Resolve successful NumPy wheel workflow run
         id: numpy
@@ -372,7 +375,7 @@ jobs:
           done
           unzip -p "$apk" lib/arm64-v8a/libGL.so > out/integrated-freecad-qtapk/apk-libGL.so
           readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
-            | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'
+            | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
           rm out/integrated-freecad-qtapk/apk-libGL.so
           # Verify transitive dependencies for EVERY arm64 library, not only
           # FreeCADGui/Base/App. Prior signed APK crashed instantly because

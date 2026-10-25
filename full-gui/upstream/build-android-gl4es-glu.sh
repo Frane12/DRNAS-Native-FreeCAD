@@ -26,76 +26,7 @@ fetch() {
 fetch ptitSeb/gl4es "$PIN_GL4ES" "$SRC/gl4es-freecad"
 fetch ptitSeb/GLU "$PIN_GLU" "$SRC/glu-freecad"
 
-python3 - "$SRC/gl4es-freecad/src/gl/framebuffers.c" <<'PY_QT_FBO_ADOPT'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1])
-source = p.read_text()
-old = """GLenum ReadDraw_Push(GLenum target) {"""
-new = """#ifdef __ANDROID__
-#include <dlfcn.h>
-__attribute__((visibility("default")))
-int drnas_gl4es_qt_state_bridge_version(void) { return 2; }
-
-static void drnas_gl4es_resume_after_qt(void) {
-    // Qt writes native GLES state without updating GL4ES's hardware cache.
-    // A cached program/attribute/buffer binding must never suppress the next
-    // real GLES call after returning from QPainter/QOpenGLWidget composition.
-    LOAD_GLES2(glUseProgram);
-    LOAD_GLES(glBindBuffer);
-    LOAD_GLES2(glDisableVertexAttribArray);
-    static void* native_gles = NULL;
-    typedef void (*BindVertexArrayProc)(unsigned int);
-    static BindVertexArrayProc bind_vertex_array = NULL;
-    if (!native_gles) {
-        native_gles = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
-        if (native_gles)
-            bind_vertex_array = (BindVertexArrayProc)dlsym(native_gles, "glBindVertexArray");
-    }
-    // Client-side GL4ES arrays need GLES's default VAO, not Qt's private VAO.
-    if (bind_vertex_array) bind_vertex_array(0);
-    gles_glUseProgram(0);
-    glstate->gleshard->program = (GLuint)-1;
-    glstate->gleshard->glprogram = NULL;
-    glstate->gleshard->active = (GLuint)-1;
-    gles_glBindBuffer(GL_ARRAY_BUFFER, 0);
-    gles_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    glstate->bind_buffer.array = 0;
-    glstate->bind_buffer.index = 0;
-    glstate->bind_buffer.want_index = 0;
-    glstate->bind_buffer.used = 0;
-    memset(glstate->gleshard->vertexattrib, 0, sizeof(glstate->gleshard->vertexattrib));
-    memset(glstate->gleshard->vavalue, 0xff, sizeof(glstate->gleshard->vavalue));
-    for (int i=0; i<hardext.maxvattrib; ++i) {
-        gles_glDisableVertexAttribArray(i);
-        // Neither boolean value: force realize_glenv to upload every used array.
-        glstate->gleshard->vertexattrib[i].enabled = 2;
-    }
-}
-
-__attribute__((visibility("default")))
-int drnas_gl4es_bind_qt_default_fbo(unsigned int qtFbo) {
-    // GL4ES has its own framebuffer namespace. Qt owns qtFbo and created
-    // it directly through GLES; it must NOT be treated as a GL4ES-generated
-    // nonzero FBO. Map GL4ES framebuffer zero to the real Qt GLES FBO.
-    if (!glstate || !glstate->fbo.fbo_0 || !qtFbo) return -1;
-    LOAD_GLES2_OR_OES(glIsFramebuffer);
-    if (!gles_glIsFramebuffer(qtFbo)) return -2;
-    if (!glstate->gleshard) return -4;
-    drnas_gl4es_resume_after_qt();
-    glstate->fbo.mainfbo_fbo = qtFbo;
-    gl4es_glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // GL4ES reports logical framebuffer 0, native GLES must report qtFbo.
-    return 1;
-}
-#endif
-
-GLenum ReadDraw_Push(GLenum target) {"""
-if source.count(old) != 1:
-    raise SystemExit("Pinned GL4ES ReadDraw_Push anchor changed")
-p.write_text(source.replace(old, new, 1))
-print("DRNAS GL4ES Qt FBO default bridge enabled (Qt retains FBO ownership)")
-PY_QT_FBO_ADOPT
+python3 "$ROOT/full-gui/upstream/patch-qt-gl-state.py" "$SRC/gl4es-freecad/src/gl/framebuffers.c"
 cmake -S "$SRC/gl4es-freecad" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$ANDROID_API" \
@@ -107,7 +38,7 @@ gl="$(find "$SRC/gl4es-freecad/lib" -maxdepth 1 -name 'libGL.so*' -type f -print
 test -f "$gl" || { echo 'Upstream GL4ES libGL.so not built' >&2; exit 1; }
 cp -L "$gl" "$OUT/lib/libGL.so"
 readelf --dyn-syms --wide "$OUT/lib/libGL.so" \
-  | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_state_bridge_version" { found=1 } END { exit !found }'
+  | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
 
 test -f "$SRC/gl4es-freecad/include/GL/gl.h"
 cp -a "$SRC/gl4es-freecad/include/." "$OUT/include/"
