@@ -51,6 +51,10 @@ public:
     }
     void attach(QMainWindow* window) {
         cad=window;
+        // The real FreeCAD MainWindow is already a child before first show.
+        // The desktop regression fixture starts with a top-level QMainWindow;
+        // make it a child too, so mapTo/mapFrom use the same native surface.
+        if (cad->parentWidget()!=this) cad->setParent(this,Qt::Widget);
         cad->setMinimumSize(0,0);
         cad->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
         cad->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Ignored);

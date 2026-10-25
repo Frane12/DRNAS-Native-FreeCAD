@@ -24,7 +24,7 @@ int main(int argc,char** argv) {
     int clicks=0;
     QObject::connect(button,&QPushButton::clicked,[&]{++clicks;});
     new DrnasTouchInput(&host,&cad,[](const QString&){});
-    host.show();QTest::qWait(150);
+    host.show();cad.show();QTest::qWait(150);
     require(cad.size()==QSize(1024,768),"PC CAD content must have 1024x768 logical size");
     const QPoint inset=cad.mapTo(&host,QPoint(0,0));
     require(inset.x()>200,"wide phone must center CAD with untouched side gutters");
