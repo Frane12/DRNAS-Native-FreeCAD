@@ -38,8 +38,8 @@ env:
 
 jobs:
   package-real-gui:
-    # Run on feature branch to reuse its scoped Qt/ICU/OCCT/Python caches.
-    # Check out only the isolated #264 source commit for APK packaging.
+    # Run on feature branch to reuse scoped Qt/ICU/OCCT/Python caches.
+    # Check out only the isolated R264 integration SHA.
     if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 70
@@ -78,7 +78,7 @@ jobs:
           if [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
-            # Preserve exactly the proven native artifact from APK #264.
+            # Preserve original APK #264 native inputs.
             run_id="40213096292"
           fi
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
@@ -90,7 +90,7 @@ jobs:
           commit="$(jq -r '.head_sha' <<<"$info")"
           attempt="$(jq -r '.run_attempt' <<<"$info")"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-          # Use the R264 GUI glue with delayed Measure; do not upgrade render.
+          # Preserve original APK #264 render/UI plus delayed import patch.
           package_sha="9dc59b321a1ea356b15fc6059b91792b05059e03"
           [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
@@ -155,270 +155,7 @@ jobs:
           echo 'PASS: Genuine FreeCAD GUI workbenches and all on-device qss:overlay SVG icons are present.'
           grep -Fq 'Android delayed import of Measure' "$root/Mod/Measure/InitGui.py"
           grep -Fq 'Android delayed import of MeasureGui' "$root/Mod/Measure/InitGui.py"
-          ! grep -Eq '^import Measure(Gui)?[[:space:]]*
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Install Android tools and ELF relinker
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
-          mkdir -p out/integrated-freecad-qtapk
-
-      - name: Test GUI resize and real GL4ES state isolation before packaging
-        run: bash full-gui/qt-activity/tests/check-render-isolation.sh
-
-      - name: Restore Qt GUI 6.8.3 native SDK
-        id: qt
-        uses: actions/cache/restore@v4
-        with:
-          path: out/full-deps/qt
-          key: drnas-qt-gui-6.8.3-arm64-v1-${{ hashFiles('full-gui/bootstrap-qt-gui-android.sh', 'full-port/bootstrap-qt.sh', 'full-port/verify-qt-android.sh') }}
-      - name: Restore host ICU73 for Qt Android tooling
-        id: hosticu
-        uses: actions/cache/restore@v4
-        with:
-          path: out/full-gui/host-icu73
-          key: drnas-qt-host-icu73-v1-${{ hashFiles('full-gui/bootstrap-icu73-host.sh') }}
-      - name: Restore verified OCCT Android native SDK
-        id: occt
-        uses: actions/cache/restore@v4
-        with:
-          path: out/occt-android
-          key: occt-fullcad-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
-      - name: Restore native Boost
-        id: boost
-        uses: actions/cache/restore@v4
-        with:
-          path: out/full-deps/boost
-          key: drnas-boost188-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-boost-android.sh') }}
-      - name: Restore native ICU 75
-        id: icu
-        uses: actions/cache/restore@v4
-        with:
-          path: out/full-deps/icu
-          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
-      - name: Restore native Python 3.14
-        id: python
-        uses: actions/cache/restore@v4
-        with:
-          path: out/full-deps/python
-          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
-      - name: Restore native Xerces-C
-        id: xerces
-        uses: actions/cache/restore@v4
-        with:
-          path: out/full-deps/xerces-c
-          key: drnas-xerces325-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-xerces-android.sh') }}
-      - name: Restore native yaml-cpp
-        id: yaml
-        uses: actions/cache/restore@v4
-        with:
-          path: out/full-deps/yaml-cpp
-          key: drnas-yaml-cpp-0.8.0-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-yaml-android.sh') }}
-
-      - name: Validate ABI caches and native GUI artifact
-        run: |
-          set -euo pipefail
-          for hit in "${{ steps.qt.outputs.cache-hit }}" "${{ steps.hosticu.outputs.cache-hit }}" \
-             "${{ steps.occt.outputs.cache-hit }}" "${{ steps.boost.outputs.cache-hit }}" \
-             "${{ steps.icu.outputs.cache-hit }}" "${{ steps.python.outputs.cache-hit }}" \
-             "${{ steps.xerces.outputs.cache-hit }}" "${{ steps.yaml.outputs.cache-hit }}"; do
-             test "$hit" = true || { echo "::error::Verified dependency cache missing"; exit 1; }
-          done
-          test -f out/full-gui/host-icu73/lib/libicui18n.so.73
-          test -f out/upstream-freecad-gui/native/libFreeCADGui.so
-          test -f out/upstream-freecad-gui/native/libCoin.so
-          # No silently repacking a pre-fix upstream library.
-          test -f full-gui/qt-activity/android/src/org/drnas/freecad/bootstrap/AndroidDocumentBridge.java
-          if ! grep -aFq 'AndroidDocumentBridge' out/upstream-freecad-gui/native/libFreeCADGui.so; then
-            echo "::error::Native FreeCADGui is older than the Android SAF file-open fix. Run upstream-freecadgui-full-android.yml first."
-            exit 1
-          fi
-          for mod in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
-            test -s "out/occt-android/lib/lib${mod}.so" || { echo "::error::Missing complete OCCT lib${mod}.so"; exit 1; }
-          done
-          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
-          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/out/full-gui/host-icu73/lib" >> "$GITHUB_ENV"
-
-      - name: Download completed binding bundle from the selected run
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ steps.bindings.outputs.run }}
-          github-token: ${{ github.token }}
-          name: android-python-bindings-arm64
-          path: out/bindings
-      - name: Preflight binding ABI and transitive libraries then integrate into native payload
-        run: |
-          set -euo pipefail
-          sha256sum -c out/bindings/android-python-bindings-arm64.sha256
-          mkdir -p out/bindings/runtime
-          tar xzf out/bindings/android-python-bindings-arm64.tar.gz -C out/bindings/runtime
-          python3 full-gui/integrated-apk/integrate-bindings.py
-          cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
-          python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
-
-      # The native GUI artifact may predate the Qt default-FBO bridge.
-      # Apply AFTER integrate-bindings.py, which includes its older GL pair.
-      # Rebuild only GL4ES/GLU from current integration sources, retaining
-      # the verified FreeCAD/Coin binaries and all dependency caches.
-      - name: Remove artifact OpenGL payload before restoring current bridge
-        run: rm -rf out/upstream-freecad-gui/opengl-compat
-      - name: Restore GL4ES with Qt default framebuffer bridge
-        id: qt_fbo_gl
-        uses: actions/cache/restore@v4
-        with:
-          path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py') }}
-      - name: Build and require exported Qt framebuffer bridge
-        run: |
-          set -euo pipefail
-          gl=out/upstream-freecad-gui/opengl-compat/lib/libGL.so
-          if ! readelf --dyn-syms --wide "$gl" 2>/dev/null | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'; then
-            bash full-gui/upstream/build-android-gl4es-glu.sh
-          fi
-          readelf --dyn-syms --wide "$gl" | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
-          for name in GL GLU; do
-            readelf -h "out/upstream-freecad-gui/opengl-compat/lib/lib${name}.so" | grep -q AArch64
-          done
-          echo 'PASS: current Android GL4ES exports Qt default framebuffer bridge'
-      - name: Cache verified GL4ES Qt framebuffer bridge
-        if: steps.qt_fbo_gl.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py') }}
-
-      - name: Resolve successful NumPy wheel workflow run
-        id: numpy
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INPUT_NUMPY_RUN: ${{ inputs.numpy_run_id }}
-        run: |
-          set -euo pipefail
-          run="${INPUT_NUMPY_RUN:-40081766053}"
-          if [ -z "$run" ]; then
-            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/numpy-android-arm64.yml/runs?branch=feature/full-freecad-android&status=success&per_page=10" --jq '.workflow_runs[0].id')"
-          fi
-          test "$run" != null && [[ "$run" =~ ^[0-9]+$ ]]
-          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"
-          test "$(jq -r .conclusion <<< "$info")" = success
-          test "$(jq -r .head_branch <<< "$info")" = feature/full-freecad-android
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-      - name: Download verified NumPy CPython 3.14 Android ARM64 wheel
-        uses: actions/download-artifact@v4
-        with:
-          run-id: ${{ steps.numpy.outputs.run }}
-          github-token: ${{ github.token }}
-          name: drnas-numpy-cp314-android-arm64
-          path: out/numpy-wheel
-      - name: Stage NumPy wheel for APK packaging and verify native ABI
-        run: |
-          set -euo pipefail
-          mkdir -p out/integrated-freecad-qtapk
-          python3 full-gui/integrated-apk/stage-numpy-wheel.py out/numpy-wheel out/integrated-freecad-qtapk/numpy-stage
-      - name: Stage native FreeCADGui and all verified Android dependencies
-        env:
-          UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
-        run: bash full-gui/integrated-apk/stage-runtime.sh
-
-      - name: Configure Android QtActivity and real FreeCAD native GUI integration
-        run: |
-          set -euo pipefail
-          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
-          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
-          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
-          cmake -S full-gui/qt-activity -B .build/freecad-native-integration -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$ANDROID_API" \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_PREFIX_PATH="$qt" -DCMAKE_FIND_ROOT_PATH="$qt" \
-            -DQT_HOST_PATH="$host" -DANDROID_SDK_ROOT="$ANDROID_HOME" \
-            -DOCCT_ANDROID_ROOT="$GITHUB_WORKSPACE/out/occt-android" \
-            -DDRNAS_FREECAD_RUNTIME_DIR="$GITHUB_WORKSPACE/.build/freecad-integration-staging/native-libs" \
-            2>&1 | tee out/integrated-freecad-qtapk/configure.log
-
-      - name: Build signed installable QtActivity ARM64 APK with real FreeCADGui
-        run: |
-          set -euo pipefail
-          cmake --build .build/freecad-native-integration \
-            --target drnas_freecad_qtgui_make_apk --parallel 4 \
-            2>&1 | tee out/integrated-freecad-qtapk/compile.log
-
-      - name: Install ZIP packer for deferred native runtime
-        run: |
-          set -euo pipefail
-          if ! command -v zip >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends zip
-          fi
-
-      - name: Repack FreeCADGui as deferred native libraries and re-sign Safe Mode APK
-        run: bash full-gui/integrated-apk/package-safe-mode.sh
-
-      - name: Verify actual APK ABI, signatures and native GUI library presence
-        run: |
-          set -euo pipefail
-          apk="out/integrated-freecad-qtapk/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
-          test -n "$apk" && test -s "$apk"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" \
-            | tee out/integrated-freecad-qtapk/badging.txt
-          grep -F "package: name='org.drnas.freecad.integrated'" out/integrated-freecad-qtapk/badging.txt
-          unzip -Z1 "$apk" > out/integrated-freecad-qtapk/apk-files.txt
-          # The C++ JNI bridge must resolve its Java peer at runtime.
-          python3 - "$apk" <<'PY_ANDROID_SAF_DEX'
-          from pathlib import Path
-          import sys
-          from zipfile import ZipFile
-          with ZipFile(Path(sys.argv[1])) as package:
-              dexes = [name for name in package.namelist()
-                       if name.startswith("classes") and name.endswith(".dex")]
-              assert dexes, "Android APK contains no DEX bytecode"
-              signature = b"Lorg/drnas/freecad/bootstrap/AndroidDocumentBridge;"
-              assert any(signature in package.read(name) for name in dexes), (
-                  "AndroidDocumentBridge missing from packaged DEX"
-              )
-          print("PASS: APK contains Java SAF document import bridge")
-          PY_ANDROID_SAF_DEX
-          grep -Fx 'lib/arm64-v8a/libFreeCADGui.so' out/integrated-freecad-qtapk/apk-files.txt
-          for module in Measure MeasureGui; do
-            grep -Fx "lib/arm64-v8a/$module.so" out/integrated-freecad-qtapk/apk-files.txt
-            grep -Fx "assets/drnas/freecad/lib/$module.so" out/integrated-freecad-qtapk/apk-files.txt
-          done
-          grep -Fx 'assets/drnas/freecad/Mod/Measure/InitGui.py' out/integrated-freecad-qtapk/apk-files.txt
-          for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
-            grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
-          done
-          unzip -p "$apk" lib/arm64-v8a/libGL.so > out/integrated-freecad-qtapk/apk-libGL.so
-          readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
-            | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
-          rm out/integrated-freecad-qtapk/apk-libGL.so
-          # Verify transitive dependencies for EVERY arm64 library, not only
-          # FreeCADGui/Base/App. Prior signed APK crashed instantly because
-          # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.
-          python3 full-gui/integrated-apk/verify-apk-native-dependencies.py "$apk" \
-            2>&1 | tee out/integrated-freecad-qtapk/native-dt-needed-audit.txt
-          python3 full-gui/upstream/audit-python-bindings.py "$apk" --require-all
-          (cd out/integrated-freecad-qtapk && sha256sum *.apk > APK-SHA256SUMS.txt)
-          echo 'PASS: Signed SAFE MODE ARM64 APK bundles FreeCADGui and Coin3D without eager QtLoader loading.'
-          echo 'NOTICE: Runtime and FreeCAD desktop MainWindow have not yet been tested on a physical phone.'
-
-      - name: Upload APK and diagnostics even if integration fails
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: DRNAS-FreeCAD-R264-Measure-Delayed-APK-${{ github.run_id }}-${{ github.run_attempt }}
-          path: out/integrated-freecad-qtapk/
-          retention-days: 30
-          if-no-files-found: warn
- "$root/Mod/Measure/InitGui.py"
+          ! grep -Eq '^import Measure(Gui)?[[:space:]]*$' "$root/Mod/Measure/InitGui.py"
           echo 'PASS: delayed Measure InitGui imports verified.'
 
       - uses: actions/setup-java@v4
