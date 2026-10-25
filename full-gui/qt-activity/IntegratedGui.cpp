@@ -892,6 +892,85 @@ finally:
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
+    // Isolated type-registration diagnostic for documents with Body/Pad/Sketch
+    // restore errors. Opt-in only; original Open and the Coin viewport unchanged.
+    auto* typeProbe = toolbar->addAction(QStringLiteral("TEST TIPOVA"));
+    typeProbe->setObjectName(QStringLiteral("drnasAndroidTypeRegistryProbe"));
+    typeProbe->setToolTip(QStringLiteral(
+        "Before opening an FCStd model, test native Part/Sketcher/PartDesign "
+        "registration in a temporary hidden document; check DBG log"));
+    QObject::connect(typeProbe, &QAction::triggered, shell, [typeProbe, report] {
+        typeProbe->setEnabled(false);
+        const QString key = QStringLiteral("nativeProbe/typeRegistryPending");
+        QSettings state;
+        const QString interrupted = state.value(key).toString();
+        if (!interrupted.isEmpty())
+            DrnasDiagnostics::note(QStringLiteral(
+                "TYPEPROBE PREVIOUS_INTERRUPTED at %1").arg(interrupted));
+        state.setValue(key, QStringLiteral("Python type probe"));
+        state.sync();
+        DrnasDiagnostics::note(QStringLiteral(
+            "TYPEPROBE BEGIN: temporary hidden document; current model not modified"));
+        QString error;
+        const bool ok = runOriginalFreeCADPython(QStringLiteral(R"DRNAS(
+import FreeCAD as App
+import traceback
+def _tp_mark(message):
+    _drnas_mark('TYPEPROBE ' + message)
+_tp_original = App.ActiveDocument.Name if App.ActiveDocument is not None else None
+_tp_doc = None
+_tp_errors = []
+try:
+    for _tp_module in ('Part', 'Sketcher', 'PartDesign'):
+        _tp_mark('MODULE_BEGIN ' + _tp_module)
+        __import__(_tp_module)
+        _tp_mark('MODULE_OK ' + _tp_module)
+    _tp_mark('DOCUMENT_BEGIN hidden=True temp=True')
+    _tp_doc = App.newDocument('DRNAS_TypeProbe', hidden=True, temp=True)
+    _tp_mark('DOCUMENT_OK name=' + _tp_doc.Name)
+    for _tp_type in ('Part::Box', 'PartDesign::Body', 'Sketcher::SketchObject',
+                     'PartDesign::Pad', 'PartDesign::Pocket', 'PartDesign::Mirrored'):
+        _tp_mark('CREATE_BEGIN ' + _tp_type)
+        try:
+            _tp_name = 'DRNAS_' + _tp_type.split('::')[-1]
+            _tp_obj = _tp_doc.addObject(_tp_type, _tp_name)
+            if _tp_obj is None:
+                raise RuntimeError('addObject returned None')
+            _tp_mark('CREATE_OK ' + _tp_type + ' actual=' + _tp_obj.TypeId)
+        except BaseException as _tp_exc:
+            _tp_errors.append(_tp_type + ': ' + repr(_tp_exc))
+            _tp_mark('CREATE_FAIL ' + _tp_type + ': ' + repr(_tp_exc))
+    if _tp_errors:
+        raise RuntimeError('; '.join(_tp_errors))
+    _tp_mark('ALL_TYPES_OK')
+except BaseException:
+    _tp_mark('EXCEPTION ' + traceback.format_exc())
+    raise
+finally:
+    if _tp_doc is not None:
+        try:
+            App.closeDocument(_tp_doc.Name)
+            _tp_mark('CLEANUP temporary document closed')
+        except BaseException:
+            _tp_mark('CLEANUP_EXCEPTION ' + traceback.format_exc())
+    if _tp_original is not None and _tp_original in App.listDocuments():
+        try:
+            App.setActiveDocument(_tp_original)
+            _tp_mark('RESTORED original active document')
+        except BaseException:
+            _tp_mark('RESTORE_ACTIVE_EXCEPTION ' + traceback.format_exc())
+)DRNAS"), error);
+        // Python failure is logged but does not contaminate normal document Open.
+        // On a process-killing native crash the pending marker survives.
+        state.remove(key);
+        state.sync();
+        DrnasDiagnostics::note(QStringLiteral("TYPEPROBE END ok=%1 error=%2")
+            .arg(ok).arg(error));
+        report(ok ? QStringLiteral("TEST TIPOVA PASS — vidi DBG")
+                  : QStringLiteral("TEST TIPOVA FAIL — DBG: ") + error);
+        typeProbe->setEnabled(true);
+    });
+
     // A deterministic real FreeCAD/Part smoke object for Android Coin3D.
     // No mock triangles or direct GL calls: this exercises document creation,
     // ViewProvider, Coin scene traversal and Qt presentation together.
