@@ -48,7 +48,7 @@ assert s.count(source_root) == 1
 s = s.replace(source_root, 'ROOT="' + root + '"')
 assert s.count('-DBUILD_GUI=OFF \\') == 1, "Core script's GUI switch changed unexpectedly"
 s=s.replace('-DBUILD_GUI=OFF \\', '''-DBUILD_GUI=ON \\
-  -DBUILD_PART=ON -DBUILD_SKETCHER=ON -DBUILD_PART_DESIGN=ON \\''')
+  -DBUILD_PART=ON -DBUILD_SKETCHER=ON -DBUILD_PART_DESIGN=ON -DBUILD_MEASURE=ON \\''')
 # This pinned original Part/Geometry.cpp directly compiles FreeType/HarfBuzz
 # glyph shaping and outline-to-CAD operations. The previous headless build
 # disabled FreeType, so full Part.so requires real native Android libraries.
@@ -76,7 +76,7 @@ s=s.replace('GUI=OFF (first full native core target FreeCADBase+FreeCADApp)',
             'GUI=ON (actual upstream FreeCADGui target; do not fake Coin3D)')
 assert s.count('--target FreeCADBase FreeCADApp') == 1
 s=s.replace('--target FreeCADBase FreeCADApp',
-            '--target FreeCADBase FreeCADApp FreeCADGui Part PartGui Sketcher SketcherGui PartDesign PartDesignGui')
+            '--target FreeCADBase FreeCADApp FreeCADGui Part PartGui Sketcher SketcherGui PartDesign PartDesignGui Measure MeasureGui')
 # Attempt genuine native FreeCADGui and fail if its .so is absent.
 needle = "echo 'FULL FreeCADBase + FreeCADApp Android ARM64: BUILD PASS' | tee \"$OUT/full-core-result.txt\""
 assert s.count(needle)==1
@@ -85,6 +85,13 @@ gui="$(find "$BUILDDIR" -type f -name 'libFreeCADGui.so' -print -quit)"
 test -n "$gui" || { echo 'REAL upstream FreeCADGui library missing' >&2; exit 1; }
 readelf -h "$gui" | grep -q 'Machine:.*AArch64'
 readelf -h "$gui" | grep -q 'Type:.*DYN'
+# Validate genuine modules BEFORE reporting a passing native artifact.
+for module in Measure MeasureGui; do
+    so="$(find "$BUILDDIR" -type f -name "$module.so" -print -quit)"
+    test -n "$so" || { echo "REAL upstream $module.so missing" >&2; exit 1; }
+    readelf -h "$so" | grep -q 'Machine:.*AArch64'
+    readelf -h "$so" | grep -q 'Type:.*DYN'
+done
 ! readelf -d "$gui" | grep -Eq 'libc\\\\.so\\\\.6|ld-linux'
 sha256sum "$gui" | tee -a "$OUT/full-gui-sha256.txt"
 echo 'UPSTREAM FreeCADGui Android ARM64 compiled: BUILD PASS' | tee "$OUT/full-gui-result.txt"
