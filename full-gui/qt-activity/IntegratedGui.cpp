@@ -1015,7 +1015,7 @@ finally:
     measureAutoAction->setCheckable(true);
     measureAutoAction->setToolTip(QStringLiteral(
         "A/B rendering: OFF avoids forced Measure imports; ON loads Measure "
-        "1s after the first Coin frame, MeasureGui 1s later. Restart to compare."));
+        "5s after the first Coin frame, MeasureGui 2s later. Restart to compare."));
     const QString measureAutoKey = QStringLiteral("nativeProbe/measureAutoEnabled");
     measureAutoAction->setChecked(QSettings().value(measureAutoKey, false).toBool());
 
@@ -1070,7 +1070,7 @@ finally:
                     *framePresented = true;
                     DrnasDiagnostics::note(QStringLiteral(
                         "MEASURE_BOOT FRAME_PRESENTED: first Coin Qt frame completed"));
-                    measureTimer->start(1000);
+                    measureTimer->start(5000);
                 }
             });
             // Schedule an ordinary Qt paint, NOT a GL/Coin context operation.
@@ -1124,7 +1124,7 @@ finally:
         }
         if (phase == 0) {
             measureTimer->setProperty("stage", 1);
-            measureTimer->start(1000);
+            measureTimer->start(2000);
         } else {
             measureTimer->setProperty("stage", 2);
             DrnasDiagnostics::note(QStringLiteral(
@@ -1150,7 +1150,7 @@ finally:
             return;
         }
         DrnasDiagnostics::note(QStringLiteral(
-            "MEASURE_BOOT ARMED: wait first Coin frame, then 1000ms + 1000ms"));
+            "MEASURE_BOOT ARMED: wait first Coin frame, then 5000ms + 2000ms"));
         measureTimer->start(0);
     });
     QObject::connect(coinBoxTest, &QAction::triggered, shell,
