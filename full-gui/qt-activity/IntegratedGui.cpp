@@ -392,7 +392,7 @@ void compactOriginalAndroidFreeCADChrome(QMainWindow* window)
         menu->hide();
     }
     for (QToolBar* bar : window->findChildren<QToolBar*>()) {
-        if (bar->iconSize()!=QSize(24, 24)) bar->setIconSize(QSize(24, 24));
+        if (bar->iconSize()!=QSize(27, 27)) bar->setIconSize(QSize(27, 27));
         bar->setMovable(false);
         if (bar->isFloating()) window->addToolBar(Qt::TopToolBarArea, bar);
         bar->setFloatable(false);
@@ -786,7 +786,7 @@ void installOriginalFreeCADTouchControls(QMainWindow* shell, QMainWindow* freeca
     toolbar->setFloatable(false);
     toolbar->setAllowedAreas(Qt::NoToolBarArea);
     toolbar->setProperty("drnasFloatingOverlay", true);
-    toolbar->setIconSize(QSize(28, 28));
+    toolbar->setIconSize(QSize(31, 31));
     // Qt Android defaults QToolBar buttons to icon-only. These are explicit
     // text commands with no icons, so force their captions to render.
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -1280,7 +1280,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         }
         window->setFont(compactFont);
         for (QToolBar* toolbar : window->findChildren<QToolBar*>()) {
-            if (toolbar->iconSize() != QSize(24, 24)) toolbar->setIconSize(QSize(24, 24));
+            if (toolbar->iconSize() != QSize(27, 27)) toolbar->setIconSize(QSize(27, 27));
         }
         // Original menus remain alive for the Android Menu dropdown; don't
         // spend a second full-width row on the embedded desktop menu bar.
