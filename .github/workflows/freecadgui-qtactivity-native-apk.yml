@@ -5,7 +5,7 @@ name: DRNAS FreeCADGui QtActivity APK Integration
 # genuinely new successful native GUI build.
 on:
   push:
-    branches: [feature/full-freecad-android]
+    branches: [feature/full-freecad-android, diagnostics/partdesign-shiboken-20261026]
     paths:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
       - 'full-gui/integrated-apk/**'
@@ -42,7 +42,7 @@ jobs:
   package-real-gui:
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
+    if: (github.ref == 'refs/heads/feature/full-freecad-android' || github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026') && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -82,13 +82,13 @@ jobs:
           else
             # Always package the most recent verified native compile. The old
             # fixed run predates Android SAF and silently rejected new fixes.
-            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=feature/full-freecad-android&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
+            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${GITHUB_REF_NAME}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
           fi
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
           test "$(jq -r '.conclusion' <<<"$info")" = success
           test "$(jq -r '.name' <<<"$info")" = 'DRNAS REAL upstream FreeCADGui Full ARM64 Build'
-          test "$(jq -r '.head_branch' <<<"$info")" = feature/full-freecad-android
+          test "$(jq -r '.head_branch' <<<"$info")" = "$GITHUB_REF_NAME"
           test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"
           commit="$(jq -r '.head_sha' <<<"$info")"
           attempt="$(jq -r '.run_attempt' <<<"$info")"

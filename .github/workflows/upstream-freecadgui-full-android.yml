@@ -1,7 +1,7 @@
 name: DRNAS REAL upstream FreeCADGui Full ARM64 Build
 on:
   push:
-    branches: [feature/full-freecad-android]
+    branches: [feature/full-freecad-android, diagnostics/partdesign-shiboken-20261026]
     paths:
       - 'full-gui/upstream/**'
       - '.github/workflows/upstream-freecadgui-full-android.yml'
@@ -36,6 +36,9 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+      - name: Verify read-only native registration diagnostics
+        run: python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
+
       - name: Python host tools matching FreeCAD embedded ABI
         uses: actions/setup-python@v5
         with:
@@ -346,5 +349,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh workflow run freecadgui-qtactivity-native-apk.yml --ref feature/full-freecad-android -f upstream_run_id="$GITHUB_RUN_ID"
+          gh workflow run freecadgui-qtactivity-native-apk.yml --ref "$GITHUB_REF_NAME" -f upstream_run_id="$GITHUB_RUN_ID"
           echo "Triggered DRNAS APK integration from $GITHUB_RUN_ID"
