@@ -233,6 +233,12 @@ jobs:
           test -f out/full-gui/host-icu73/lib/libicui18n.so.73
           test -f out/upstream-freecad-gui/native/libFreeCADGui.so
           test -f out/upstream-freecad-gui/native/libCoin.so
+          # No silently repacking a pre-fix upstream library.
+          test -f full-gui/qt-activity/android/src/org/drnas/freecad/bootstrap/AndroidDocumentBridge.java
+          if ! grep -aFq 'AndroidDocumentBridge' out/upstream-freecad-gui/native/libFreeCADGui.so; then
+            echo "::error::Native FreeCADGui is older than the Android SAF file-open fix. Run upstream-freecadgui-full-android.yml first."
+            exit 1
+          fi
           for mod in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
             test -s "out/occt-android/lib/lib${mod}.so" || { echo "::error::Missing complete OCCT lib${mod}.so"; exit 1; }
           done
@@ -364,6 +370,21 @@ jobs:
             | tee out/integrated-freecad-qtapk/badging.txt
           grep -F "package: name='org.drnas.freecad.integrated'" out/integrated-freecad-qtapk/badging.txt
           unzip -Z1 "$apk" > out/integrated-freecad-qtapk/apk-files.txt
+          # The C++ JNI bridge must resolve its Java peer at runtime.
+          python3 - "$apk" <<'PY_ANDROID_SAF_DEX'
+          from pathlib import Path
+          import sys
+          from zipfile import ZipFile
+          with ZipFile(Path(sys.argv[1])) as package:
+              dexes = [name for name in package.namelist()
+                       if name.startswith("classes") and name.endswith(".dex")]
+              assert dexes, "Android APK contains no DEX bytecode"
+              signature = b"Lorg/drnas/freecad/bootstrap/AndroidDocumentBridge;"
+              assert any(signature in package.read(name) for name in dexes), (
+                  "AndroidDocumentBridge missing from packaged DEX"
+              )
+          print("PASS: APK contains Java SAF document import bridge")
+          PY_ANDROID_SAF_DEX
           grep -Fx 'lib/arm64-v8a/libFreeCADGui.so' out/integrated-freecad-qtapk/apk-files.txt
           for module in Measure MeasureGui; do
             grep -Fx "lib/arm64-v8a/$module.so" out/integrated-freecad-qtapk/apk-files.txt
