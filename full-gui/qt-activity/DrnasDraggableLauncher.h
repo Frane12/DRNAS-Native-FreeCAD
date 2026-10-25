@@ -76,7 +76,9 @@ class DrnasDraggableLauncher final : public QObject {
         tracking_ = dragging_ = false;
         touchId_ = -1;
         if (moved) save();
-        if (button_) button_->setDown(false);
+        // Native mouse taps must keep the pressed state until QPushButton
+        // handles MouseButtonRelease and emits clicked(). Touch is handled here.
+        if (button_ && (moved || touch)) button_->setDown(false);
         return moved;
     }
 
