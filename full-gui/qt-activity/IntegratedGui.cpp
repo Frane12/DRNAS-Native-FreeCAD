@@ -31,6 +31,9 @@
 #include <QMdiArea>
 #include <QMdiSubWindow>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QWidgetAction>
+#include <QFrame>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMenuBar>
@@ -446,108 +449,249 @@ bool runOriginalFreeCADPython(const QString& script, QString& error)
     return true;
 }
 
-// Child overlay: never docks into the CAD layout or creates an Android window.
-class DrnasFloatingCommands : public QObject {
+// Android-native-safe floating commands. A QToolBar placed into a 460px-wide
+// child widget normally creates an *overflow QMenu* for all the hidden actions.
+// That popup has a separate Qt::Popup QWindow which Android/QtActivity may
+// deliver mouse/touch to incorrectly. Mirror the original QAction objects into
+// an in-window, scrollable touch grid instead. No new window, native surface,
+// GL context, command implementation or QAction is created/replaced.
+class DrnasFloatingCommands final : public QObject {
     QMainWindow* host;
     QPointer<QMainWindow> upstream;
-    QWidget* panel;
-    QPushButton* launcher;
+    QPointer<QToolBar> originalToolbar;
+    QWidget* panel = nullptr;
+    QScrollArea* commandScroll = nullptr;
+    QPushButton* launcher = nullptr;
     DrnasDraggableLauncher* launcherDrag = nullptr;
-    QWidget* grip;
+    QWidget* grip = nullptr;
     QPoint dragOffset;
     bool dragging = false;
+    bool nativeMenuMode = false;
+    QList<QPointer<QMenu>> menuPath;
+
     void constrain() {
-        const int w = std::max(1, std::min(460, host->width() - 12));
-        panel->setFixedWidth(w);
-        panel->adjustSize();
-        panel->move(std::clamp(panel->x(), 0, std::max(0, host->width()-panel->width())),
-                    std::clamp(panel->y(), 0, std::max(0, host->height()-panel->height())));
+        if (!host || !panel) return;
+        panel->setFixedWidth(std::max(130, std::min(470, host->width()-12)));
+        panel->setFixedHeight(std::max(100, std::min(370, host->height()-12)));
+        panel->move(std::clamp(panel->x(),0,std::max(0,host->width()-panel->width())),
+                    std::clamp(panel->y(),0,std::max(0,host->height()-panel->height())));
         if (launcherDrag) launcherDrag->place();
-        panel->raise(); launcher->raise();
+        panel->raise();
+        launcher->raise();
     }
+    QGridLayout* freshGrid(const QString& heading) {
+        auto* content = new QWidget(commandScroll);
+        content->setObjectName(QStringLiteral("drnasFloatingToolsContent"));
+        auto* v = new QVBoxLayout(content);
+        v->setContentsMargins(5,5,5,5);
+        v->setSpacing(5);
+        auto* header = new QLabel(heading,content);
+        header->setStyleSheet(QStringLiteral("color:#d6e6f2;font-size:12px;"));
+        header->setWordWrap(true);
+        v->addWidget(header);
+        auto* grid = new QGridLayout();
+        grid->setContentsMargins(0,0,0,0);
+        grid->setHorizontalSpacing(5);
+        grid->setVerticalSpacing(5);
+        v->addLayout(grid);
+        v->addStretch(1);
+        commandScroll->setWidget(content); // Qt deletes the previous page safely
+        return grid;
+    }
+    void addActionButton(QGridLayout* grid, int& next, QAction* action) {
+        if (!action || action->isSeparator()) return;
+        auto* button = new QPushButton(grid->parentWidget());
+        button->setObjectName(QStringLiteral("drnasInlineToolAction"));
+        button->setMinimumHeight(36);
+        button->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
+        button->setToolTip(action->toolTip());
+        const QPointer<QAction> safeAction(action);
+        const QPointer<QPushButton> safeButton(button);
+        auto sync = [safeAction,safeButton] {
+            if (!safeButton || !safeAction) return;
+            safeButton->setText(safeAction->text());
+            safeButton->setEnabled(safeAction->isEnabled());
+            safeButton->setStyleSheet(safeAction->isChecked()
+                ? QStringLiteral("background:#278caa;border:1px solid #8adbf2;color:white;border-radius:5px;padding:5px;")
+                : QStringLiteral("background:#315775;border:1px solid #52718d;color:white;border-radius:5px;padding:5px;"));
+        };
+        QObject::connect(action,&QAction::changed,button,sync);
+        sync();
+        QObject::connect(button,&QPushButton::clicked,this,[this,safeAction] {
+            if (!safeAction || !safeAction->isEnabled()) return;
+            panel->hide();
+            safeAction->trigger(); // original upstream FreeCAD/DRNAS QAction, unchanged
+        });
+        grid->addWidget(button,next/2,next%2);
+        ++next;
+    }
+    void addNavigationButton(QGridLayout* grid,int& next,const QString& label,
+                             std::function<void()> callback) {
+        auto* button = new QPushButton(label,grid->parentWidget());
+        button->setMinimumHeight(36);
+        button->setStyleSheet(QStringLiteral(
+            "background:#426786;border:1px solid #7aa0ba;color:white;border-radius:5px;padding:5px;"));
+        QObject::connect(button,&QPushButton::clicked,this,std::move(callback));
+        grid->addWidget(button,next/2,next%2);
+        ++next;
+    }
+    void showOriginalMenu() {
+        const QString label = menuPath.isEmpty()
+            ? QStringLiteral("Izvorni FreeCAD izbornici")
+            : menuPath.last()
+                ? menuPath.last()->title()
+                : QStringLiteral("Izvorni FreeCAD izbornici");
+        auto* grid=freshGrid(label);
+        int n=0;
+        addNavigationButton(grid,n,QStringLiteral("← Natrag"),[this] {
+            if (!menuPath.isEmpty()) menuPath.removeLast();
+            else nativeMenuMode=false;
+            if (nativeMenuMode) showOriginalMenu(); else showCommands();
+        });
+        QList<QAction*> actions;
+        if (!menuPath.isEmpty() && menuPath.last()) actions=menuPath.last()->actions();
+        else if (upstream && upstream->menuBar()) actions=upstream->menuBar()->actions();
+        for (QAction* action:actions) {
+            if (!action || action->isSeparator() || !action->isVisible()) continue;
+            if (QMenu* submenu=action->menu()) {
+                const QPointer<QMenu> safeMenu(submenu);
+                addNavigationButton(grid,n,action->text()+QStringLiteral(" ›"),[this,safeMenu] {
+                    if (!safeMenu) return;
+                    menuPath.append(safeMenu);
+                    showOriginalMenu();
+                });
+            } else addActionButton(grid,n,action);
+        }
+        if (n==1) addNavigationButton(grid,n,QStringLiteral("Nema stavki"),[] {});
+    }
+    void showCommands() {
+        nativeMenuMode=false;
+        if (!originalToolbar) return;
+        auto* grid=freshGrid(QStringLiteral("Naredbe · pomakni popis gore/dolje"));
+        int n=0;
+        QList<QAction*> gpuTests;
+        for (QAction* action:originalToolbar->actions()) {
+            if (!action || action->isSeparator() || !action->isVisible()) continue;
+            if (auto* wa=qobject_cast<QWidgetAction*>(action)) {
+                QWidget* widget=wa->defaultWidget();
+                if (auto* button=qobject_cast<QToolButton*>(widget)) {
+                    if (button->objectName()==QStringLiteral("drnasGpuExperiments")) {
+                        if (button->menu()) gpuTests=button->menu()->actions();
+                    } else if (button->text()==QStringLiteral("Menu")) {
+                        addNavigationButton(grid,n,QStringLiteral("FreeCAD Menu"),[this] {
+                            nativeMenuMode=true; menuPath.clear(); showOriginalMenu();
+                        });
+                    }
+                }
+                // Hidden source widgets (GPU/Menu/result label) stay owned by
+                // originalToolbar; we never reparent them into another action.
+            } else if (QMenu* menu=action->menu()) {
+                const QPointer<QMenu> safeMenu(menu);
+                addNavigationButton(grid,n,action->text()+QStringLiteral(" ›"),[this,safeMenu] {
+                    if (!safeMenu) return;
+                    nativeMenuMode=true;menuPath.clear();menuPath.append(safeMenu);
+                    showOriginalMenu();
+                });
+            } else addActionButton(grid,n,action);
+        }
+        if (!gpuTests.isEmpty()) {
+            addNavigationButton(grid,n,QStringLiteral("GPU TEST ↓"),[] {});
+            for (QAction* action:gpuTests) addActionButton(grid,n,action);
+        }
+        DrnasDiagnostics::note(QStringLiteral("TOOLS_INLINE actions=%1 GPU=%2 popup=0")
+            .arg(n).arg(gpuTests.size()));
+    }
+
 protected:
-    bool eventFilter(QObject* obj, QEvent* event) override {
-        if (obj == host && event->type() == QEvent::Resize) constrain();
-        // The real embedded FreeCAD MainWindow is shown *after* we create
-        // Tools. Showing it can place the CAD window above this host child.
-        // Bring Tools back to the top after Qt finishes the show/resize.
-        // This only changes QWidget stacking; no GL/EGL/window resize.
-        if ((obj == upstream.data() &&
-             (event->type() == QEvent::Show || event->type() == QEvent::Resize)) ||
-            (obj == host && event->type() == QEvent::WindowActivate)) {
-            QTimer::singleShot(0, this, [this] {
+    bool eventFilter(QObject* obj,QEvent* event) override {
+        if (obj==host && event->type()==QEvent::Resize) constrain();
+        if ((obj==upstream.data() &&
+             (event->type()==QEvent::Show || event->type()==QEvent::Resize)) ||
+            (obj==host && event->type()==QEvent::WindowActivate)) {
+            QTimer::singleShot(0,this,[this] {
                 if (!launcher || !host) return;
                 constrain();
-                launcher->show();
-                launcher->raise();
-                DrnasDiagnostics::note(QStringLiteral(
-                    "DRNAS Tools restored over embedded GUI; visible=%1 pos=%2,%3")
-                    .arg(launcher->isVisible()).arg(launcher->x()).arg(launcher->y()));
+                launcher->show(); launcher->raise();
             });
         }
-        if (obj == grip) {
-            auto* mouse = dynamic_cast<QMouseEvent*>(event);
-            if (mouse && event->type() == QEvent::MouseButtonPress &&
-                mouse->button() == Qt::LeftButton) {
-                dragging = true;
-                dragOffset = mouse->globalPosition().toPoint()-panel->mapToGlobal(QPoint());
+        if (obj==grip) {
+            auto* mouse=dynamic_cast<QMouseEvent*>(event);
+            if (mouse && event->type()==QEvent::MouseButtonPress &&
+                mouse->button()==Qt::LeftButton) {
+                dragging=true;
+                dragOffset=mouse->globalPosition().toPoint()-panel->mapToGlobal(QPoint());
                 return true;
             }
-            if (mouse && event->type() == QEvent::MouseMove && dragging) {
+            if (mouse && event->type()==QEvent::MouseMove && dragging) {
                 panel->move(host->mapFromGlobal(mouse->globalPosition().toPoint()-dragOffset));
                 constrain(); return true;
             }
-            if (event->type() == QEvent::MouseButtonRelease && dragging) {
-                dragging = false; return true;
+            if (event->type()==QEvent::MouseButtonRelease && dragging) {
+                dragging=false; return true;
             }
         }
-        return QObject::eventFilter(obj, event);
+        return QObject::eventFilter(obj,event);
     }
 public:
-    DrnasFloatingCommands(QMainWindow* shell, QMainWindow* freecad, QToolBar* toolbar)
-        : QObject(shell), host(shell), upstream(freecad) {
-        panel = new QWidget(host);
+    DrnasFloatingCommands(QMainWindow* shell,QMainWindow* freecad,QToolBar* toolbar)
+        : QObject(shell),host(shell),upstream(freecad),originalToolbar(toolbar) {
+        panel=new QWidget(host);
         panel->setObjectName(QStringLiteral("drnasFloatingCommands"));
         panel->setStyleSheet(QStringLiteral("background:#182d42;color:white;"));
-        auto* layout = new QVBoxLayout(panel);
-        layout->setContentsMargins(3,3,3,3); layout->setSpacing(2);
-        auto* row = new QHBoxLayout;
-        auto* title = new QLabel(QStringLiteral("DRNAS tools — drag"), panel);
+        auto* layout=new QVBoxLayout(panel);
+        layout->setContentsMargins(4,4,4,4);
+        layout->setSpacing(3);
+        auto* row=new QHBoxLayout;
+        auto* title=new QLabel(QStringLiteral("DRNAS tools — drag"),panel);
         title->setMinimumHeight(30);
-        grip = title; grip->installEventFilter(this);
-        auto* close = new QPushButton(QStringLiteral("×"), panel);
+        grip=title;
+        grip->installEventFilter(this);
+        auto* close=new QPushButton(QStringLiteral("×"),panel);
         close->setFixedSize(34,30);
-        row->addWidget(title,1); row->addWidget(close);
+        row->addWidget(title,1);
+        row->addWidget(close);
         layout->addLayout(row);
+        commandScroll=new QScrollArea(panel);
+        commandScroll->setObjectName(QStringLiteral("drnasToolsInlineScroll"));
+        commandScroll->setFrameShape(QFrame::NoFrame);
+        commandScroll->setWidgetResizable(true);
+        commandScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        commandScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+        layout->addWidget(commandScroll,1);
+        // Keep this toolbar alive as the owner of *original* QActions.
+        // Hide only its visual buttons: Qt overflow QMenu is never spawned.
         toolbar->setParent(panel);
-        toolbar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-        layout->addWidget(toolbar);
-        launcher = new QPushButton(QStringLiteral("Tools"), host);
+        toolbar->hide();
+        showCommands();
+        launcher=new QPushButton(QStringLiteral("Tools"),host);
         launcher->setObjectName(QStringLiteral("drnasFloatingCommandsLauncher"));
         launcher->setFixedSize(80,44);
-        launcherDrag = new DrnasDraggableLauncher(host, launcher,
-            QStringLiteral("drnasOverlay/tools"), 54, true, this);
-        launcher->setStyleSheet(QStringLiteral("background:#315775;color:white;border-radius:5px;"));
-        connect(launcher, &QPushButton::clicked, this, [this] {
-            panel->setVisible(!panel->isVisible()); constrain();
+        launcherDrag=new DrnasDraggableLauncher(host,launcher,
+            QStringLiteral("drnasOverlay/tools"),54,true,this);
+        launcher->setStyleSheet(QStringLiteral(
+            "background:#315775;color:white;border-radius:5px;"));
+        connect(launcher,&QPushButton::clicked,this,[this] {
+            if (!panel->isVisible() && !nativeMenuMode) showCommands();
+            panel->setVisible(!panel->isVisible());
+            constrain();
         });
-        connect(close, &QPushButton::clicked, panel, &QWidget::hide);
+        connect(close,&QPushButton::clicked,panel,&QWidget::hide);
         host->installEventFilter(this);
         if (upstream) upstream->installEventFilter(this);
-        panel->move(6,6); constrain();
-        panel->hide(); launcher->show(); launcher->raise();
-        // FreeCAD's original window is initially hidden while embedding.
-        // Re-raise when it has finished the first show / workbench activation.
-        QTimer::singleShot(0, this, [this] {
-            if (launcher) { constrain(); launcher->show(); launcher->raise(); }
+        panel->move(6,6);
+        constrain();
+        panel->hide();
+        launcher->show();launcher->raise();
+        QTimer::singleShot(0,this,[this] {
+            if (launcher) {constrain();launcher->show();launcher->raise();}
         });
-        QTimer::singleShot(450, this, [this] {
-            if (launcher) { constrain(); launcher->show(); launcher->raise(); }
+        QTimer::singleShot(450,this,[this] {
+            if (launcher) {constrain();launcher->show();launcher->raise();}
         });
-        DrnasDiagnostics::note(QStringLiteral("DRNAS floating tools: collapsed; CAD layout unreserved"));
+        DrnasDiagnostics::note(QStringLiteral(
+            "DRNAS floating tools: inline scrolling actions; no native Qt overflow popup"));
     }
 };
-
 
 void recordNativeGlesViewport(QMainWindow* freecad)
 {
