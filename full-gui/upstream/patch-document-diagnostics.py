@@ -366,7 +366,9 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
     quarter_source = once(quarter_source,
         '    PRIVATE(this)->timesincelastframe.restart();', r'''#ifdef __ANDROID__
     const char* abMode = std::getenv("DRNAS_VIEWPORT_AB");
-    const bool syncViewport = abMode && abMode[0] == 'B';
+    // Synchronize Coin render + event viewport to Qt physical pixels by default.
+    // Explicit TEST A retains FreeCAD's original behavior for A/B analysis.
+    const bool syncViewport = !(abMode && abMode[0] == 'A');
     const SbVec2s beforeSize = getSoRenderManager()->getViewportRegion().getViewportSizePixels();
     const qreal actualDpr = w->devicePixelRatioF();
     const int actualWidth = qRound(w->width() * actualDpr);
@@ -418,8 +420,10 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
             const int pxWidth = w ? qRound(w->width() * w->devicePixelRatioF()) : 0;
             const int pxHeight = w ? qRound(w->height() * w->devicePixelRatioF()) : 0;
             valid = valid && qt && qtFbo && pxWidth > 0 && pxHeight > 0;
-            int bridge = -3;
+            int bridge = 0; // mode 8 readback does not invoke the GL4ES bridge
             GLint qtBound = -1, coinBound = -1;
+            GLint readBefore = -1, readAfter = -1;
+            GLenum readStatus = 0;
             unsigned char sample[4] = {};
             GLenum qtError = GL_NO_ERROR, coinError = GL_NO_ERROR;
             if (valid) {
@@ -440,10 +444,20 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
                     qt->glClearColor(0.12f, 0.88f, 0.18f, 1.f); // GREEN: GLES
                     qt->glClear(GL_COLOR_BUFFER_BIT);
                 }
+                if (diagnosticPixel) {
+                    qt->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &readBefore);
+                    qt->glBindFramebuffer(GL_FRAMEBUFFER, qtFbo);
+                    readStatus = qt->glCheckFramebufferStatus(GL_FRAMEBUFFER);
+                }
                 qt->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &qtBound);
                 glGetIntegerv(GL_FRAMEBUFFER_BINDING, &coinBound);
                 qt->glReadPixels(pxWidth/2, pxHeight/2, 1, 1,
                                  GL_RGBA, GL_UNSIGNED_BYTE, sample);
+                if (diagnosticPixel && readBefore >= 0) {
+                    // Only native GLES binding is touched. Restore it exactly.
+                    qt->glBindFramebuffer(GL_FRAMEBUFFER, GLuint(readBefore));
+                    qt->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &readAfter);
+                }
                 coinError = glGetError();
                 qtError = qt->glGetError();
             }
@@ -453,9 +467,10 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
             if (reported++ < 18 || !valid || qtError || coinError) {
                 char line[512];
                 std::snprintf(line, sizeof(line),
-                    "GPU_PIXEL mode=%c valid=%d qtFbo=%u GLESbound=%d GL4ESbound=%d bridge=%d physical=%dx%d pixel=%u,%u,%u,%u glesError=0x%x gl4esError=0x%x",
+                    "GPU_PIXEL mode=%c valid=%d qtFbo=%u GLESbound=%d GL4ESbound=%d bridge=%d readBefore=%d readAfter=%d readStatus=0x%x physical=%dx%d pixel=%u,%u,%u,%u glesError=0x%x gl4esError=0x%x",
                     stage[0], int(valid), qtFbo, int(qtBound), int(coinBound),
-                    bridge, pxWidth, pxHeight, unsigned(sample[0]),
+                    bridge, int(readBefore), int(readAfter), unsigned(readStatus),
+                    pxWidth, pxHeight, unsigned(sample[0]),
                     unsigned(sample[1]), unsigned(sample[2]), unsigned(sample[3]),
                     unsigned(qtError), unsigned(coinError));
                 ::drnasDocumentPhase(line, valid && !qtError && !coinError ? "SAMPLE" : "WARNING");
@@ -508,11 +523,52 @@ static int drnasRenderStage() { return 4; }
             lighting->setOverride(true);
             basic->addChild(lighting);
             basic->addChild(this->pcViewProviderRoot);
+            static unsigned int basicSamples = 0;
+            const bool basicAudit = basicSamples++ < 16;
+            const int vpNodes = this->pcViewProviderRoot
+                ? this->pcViewProviderRoot->getNumChildren() : -1;
+            const SbVec2s actionSize = glra->getViewportRegion().getViewportSizePixels();
+            const GLenum basicPrior = glGetError();
+            if (basicAudit) {
+                char line[320];
+                std::snprintf(line,sizeof(line),
+                    "COIN_GRAPH stage=2 children=%d actionVP=%dx%d priorGL=0x%x",
+                    vpNodes,int(actionSize[0]),int(actionSize[1]),unsigned(basicPrior));
+                ::drnasDocumentPhase(line,"BEFORE_APPLY");
+            }
             ::drnasDocumentPhase("RENDER_STAGE basic geometry", "BEGIN");
             glra->apply(basic);
+            const GLenum basicAfter = glGetError();
+            if (basicAudit || basicAfter != GL_NO_ERROR) {
+                char line[256];
+                std::snprintf(line,sizeof(line),
+                    "COIN_GRAPH stage=2 children=%d afterGL=0x%x",
+                    vpNodes,unsigned(basicAfter));
+                ::drnasDocumentPhase(line,"AFTER_APPLY");
+            }
             ::drnasDocumentPhase("RENDER_STAGE basic geometry", "END");
         } else {
+            static unsigned int originalSamples = 0;
+            const bool originalAudit = originalSamples++ < 16;
+            const int vpNodes = this->pcViewProviderRoot
+                ? this->pcViewProviderRoot->getNumChildren() : -1;
+            const GLenum originalPrior = glGetError();
+            if (originalAudit) {
+                char line[256];
+                std::snprintf(line,sizeof(line),
+                    "COIN_GRAPH stage=%d children=%d priorGL=0x%x",
+                    drnasRenderStage(),vpNodes,unsigned(originalPrior));
+                ::drnasDocumentPhase(line,"BEFORE_ORIGINAL");
+            }
             inherited::actualRedraw();
+            const GLenum originalAfter = glGetError();
+            if (originalAudit || originalAfter != GL_NO_ERROR) {
+                char line[256];
+                std::snprintf(line,sizeof(line),
+                    "COIN_GRAPH stage=%d children=%d afterGL=0x%x",
+                    drnasRenderStage(),vpNodes,unsigned(originalAfter));
+                ::drnasDocumentPhase(line,"AFTER_ORIGINAL");
+            }
         }''')
     for call in ('renderDelayedAnnotations(glra);',):
         body = once(body, call, 'if (drnasRenderStage() >= 3) ' + call)
@@ -603,6 +659,8 @@ static void drnasSyncQtCoinFbo(QOpenGLWidget* widget)
     glGetIntegerv(GL_FRAMEBUFFER_BINDING,&wrappedBefore);
     // Qt's framebuffer is native id=qtFbo. GL4ES's DEFAULT framebuffer is
     // *logically* id=0 and maps to that Qt FBO, never id=qtFbo in its own map.
+    // Read and clear the prior GL4ES error separately so FBO errors are attributable.
+    const GLenum priorError = glGetError();
     const int bridge=bindQt ? bindQt(qtFbo) : -3;
     if(nativeQuery) nativeQuery(GL_FRAMEBUFFER_BINDING,&nativeAfter);
     glGetIntegerv(GL_FRAMEBUFFER_BINDING,&wrappedAfter);
@@ -614,9 +672,9 @@ static void drnasSyncQtCoinFbo(QOpenGLWidget* widget)
     if(samples++<60 || !passed) {
         char line[480];
         std::snprintf(line,sizeof(line),
-          "FBO_BRIDGE qt=%u nativeBefore=%d wrappedBefore=%d bridge=%d nativeAfter=%d wrappedDefault=%d status=0x%x error=0x%x logical=%dx%d physical=%dx%d dpr=%.4f",
+          "FBO_BRIDGE qt=%u nativeBefore=%d wrappedBefore=%d bridge=%d nativeAfter=%d wrappedDefault=%d status=0x%x priorError=0x%x error=0x%x logical=%dx%d physical=%dx%d dpr=%.4f",
           qtFbo,nativeBefore,wrappedBefore,bridge,nativeAfter,wrappedAfter,
-          unsigned(status),unsigned(error),widget->width(),widget->height(),
+          unsigned(status),unsigned(priorError),unsigned(error),widget->width(),widget->height(),
           qRound(widget->width()*widget->devicePixelRatioF()),
           qRound(widget->height()*widget->devicePixelRatioF()),
           double(widget->devicePixelRatioF()));

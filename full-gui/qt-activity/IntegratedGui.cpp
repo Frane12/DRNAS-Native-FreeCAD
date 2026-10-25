@@ -989,8 +989,9 @@ _drnas_mark('COIN_SMOKE shape type=%s null=%s solids=%s faces=%s visible=%s bbox
         });
     // Choose before New in a fresh launch. Never compare A/B by switching
     // already-mutated Coin/GL state within an existing document.
-    const QString initialAb = qgetenv("DRNAS_VIEWPORT_AB") == QByteArray("B")
-        ? QStringLiteral("B") : QStringLiteral("A");
+    // B is the Android physical-pixel sync default; A is opt-in for comparisons.
+    const QString initialAb = qgetenv("DRNAS_VIEWPORT_AB") == QByteArray("A")
+        ? QStringLiteral("A") : QStringLiteral("B");
     auto* abStatus = new QLabel(QStringLiteral("A/B: ") + initialAb, toolbar);
     const bool abAvailable = dlsym(RTLD_DEFAULT, "drnas_viewport_ab_version") != nullptr;
     DrnasDiagnostics::note(QStringLiteral("VIEWPORT_AB STARTUP mode=%1 nativeAvailable=%2; default Coin3D stage 3")
