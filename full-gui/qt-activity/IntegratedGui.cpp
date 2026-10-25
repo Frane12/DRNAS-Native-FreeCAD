@@ -808,7 +808,7 @@ _drnas_mark('COIN_SMOKE shape type=%s null=%s solids=%s faces=%s visible=%s bbox
             // Once native/Qt have presented the frame, read the actual Qt
             // framebuffer. Its pixels distinguish a retained orange GL4ES
             // test triangle from genuine FreeCAD geometry.
-            QTimer::singleShot(750, cad.data() ? cad.data() : qApp,
+            QTimer::singleShot(750, qApp,
                 [cad] {
                     if (!cad) return;
                     auto* mdi = cad->findChild<QMdiArea*>();
