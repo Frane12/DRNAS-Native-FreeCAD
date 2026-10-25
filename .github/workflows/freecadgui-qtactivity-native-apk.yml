@@ -242,6 +242,13 @@ jobs:
             echo "::error::Native FreeCADGui is older than the Android SAF file-open fix. Run upstream-freecadgui-full-android.yml first."
             exit 1
           fi
+          # New GUI actions for probes 11/12 must NEVER be packaged with
+          # yesterday's native libFreeCADGui.so lacking their implementation.
+          if ! readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+            | awk '$7 != "UND" && $8 == "drnas_geometry_document_probe_version" { found=1 } END { exit !found }'; then
+            echo "::error::Native FreeCADGui lacks Coin3D real-document probes 11/12. Await the newest successful upstream ARM64 run; do not ship mixed sources."
+            exit 1
+          fi
           for mod in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
             test -s "out/occt-android/lib/lib${mod}.so" || { echo "::error::Missing complete OCCT lib${mod}.so"; exit 1; }
           done
