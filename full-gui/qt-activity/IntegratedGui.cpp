@@ -9,6 +9,7 @@
 #include "DrnasTouchInput.h"
 #include "DrnasPortraitLayout.h"
 #include "DrnasDesktopWorkspace.h"
+#include "DrnasAndroidCommandUi.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -1047,11 +1048,12 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
                 << "nativeHandle=" << (window->windowHandle() != nullptr);
 
         const bool pcDesktop = qEnvironmentVariable("DRNAS_PC_DESKTOP_MODE") == QStringLiteral("1");
+        const bool androidCommands=qEnvironmentVariable("DRNAS_ANDROID_COMMAND_UI")!=QStringLiteral("0");
         // Preserve the stock font in the lower-resolution landscape profiles.
         QFont compactFont = window->font();
-        if (!pcDesktop && compactFont.pointSizeF() > 0) {
+        if (!pcDesktop && !androidCommands && compactFont.pointSizeF() > 0) {
             compactFont.setPointSizeF(std::max(7.0, compactFont.pointSizeF() * 0.80));
-        } else if (!pcDesktop && compactFont.pixelSize() > 0) {
+        } else if (!pcDesktop && !androidCommands && compactFont.pixelSize() > 0) {
             compactFont.setPixelSize(std::max(9, compactFont.pixelSize() * 4 / 5));
         }
         window->setFont(compactFont);
@@ -1069,7 +1071,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         if (!beforeFirstShow) {
             window->hide(); // Best-effort fallback; can recreate EGLSurface.
         }
-        DrnasDesktopWorkspace* desktop = pcDesktop ? new DrnasDesktopWorkspace(shell) : nullptr;
+        DrnasDesktopWorkspace* desktop = pcDesktop && !androidCommands ? new DrnasDesktopWorkspace(shell) : nullptr;
         // Reparent only once, before showing FreeCAD or starting GL composition.
         // The desktop wrapper stays inside the same native Android QtActivity surface.
         window->setParent(desktop ? static_cast<QWidget*>(desktop) : static_cast<QWidget*>(shell), Qt::Widget);
@@ -1100,7 +1102,12 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         }
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
         installOriginalFreeCADTouchControls(shell, window);
-        if (!desktop) new DrnasPortraitLayout(shell,window,[] {
+        if (androidCommands) {
+            shell->takeCentralWidget();
+            shell->setCentralWidget(new DrnasAndroidCommandUi(shell,window));
+            DrnasDiagnostics::note(QStringLiteral("ANDROID UI: full-width original CAD workspace; live FreeCAD actions in Android controls"));
+        }
+        if (!desktop && !androidCommands) new DrnasPortraitLayout(shell,window,[] {
             QString error;
             if (!runOriginalFreeCADPython(QStringLiteral(
                     "import FreeCADGui as Gui\nGui.runCommand('Std_DockOverlayAll', 0)\n"),error))

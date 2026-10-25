@@ -55,10 +55,9 @@ public final class StartupActivity extends Activity {
         title.setTextSize(26);
         panel.addView(title);
         TextView help = new TextView(this);
-        help.setText("Vodoravni FreeCAD: 800 × 600 za veće kontrole, 640 × 480 za još veće. "
-                + "Prikaz i dodir koriste iste Qt koordinate; "
-                + "4:3 radna površina je centrirana bez rastezanja. "
-                + "Bočni rubovi ostaju slobodni.\n\n"
+        help.setText("FreeCAD s Android rasporedom i izvornim ikonama. "
+                + "Osnovne naredbe su gore, a alate odabrane grupe možeš pomicati prstom. "
+                + "Model koristi punu širinu zaslona.\n\n"
                 + "Nakon pokretanja automatski se otvara Part Design.");
         help.setTextColor(Color.rgb(215, 232, 245));
         help.setTextSize(17);
@@ -81,8 +80,8 @@ public final class StartupActivity extends Activity {
                 width = (int) Math.round(nativeWidth * ratio);
                 height = (int) Math.round(nativeHeight * ratio);
             }
-            radio.setText(edge < 0 ? "PC radna površina — " + width + " × " + height + " (4:3)"
-                    + (edge == DESKTOP_800 ? " — preporučeno" : "") :
+            radio.setText(edge < 0 ? (edge == DESKTOP_800 ? "Android — standardne kontrole (preporučeno)" :
+                    edge == DESKTOP_640 ? "Android — veće kontrole" : "Android — manje kontrole") :
                     (edge == 0 ? "Automatski — " : "") + width + " × " + height);
             radio.setTextSize(19);
             radio.setTextColor(Color.WHITE);
@@ -149,6 +148,7 @@ public final class StartupActivity extends Activity {
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
             Os.setenv("DRNAS_PC_DESKTOP_MODE", edge < 0 ? "1" : "0", true);
             Os.setenv("DRNAS_DESKTOP_WIDTH", edge < 0 ? Integer.toString(-edge) : "0", true);
+            Os.setenv("DRNAS_ANDROID_COMMAND_UI", "1", true);
             RadioButton test = findViewById(viewportTests.getCheckedRadioButtonId());
             Os.setenv("DRNAS_VIEWPORT_AB", (String) test.getTag(), true);
             Os.setenv("DRNAS_ENABLE_COIN_REDRAW", "0", true);

@@ -10,6 +10,9 @@ QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/toolbar-touch
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/toolbar-touch
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/toolbar-touch
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/android-command-ui
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/android-command-ui
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/android-command-ui
 QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=640 build/touch-tests/desktop-workspace
 QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=1024 build/touch-tests/desktop-workspace
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
@@ -49,11 +52,13 @@ not establish Coin rendering correctness or Android device behavior.
 9. Interrupt a drag by backgrounding the app, then return. No held click should
    remain. **Odustani** must cancel an active tool with the gesture panel closed.
 
-The app locks its activities to landscape for this test. The default centered
-4:3 profile is 800 × 600, with 640 × 480 and 1024 × 768 alternatives. Display
-scaling is configured before Qt starts; touch uses that same Qt coordinate
-system. Native toolbar icons are 24 logical pixels with 36-pixel button minima,
-and the desktop font is no longer reduced by 20%. Finger debounce defaults to
+The app locks its activities to landscape for this test. The default Android
+command UI uses the full width and original FreeCAD actions/icons. Its standard,
+larger and smaller controls use the existing startup scaling presets. The legacy
+desktop fixture still checks 800 × 600, 640 × 480 and 1024 × 768 profiles.
+Display scaling is configured before Qt starts; touch uses that same Qt coordinate
+system. Android icons are 28 logical pixels with 48+ pixel button targets,
+and the original font is retained. Finger debounce defaults to
 120 ms and is adjustable from 0 to 400 ms in **Geste**. The separate
 portrait fixture remains as regression coverage for the legacy dock adapter.
 It includes upstream's `Model` dock, 600-pixel task forms, late
@@ -76,3 +81,9 @@ click, small finger movement, a rapid duplicate tap, a different command during
 debounce, duplicate Qt/system/touch-device mouse input, ordinary mouse clicks,
 TouchCancel, application deactivation/resume, and a drag off the button. The
 same harness failed on the prior code at the repeated-tap assertion.
+
+The default Android launch now uses the full-width command UI described in
+`docs/android-command-ui.md`. `android-command-ui` covers shared original
+QActions/icons/state/shortcuts, native-window taps, debounce, finger scrolling,
+source-button popup menus, selection of command groups and late workbench
+changes while retaining the original render widget.

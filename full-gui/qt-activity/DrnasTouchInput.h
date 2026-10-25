@@ -29,6 +29,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSet>
 #include <QSignalBlocker>
@@ -105,6 +106,8 @@ class DrnasTouchInput final : public QObject {
     QPointF uiTouchStart;
     int uiTouchId = -1;
     bool uiTouchCancelled = false;
+    QPointer<QScrollBar> uiCommandScroll;
+    int uiCommandScrollStart=0;
     QElapsedTimer inputClock;
     QPointer<QWidget> lastUiClickTarget;
     QPointer<QWidget> lastUiTouchTarget;
@@ -311,8 +314,20 @@ class DrnasTouchInput final : public QObject {
         }
         return false;
     }
+    QScrollBar* commandScrollAt(const QPointF& global) const {
+        if (activeDialog() || QApplication::activePopupWidget()) return nullptr;
+        QWidget* hit=host->childAt(host->mapFromGlobal(global).toPoint());
+        for (auto* widget=hit;widget && widget!=host;widget=widget->parentWidget()) {
+            auto* scroll=qobject_cast<QScrollArea*>(widget);
+            if (scroll && scroll->property("drnasCommandScroller").toBool() &&
+                scroll->horizontalScrollBar()->maximum()>0) return scroll->horizontalScrollBar();
+        }
+        return nullptr;
+    }
     void clearUiTouch() {
         uiTouchTarget.clear();uiTouchId=-1;uiTouchCancelled=false;
+        uiCommandScroll.clear();
+        host->setProperty("drnasUiTouchActive",false);
     }
     void rememberUiTouch(const QPointF& global) {
         lastUiTouchMs=inputClock.elapsed();lastUiTouchPosition=global;
@@ -348,9 +363,15 @@ class DrnasTouchInput final : public QObject {
             if (event->points().size()!=1) return false;
             const QEventPoint& p=event->points().first();
             QWidget* button=controlAtFinger(p.globalPosition());
-            if (!button) return false;
+            auto* scroll=commandScrollAt(p.globalPosition());
+            if (!button && !scroll) return false;
+            // Blank space in the command strip can start the same swipe.
+            if (!button) button=scroll;
             uiTouchTarget=button;
             lastUiTouchTarget=button;
+            uiCommandScroll=scroll;
+            uiCommandScrollStart=scroll ? scroll->value() : 0;
+            host->setProperty("drnasUiTouchActive",true);
             uiTouchId=p.id();
             uiTouchStart=p.globalPosition();
             uiTouchCancelled=false;
@@ -372,6 +393,11 @@ class DrnasTouchInput final : public QObject {
         if (tracked && (tracked->globalPosition()-uiTouchStart).manhattanLength() >
             std::max(18,QApplication::startDragDistance()*2))
             uiTouchCancelled=true;
+        if (tracked && uiCommandScroll && event->points().size()==1 &&
+            std::abs(tracked->globalPosition().x()-uiTouchStart.x())>QApplication::startDragDistance()) {
+            uiTouchCancelled=true;
+            uiCommandScroll->setValue(uiCommandScrollStart-qRound(tracked->globalPosition().x()-uiTouchStart.x()));
+        }
         if (finishing) {
             QPointer<QWidget> target=uiTouchTarget;
             const QPointF release=tracked ? tracked->globalPosition():uiTouchStart;
