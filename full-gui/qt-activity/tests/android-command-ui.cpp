@@ -20,6 +20,8 @@ int main(int argc,char** argv) {
     QPixmap icon(24,24);icon.fill(Qt::green);action->setIcon(QIcon(icon));
     action->setToolTip("Original FreeCAD New");file->addAction(action);bar->addAction(action);
     int created=0;QObject::connect(action,&QAction::triggered,[&]{++created;});
+    auto* part=file->addAction("New Part");part->setObjectName("Std_Part");
+    part->setVisible(false); // Desktop context hides it; Android keeps a fixed shortcut.
     auto* toggle=bar->addAction("Selection mode");toggle->setObjectName("Test_Toggle");toggle->setCheckable(true);
     auto* group=bar->addAction("Primitive");group->setObjectName("Part_Primitives");
     auto* sourceButton=qobject_cast<QToolButton*>(bar->widgetForAction(group));
@@ -43,6 +45,12 @@ int main(int argc,char** argv) {
     auto all=ui->findChildren<QToolButton*>("drnasAndroidAction_Std_New");
     require(!all.isEmpty(),"native New command must be represented in the Android UI");
     auto* copy=all.first();
+    auto* partPin=ui->findChild<QToolButton*>("drnasAndroidAction_Std_Part");
+    require(partPin && partPin->isVisible() && partPin->defaultAction()==part,
+        "New Part must remain pinned even when the source menu action is hidden");
+    part->setEnabled(false);drain();
+    require(partPin->isVisible() && !partPin->isEnabled(),"Part pin must preserve original enabled state");
+    part->setEnabled(true);drain();
     require(copy->defaultAction()==action && action->parent()==&cad,"FreeCAD must retain ownership of the SAME action");
     require(copy->icon().cacheKey()==action->icon().cacheKey(),"original icon must be reused unchanged");
     require(copy->toolTip()==action->toolTip(),"original command tooltip must survive");
@@ -99,3 +107,4 @@ int main(int argc,char** argv) {
     host.takeCentralWidget();cad.setParent(nullptr);delete ui;
     std::cout<<"Android command identity, icons, state, native touch, scroll and workbench checks passed\n";
 }
+

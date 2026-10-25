@@ -146,7 +146,8 @@ def _drnas_mobile_view_tick():
     if doc is None or gui_doc is None:
         return
     visible = [obj for obj in doc.Objects
-               if getattr(obj, 'ViewObject', None) is not None
+               if obj.isDerivedFrom('Part::Feature')
+               and getattr(obj, 'ViewObject', None) is not None
                and obj.ViewObject.Visibility and hasattr(obj, 'Shape')
                and not obj.Shape.isNull()]
     view = gui_doc.activeView()
@@ -155,6 +156,9 @@ def _drnas_mobile_view_tick():
     # Do this once per document, not on each camera gesture or recompute.
     # Preserve real ViewProviders, visibility, materials and subsequent views.
     if _drnas_framed_documents.get(doc.Name) is not doc:
+        _drnas_mark('FIRST_BREP candidates=' + repr([
+            (obj.Name, obj.TypeId, str(getattr(obj.Shape, 'BoundBox', None)))
+            for obj in visible]))
         # Report the real Python/C++ bridge independently of camera framing.
         # A binding error must not prevent the native fit/redraw operations.
         try:

@@ -35,7 +35,15 @@ exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"),
 tick = scope[function.name]
 tick()
 assert calls == [], "empty documents must not move the camera"
-shape = NS(Name="Sphere", ViewObject=NS(Visibility=True), Shape=NS(isNull=lambda: False))
+helpers = [NS(Name=name, isDerivedFrom=lambda _: False,
+              ViewObject=NS(Visibility=True), Shape=NS(isNull=lambda: False))
+           for name in ('X_Axis', 'XY_Plane', 'Origin001', 'LCS')]
+doc.Objects.extend(helpers)
+tick()
+assert calls == [] and not scope['_drnas_framed_documents'], 'origin and datum geometry must not consume first-BRep framing'
+doc.Objects.clear()
+shape = NS(Name="Sphere", TypeId='Part::Sphere', isDerivedFrom=lambda kind: kind=='Part::Feature',
+           ViewObject=NS(Visibility=True), Shape=NS(isNull=lambda: False))
 doc.Objects.append(shape)
 tick()
 assert calls == ['bridge', "iso", "fit", "redraw"], "first actual BRep must be framed after bridge initialization"

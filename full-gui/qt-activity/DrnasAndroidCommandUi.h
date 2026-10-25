@@ -91,7 +91,7 @@ class DrnasAndroidCommandUi final : public QWidget {
             if (button->defaultAction()==action) return button;
         return nullptr;
     }
-    QToolButton* mirror(QAction* action,QWidget* owner,bool compact) {
+    QToolButton* mirror(QAction* action,QWidget* owner,bool compact,bool pinned=false) {
         auto* button=new QToolButton(owner);
         button->setDefaultAction(action); // SAME QAction: no copied command/state/shortcut.
         button->setObjectName(QStringLiteral("drnasAndroidAction_")+action->objectName());
@@ -110,9 +110,9 @@ class DrnasAndroidCommandUi final : public QWidget {
         } else if (action->menu()) {
             button->setMenu(action->menu());button->setPopupMode(QToolButton::InstantPopup);
         }
-        button->setVisible(action->isVisible());
-        connect(action,&QAction::changed,button,[button,action] {
-            button->setVisible(action->isVisible());
+        button->setVisible(pinned || action->isVisible());
+        connect(action,&QAction::changed,button,[button,action,pinned] {
+            button->setVisible(pinned || action->isVisible());
         });
         connect(action,&QObject::destroyed,button,&QWidget::hide);
         return button;
@@ -216,7 +216,8 @@ class DrnasAndroidCommandUi final : public QWidget {
             clearRow(quickLayout);
             const QStringList pins={QStringLiteral("Std_New"),QStringLiteral("Std_Open"),
                 QStringLiteral("Std_Save"),QStringLiteral("Std_Undo"),QStringLiteral("Std_Redo"),
-                QStringLiteral("Std_ViewFitAll")};
+                QStringLiteral("Std_ViewFitAll"),QStringLiteral("Std_Part"),
+                QStringLiteral("PartDesign_Body")};
             for (const auto& id:pins) {
                 QAction* source=nullptr;
                 for (const auto& group:catalog) {
@@ -224,7 +225,8 @@ class DrnasAndroidCommandUi final : public QWidget {
                         if (action && action->objectName()==id) {source=action;break;}
                     if (source) break;
                 }
-                if (source) quickLayout->addWidget(mirror(source,quickContent,true));
+                if (source) quickLayout->addWidget(mirror(source,quickContent,true,
+                    id==QStringLiteral("Std_Part") || id==QStringLiteral("PartDesign_Body")));
             }
             quickLayout->addStretch();
             DrnasDiagnostics::note(QStringLiteral("ANDROID UI: original QAction groups=%1; source icons and command IDs retained")
