@@ -977,15 +977,15 @@ finally:
                     "OPEN_ASYNC IMPORT_BEGIN suffix=%1 size=%2")
                     .arg(suffix).arg(QFileInfo(staged).size()));
                 const QString script = QStringLiteral(
-                    "import base64, FreeCADGui as Gui, traceback\\n"
-                    "_drnas_async_path = base64.b64decode('%1').decode('utf-8')\\n"
-                    "_drnas_mark('OPEN_ASYNC PY_IMPORT_BEGIN')\\n"
-                    "try:\\n"
-                    "    Gui.open(_drnas_async_path)\\n"
-                    "    _drnas_mark('OPEN_ASYNC PY_IMPORT_END')\\n"
-                    "except BaseException:\\n"
-                    "    _drnas_mark('OPEN_ASYNC PY_IMPORT_EXCEPTION ' + traceback.format_exc())\\n"
-                    "    raise\\n"
+                    "import base64, FreeCADGui as Gui, traceback\n"
+                    "_drnas_async_path = base64.b64decode('%1').decode('utf-8')\n"
+                    "_drnas_mark('OPEN_ASYNC PY_IMPORT_BEGIN')\n"
+                    "try:\n"
+                    "    Gui.open(_drnas_async_path)\n"
+                    "    _drnas_mark('OPEN_ASYNC PY_IMPORT_END')\n"
+                    "except BaseException:\n"
+                    "    _drnas_mark('OPEN_ASYNC PY_IMPORT_EXCEPTION ' + traceback.format_exc())\n"
+                    "    raise\n"
                 ).arg(QString::fromLatin1(staged.toUtf8().toBase64()));
                 QString error;
                 const bool ok = runOriginalFreeCADPython(script, error);
