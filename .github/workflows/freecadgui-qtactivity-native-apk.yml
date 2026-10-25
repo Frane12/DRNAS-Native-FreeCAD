@@ -5,7 +5,7 @@ name: DRNAS FreeCADGui QtActivity APK Integration
 # genuinely new successful native GUI build.
 on:
   push:
-    branches: [test/r264-measure-delayed-boot-20261025]
+    branches: [test/r264-safe-async-file-open-20261025]
     paths:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
       - 'full-gui/integrated-apk/**'
@@ -42,7 +42,7 @@ jobs:
   package-real-gui:
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    if: github.ref == 'refs/heads/test/r264-measure-delayed-boot-20261025' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
+    if: github.ref == 'refs/heads/test/r264-safe-async-file-open-20261025' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -107,6 +107,9 @@ jobs:
         with:
           ref: ${{ steps.upstream.outputs.package_sha }}
           persist-credentials: false
+
+      - name: Validate Android async file-open Python path handoff
+        run: python3 -m unittest discover -s tests -p 'test_android_async_open_path.py' -v
 
       - name: Download real GUI, App, Base, Coin3D, GL4ES artifact
         uses: actions/download-artifact@v4

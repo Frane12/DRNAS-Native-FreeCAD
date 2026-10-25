@@ -976,11 +976,18 @@ finally:
                 DrnasDiagnostics::note(QStringLiteral(
                     "OPEN_ASYNC IMPORT_BEGIN suffix=%1 size=%2")
                     .arg(suffix).arg(QFileInfo(staged).size()));
+                // Pass the *real* local path as Base64, never as raw Python
+                // source. Decode and validate it before FreeCADGui.open().
+                // Log Python-side validation separately from the native import.
                 const QString script = QStringLiteral(
-                    "import base64, FreeCADGui as Gui, traceback\n"
-                    "_drnas_async_path = base64.b64decode('%1').decode('utf-8')\n"
+                    "import base64, os, FreeCADGui as Gui, traceback\n"
                     "_drnas_mark('OPEN_ASYNC PY_IMPORT_BEGIN')\n"
                     "try:\n"
+                    "    _drnas_async_path = base64.b64decode('%1', validate=True).decode('utf-8')\n"
+                    "    _drnas_mark('OPEN_ASYNC PY_PATH ' + repr(_drnas_async_path))\n"
+                    "    if not os.path.isfile(_drnas_async_path):\n"
+                    "        raise FileNotFoundError('Android Open: invalid local file path: %r' % (_drnas_async_path,))\n"
+                    "    _drnas_mark('OPEN_ASYNC PY_PATH_VALID size=%d' % os.path.getsize(_drnas_async_path))\n"
                     "    Gui.open(_drnas_async_path)\n"
                     "    _drnas_mark('OPEN_ASYNC PY_IMPORT_END')\n"
                     "except BaseException:\n"
