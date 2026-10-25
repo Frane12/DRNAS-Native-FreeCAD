@@ -27,7 +27,8 @@ class AndroidPackagingTests(unittest.TestCase):
                 file = source / name
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text('# original\n')
-            for module in ('Part', 'PartGui', 'Sketcher', 'SketcherGui', 'Materials', 'MatGui', '_PartDesign', 'PartDesignGui'):
+            for module in ('Part', 'PartGui', 'Sketcher', 'SketcherGui', 'Materials', 'MatGui',
+                           '_PartDesign', 'PartDesignGui', 'Measure', 'MeasureGui'):
                 (native / (module + '.so')).write_bytes(b'x' * 8192)
             with patch.object(sys, 'argv', [str(SCRIPT), str(source), str(bundle), str(native)]):
                 stage.main()

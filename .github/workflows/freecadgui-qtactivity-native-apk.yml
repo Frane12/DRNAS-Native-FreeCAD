@@ -55,6 +55,7 @@ jobs:
           ctest --test-dir build/touch-tests --output-on-failure
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
           QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
+          QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/portrait-modal
           python3 full-gui/qt-activity/tests/first-shape.py
 
   dispatch-after-touch-gates:

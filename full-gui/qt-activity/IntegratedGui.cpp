@@ -1078,7 +1078,14 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         shell->setCentralWidget(window);
         shell->setWindowTitle(QStringLiteral("FreeCAD"));
         installOriginalFreeCADTouchControls(shell, window);
-        new DrnasPortraitLayout(shell,window);
+        new DrnasPortraitLayout(shell,window,[] {
+            QString error;
+            if (!runOriginalFreeCADPython(QStringLiteral(
+                    "import FreeCADGui as Gui\nGui.runCommand('Std_DockOverlayAll', 0)\n"),error))
+                DrnasDiagnostics::note(QStringLiteral("PORTRAIT: disable restored overlays failed: ")+error);
+            else
+                DrnasDiagnostics::note(QStringLiteral("PORTRAIT: original ToggleAll removed populated dock overlays"));
+        });
         if (!beforeFirstShow) {
             window->show();
         }

@@ -8,6 +8,7 @@ cmake --build build/touch-tests
 ctest --test-dir build/touch-tests --output-on-failure
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/direct-touch
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/portrait-modal
 python3 full-gui/qt-activity/tests/first-shape.py
 ```
 
@@ -42,7 +43,11 @@ not establish Coin rendering correctness or Android device behavior.
    remain. **Odustani** must cancel an active tool with the gesture panel closed.
 
 The app locks both activities to portrait. Model, Properties and Tasks share
-bottom dock tabs, with desktop hover overlays disabled before GUI construction.
+bottom dock tabs, with restored overlays disabled and desktop drag title bars
+removed. Wide original task forms stay reachable inside scroll areas. The
+portrait test includes upstream's `Model` dock, 600-pixel task forms, late
+workbench panels, and verifies that the host remains exactly 400 by 869 at
+DPR 1, 2 and 3.
 Internal dialogs stay on QtActivity's surface while keeping exec/done results;
 file pickers and dialogs containing GL widgets retain their platform behavior.
 The portrait-modal test covers repeated and nested modal prompts, all close

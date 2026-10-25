@@ -105,7 +105,10 @@ void DrnasDiagnostics::start()
     const QByteArray nativePath = next.toUtf8();
     if (setenv("DRNAS_WB_LOG_PATH", nativePath.constData(), 1) != 0)
         note(QStringLiteral("WARN: native workbench log path unavailable"));
-    QSettings state;
+    // FreeCAD changes QApplication's identity during its original startup.
+    // Pin the journal to the bootstrap identity on both sides of the session.
+    QSettings state(QSettings::NativeFormat,QSettings::UserScope,
+                    QStringLiteral("DRNAS"),QStringLiteral("FreeCADNativeProbe"));
     const bool previousUnclean = state.value(
         QStringLiteral("drnasLog/sessionActive"), false).toBool();
     state.setValue(QStringLiteral("drnasLog/sessionActive"), true);
@@ -124,7 +127,8 @@ void DrnasDiagnostics::start()
                      &QCoreApplication::aboutToQuit,
                      QCoreApplication::instance(), [] {
         DrnasDiagnostics::note(QStringLiteral("=== NORMAL APPLICATION EXIT ==="));
-        QSettings session;
+        QSettings session(QSettings::NativeFormat,QSettings::UserScope,
+                          QStringLiteral("DRNAS"),QStringLiteral("FreeCADNativeProbe"));
         session.setValue(QStringLiteral("drnasLog/sessionActive"), false);
         session.sync();
     });
