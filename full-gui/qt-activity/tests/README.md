@@ -13,6 +13,7 @@ QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/toolbar-touch
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=1.5 build/touch-tests/android-command-ui
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/android-command-ui
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=3 build/touch-tests/android-command-ui
+QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/readable-palette
 QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=640 build/touch-tests/desktop-workspace
 QT_QPA_PLATFORM=offscreen DRNAS_DESKTOP_WIDTH=1024 build/touch-tests/desktop-workspace
 QT_QPA_PLATFORM=offscreen QT_SCALE_FACTOR=2 build/touch-tests/portrait-modal
@@ -87,3 +88,7 @@ The default Android launch now uses the full-width command UI described in
 QActions/icons/state/shortcuts, native-window taps, debounce, finger scrolling,
 source-button popup menus, selection of command groups and late workbench
 changes while retaining the original render widget.
+
+`readable-palette` starts with the mixed Android dark-system/light-control palette
+from the reported screenshot and checks readable normal/disabled/inactive text
+in model/property widgets and a later file dialog, including a palette reset.

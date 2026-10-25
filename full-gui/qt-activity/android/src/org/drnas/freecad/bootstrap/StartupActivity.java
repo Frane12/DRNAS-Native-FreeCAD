@@ -145,6 +145,7 @@ public final class StartupActivity extends Activity {
         // QtActivity loads Qt. No root, display-mode override or extra GL surface.
         try {
             Os.setenv("QT_SCALE_FACTOR", String.format(Locale.ROOT, "%.6f", scale), true);
+            Os.setenv("QT_STYLE_OVERRIDE", "Fusion", true);
             Os.setenv("DRNAS_AUTOSTART", automatic ? "1" : "0", true);
             Os.setenv("DRNAS_PC_DESKTOP_MODE", edge < 0 ? "1" : "0", true);
             Os.setenv("DRNAS_DESKTOP_WIDTH", edge < 0 ? Integer.toString(-edge) : "0", true);

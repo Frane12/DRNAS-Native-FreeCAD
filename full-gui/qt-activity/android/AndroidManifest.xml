@@ -21,7 +21,7 @@
         <activity
             android:name="org.drnas.freecad.bootstrap.StartupActivity"
             android:screenOrientation="landscape"
-            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:theme="@style/DrnasReadableTheme"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -36,7 +36,7 @@
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:launchMode="singleTop"
             android:screenOrientation="landscape"
-            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:theme="@style/DrnasReadableTheme"
             android:exported="false">
             <meta-data
                 android:name="android.app.lib_name"
@@ -50,6 +50,7 @@
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:launchMode="singleTop"
             android:screenOrientation="landscape"
+            android:theme="@style/DrnasReadableTheme"
             android:exported="false">
 
 

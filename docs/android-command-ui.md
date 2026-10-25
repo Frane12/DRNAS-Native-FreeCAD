@@ -77,4 +77,22 @@ Phone check: start with standard controls, tap New, open Part/PartDesign from
 the original menus, change the tool group, drag the strip and create geometry.
 Confirm disabled tools and toggled modes match the original FreeCAD state.
 
+## Contrast on Android
+
+Android launches use Fusion with an explicit, complete light palette, including
+dark text for active, inactive and disabled controls. Before GUI initialization,
+FreeCAD's MainWindow preferences select Fusion/Classic with no custom color
+stylesheet. The original structural stylesheet and icons remain available.
+The Android activities use a matching Material Light theme, with dark system-bar
+icons on a light background, instead of the prior dark native window theme.
+`DrnasReadablePalette` reapplies the application palette if a later style/system
+update replaces it; it does not rewrite widget-local diagnostic stylesheets.
+There are no Coin, framebuffer, input-coordinate or document changes in this fix.
+
+`readable-palette` reproduces white text on white controls, then verifies text
+contrast in the property table, model tree, combo boxes, buttons, selection and
+a later-created Qt file dialog. It also checks recovery after a palette reset
+and retention of explicitly paired dark diagnostic colors. All tested text and
+background pairs exceed a 4.5:1 contrast ratio, including disabled text.
+
 Upstream reference: [FreeCAD Action.cpp](https://github.com/FreeCAD/FreeCAD/blob/d4ffc7f725973e073907746e88d320d3e438fd34/src/Gui/Action.cpp).
