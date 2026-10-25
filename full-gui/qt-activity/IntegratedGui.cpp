@@ -33,6 +33,7 @@
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QWidgetAction>
+#include <QScroller>
 #include <QFrame>
 #include <QLabel>
 #include <QMainWindow>
@@ -595,7 +596,12 @@ class DrnasFloatingCommands final : public QObject {
             } else addActionButton(grid,n,action);
         }
         if (!gpuTests.isEmpty()) {
-            addNavigationButton(grid,n,QStringLiteral("GPU TEST ↓"),[] {});
+            auto* gpuHeading=new QLabel(QStringLiteral("GPU TEST · načini 6–10"),
+                grid->parentWidget());
+            gpuHeading->setStyleSheet(QStringLiteral("color:#d6e6f2;font-weight:bold;"));
+            const int groupRow=(n+1)/2;
+            grid->addWidget(gpuHeading,groupRow,0,1,2);
+            n=(groupRow+1)*2;
             for (QAction* action:gpuTests) addActionButton(grid,n,action);
         }
         DrnasDiagnostics::note(QStringLiteral("TOOLS_INLINE actions=%1 GPU=%2 popup=0")
@@ -657,6 +663,9 @@ public:
         commandScroll->setWidgetResizable(true);
         commandScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         commandScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+        // Drag-scroll inside the existing Android Qt window. Do not create
+        // a separate QMenu/QWindow or intercept the Coin3D viewport.
+        QScroller::grabGesture(commandScroll->viewport(),QScroller::TouchGesture);
         layout->addWidget(commandScroll,1);
         // Keep this toolbar alive as the owner of *original* QActions.
         // Hide only its visual buttons: Qt overflow QMenu is never spawned.
