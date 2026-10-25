@@ -127,6 +127,7 @@ jobs:
             src/Mod/Part/Gui/Resources
             src/Mod/Sketcher/Gui/Resources
             src/Mod/PartDesign/Gui/Resources
+            src/Mod/Measure
 
       - name: Stage and verify default material libraries before APK packaging
         run: |

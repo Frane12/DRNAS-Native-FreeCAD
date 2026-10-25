@@ -38,8 +38,27 @@ def stage(source, destination):
         shutil.copyfile(file, target)
         count += 1
     count += copy_tree(material / "materialtools", destination / "Mod/Material/materialtools")
+    # The upstream native artifact stages Part/Sketcher/PartDesign, while the
+    # APK verifies Measure/InitGui.py. Stage the genuine pinned Measure
+    # workbench scripts here rather than accepting missing or stubbed files.
+    measure_source = source / "src/Mod/Measure"
+    if not (measure_source / "InitGui.py").is_file():
+        raise SystemExit("Missing upstream Measure/InitGui.py in pinned FreeCAD source")
+    measure_suffixes = {".py", ".ui", ".svg", ".png", ".qrc", ".qss", ".qm", ".xml", ".json"}
+    for file in sorted(measure_source.rglob("*")):
+        if not file.is_file() or file.is_symlink() or file.suffix not in measure_suffixes:
+            continue
+        relative = file.relative_to(measure_source)
+        if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
+            continue
+        target = destination / "Mod/Measure" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(file, target)
+        count += 1
+    if not (destination / "Mod/Measure/InitGui.py").is_file():
+        raise SystemExit("Failed to stage authentic Measure GUI startup script")
     # InitGui scripts resolve workbench icons via the same ResourceDir.
-    for module in ("Material", "Part", "Sketcher", "PartDesign"):
+    for module in ("Material", "Part", "Sketcher", "PartDesign", "Measure"):
         count += copy_tree(source / "src/Mod" / module / "Gui/Resources",
                            destination / "share/Mod" / module / "Resources")
     root = destination / "share/Mod/Material/Resources"
