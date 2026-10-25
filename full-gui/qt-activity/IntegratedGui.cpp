@@ -925,6 +925,94 @@ finally:
     coinRender->setVisible(false); // Replaced by explicit Render Lab phases.
     auto* renderLab = new DrnasRenderLab(shell, freecad, toolbar,
         [](const QString& code, QString& error) { return runOriginalFreeCADPython(code,error); });
+
+    // R264 boot sequencing: leave the known-good Coin3D/GL4ES rendering
+    // untouched. Only load the original Measure native extensions once the
+    // stage-3 FreeCAD document QOpenGLWidget is initialized and exposed.
+    auto* measureTimerRaw = new QTimer(toolbar);
+    measureTimerRaw->setObjectName(QStringLiteral("drnasMeasureDelayedBoot"));
+    measureTimerRaw->setSingleShot(true);
+    measureTimerRaw->setProperty("stage", 0);
+    measureTimerRaw->setProperty("attempts", 0);
+    const QPointer<QTimer> measureTimer(measureTimerRaw);
+    const QPointer<QMainWindow> measureWindow(freecad);
+    QObject::connect(measureTimerRaw, &QTimer::timeout, toolbar,
+                     [measureTimer, measureWindow] {
+        if (!measureTimer || !measureWindow) return;
+        const int attempts = measureTimer->property("attempts").toInt() + 1;
+        measureTimer->setProperty("attempts", attempts);
+        auto* mdi = measureWindow->findChild<QMdiArea*>();
+        auto* doc = mdi ? mdi->activeSubWindow() : nullptr;
+        auto* widget = doc ? doc->findChild<QOpenGLWidget*>() : nullptr;
+        QWindow* surface = measureWindow->window()->windowHandle();
+        const bool ready = QGuiApplication::applicationState() == Qt::ApplicationActive
+            && measureWindow->isVisible() && surface && surface->isExposed()
+            && qgetenv("DRNAS_RENDER_STAGE") == QByteArray("3")
+            && widget && widget->isValid() && widget->isVisible()
+            && widget->width() > 0 && widget->height() > 0;
+        if (!ready) {
+            if (attempts == 1 || attempts % 30 == 0)
+                DrnasDiagnostics::note(QStringLiteral(
+                    "MEASURE_BOOT WAIT: stage-3 Coin document EGL viewport not ready; attempts=%1")
+                    .arg(attempts));
+            measureTimer->start(1000);
+            return;
+        }
+        const int phase = measureTimer->property("stage").toInt();
+        const QString name = phase == 0 ? QStringLiteral("Measure")
+                                        : QStringLiteral("MeasureGui");
+        const QString key = QStringLiteral("nativeProbe/measureBootPending");
+        QSettings crashGuard;
+        crashGuard.setValue(key, name);
+        crashGuard.sync();
+        DrnasDiagnostics::note(QStringLiteral("MEASURE_BOOT %1 IMPORT_BEGIN").arg(name));
+        const QString script = phase == 0
+            ? QStringLiteral("import Measure\n")
+            : QStringLiteral(
+                "import MeasureGui\n"
+                "import FreeCADGui as Gui\n"
+                "if Gui.activeDocument() is not None:\n"
+                "    Gui.activeDocument().activeView().fitAll()\n"
+                "    Gui.activeDocument().activeView().redraw()\n");
+        QString error;
+        const bool ok = runOriginalFreeCADPython(script, error);
+        DrnasDiagnostics::note(QStringLiteral(
+            "MEASURE_BOOT %1 IMPORT_END ok=%2 error=%3").arg(name).arg(ok).arg(error));
+        crashGuard.remove(key);
+        crashGuard.sync();
+        if (!ok) {
+            DrnasDiagnostics::note(QStringLiteral(
+                "MEASURE_BOOT STOP: no retry after failed import"));
+            return;
+        }
+        if (phase == 0) {
+            measureTimer->setProperty("stage", 1);
+            measureTimer->start(1700);
+        } else {
+            measureTimer->setProperty("stage", 2);
+            DrnasDiagnostics::note(QStringLiteral(
+                "MEASURE_BOOT COMPLETE: core and GUI loaded sequentially"));
+        }
+    });
+    // Delayed relative to GUI initialization, then wait for the first
+    // document/Coin viewport. Never import against an absent EGLSurface.
+    QTimer::singleShot(3200, toolbar, [measureTimer] {
+        if (!measureTimer) return;
+        QSettings crashGuard;
+        const QString key = QStringLiteral("nativeProbe/measureBootPending");
+        const QString interrupted = crashGuard.value(key).toString();
+        if (!interrupted.isEmpty()) {
+            DrnasDiagnostics::note(QStringLiteral(
+                "MEASURE_BOOT SAFE_SKIP: previous session interrupted %1 import")
+                .arg(interrupted));
+            crashGuard.remove(key);
+            crashGuard.sync();
+            return;
+        }
+        DrnasDiagnostics::note(QStringLiteral(
+            "MEASURE_BOOT ARMED: delay=3200ms; awaiting Coin viewport"));
+        measureTimer->start(0);
+    });
     QObject::connect(coinBoxTest, &QAction::triggered, shell,
         [invoke, renderLab, cad = QPointer<QMainWindow>(freecad)] {
             DrnasDiagnostics::note(QStringLiteral("COIN_SMOKE BEGIN: genuine Part::Box; no diagnostic triangle"));
