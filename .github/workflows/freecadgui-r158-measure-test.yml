@@ -1,5 +1,5 @@
 # Preserve complete #158 application source; add only verified Measure dependencies.
-name: DRNAS FreeCAD R158 Measure dependency-only APK
+name: DRNAS FreeCAD R158 MeasureGui import A-B APK
 # Repackage the already-compiled native FreeCAD artifact when Android-only
 # integration changes. No full FreeCAD C++ rebuild is triggered on these paths.
 # The main-branch workflow_run controller still dispatches packaging after a
@@ -92,7 +92,7 @@ jobs:
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
           # Package the latest integration glue on our trusted feature branch.
           # Native binary provenance remains pinned to the successful source SHA.
-          package_sha="6792c1bf3615e411c4ca79af4737c34b81d64a4d"
+          package_sha="567b459a73eaa49c21c8039528e79cd506c94a73"
           [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
@@ -393,6 +393,21 @@ jobs:
           done
           grep -Fx 'assets/drnas/freecad/Mod/Measure/InitGui.py' out/integrated-freecad-qtapk/apk-files.txt
           test -s out/integrated-freecad-qtapk/MEASURE-DEPENDENCY-INFO.json
+
+          python3 - "$apk" <<'PY_MEASURE_AB'
+          import ast
+          import sys
+          from zipfile import ZipFile
+          with ZipFile(sys.argv[1]) as package:
+              script = package.read('assets/drnas/freecad/Mod/Measure/InitGui.py').decode('utf-8')
+              imports = {alias.name for node in ast.walk(ast.parse(script))
+                         if isinstance(node, ast.Import) for alias in node.names}
+              assert 'Measure' in imports and 'MeasureGui' not in imports, imports
+              original = package.read('assets/drnas/freecad/Mod/Measure/InitGui.upstream.txt')
+              assert b'import MeasureGui' in original
+          print('PASS: APK initializes Measure core only; MeasureGui awaits explicit user action')
+          PY_MEASURE_AB
+
           for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
             grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
           done
@@ -414,7 +429,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: DRNAS-FreeCAD-R158-Measure-Only-APK-${{ github.run_id }}-${{ github.run_attempt }}
+          name: DRNAS-FreeCAD-R158-MeasureGui-AB-APK-${{ github.run_id }}-${{ github.run_attempt }}
           path: out/integrated-freecad-qtapk/
           retention-days: 30
           if-no-files-found: warn
