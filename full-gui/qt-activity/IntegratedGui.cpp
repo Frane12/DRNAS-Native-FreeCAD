@@ -1021,7 +1021,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         }
         window->setFont(compactFont);
         for (QToolBar* toolbar : window->findChildren<QToolBar*>()) {
-            toolif (bar->iconSize()!=QSize(24, 24)) bar->setIconSize(QSize(24, 24));
+            if (toolbar->iconSize() != QSize(24, 24)) toolbar->setIconSize(QSize(24, 24));
         }
         // Original menus remain alive for the Android Menu dropdown; don't
         // spend a second full-width row on the embedded desktop menu bar.
