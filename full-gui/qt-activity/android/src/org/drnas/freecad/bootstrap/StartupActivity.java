@@ -111,7 +111,7 @@ public final class StartupActivity extends Activity {
             radio.setMinHeight(dp(48));
             radio.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(110, 205, 255)));
             viewportTests.addView(radio);
-            if (mode.equals("A")) radio.setChecked(true);
+            if (mode.equals("B")) radio.setChecked(true);
         }
         panel.addView(viewportTests);
         Button start = new Button(this);
@@ -161,10 +161,9 @@ public final class StartupActivity extends Activity {
                 .putBoolean("touchLandscapeChoiceSaved", true).apply();
         starting = true;
         Intent intent = new Intent();
-        intent.setClassName(getPackageName(), edge < 0
-                ? "org.drnas.freecad.bootstrap.DesktopQtActivity"
-                : "org.qtproject.qt.android.bindings.QtActivity");
+        intent.setClassName(getPackageName(), "org.drnas.freecad.bootstrap.DesktopQtActivity");
         startActivity(intent);
         finish();
     }
 }
+

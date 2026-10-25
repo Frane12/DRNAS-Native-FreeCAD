@@ -78,6 +78,9 @@ int main(int argc,char** argv) {
     touch(QEvent::TouchEnd,{point(1,QEventPoint::Released,{200,180})});drain();
     check(viewport->presses==1,"orbit must not select geometry");
     check(!cameraScripts.isEmpty(),"orbit must update the actual camera");
+    check(cameraScripts.last().indexOf("_drnas_load_coin_bindings()") >= 0 &&
+          cameraScripts.last().indexOf("_drnas_load_coin_bindings()") < cameraScripts.last().indexOf("getCameraNode()"),
+          "camera gestures must register Pivy before asking FreeCAD for a SWIG camera pointer");
     cameraScripts.clear();
     touch(QEvent::TouchBegin,{point(1,QEventPoint::Pressed,{120,140})});
     touch(QEvent::TouchUpdate,{point(1,QEventPoint::Stationary,{120,140}),point(2,QEventPoint::Pressed,{220,140})});
@@ -180,3 +183,4 @@ int main(int argc,char** argv) {
     std::cout<<"Direct touch and original desktop FreeCAD toolbar checks passed\n";
     host.takeCentralWidget(); // stack-owned cad
 }
+

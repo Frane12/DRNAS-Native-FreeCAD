@@ -1122,7 +1122,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // which is visible even when Android incorrectly overlays the menus.
         if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
                 QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS P06"), window->statusBar());
+            auto* marker = new QLabel(QStringLiteral("DRNAS P07"), window->statusBar());
             marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
             marker->setStyleSheet(QStringLiteral(
                 "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
@@ -1487,6 +1487,11 @@ public:
                         embedded = embedOriginalFreeCADWindow(this, false);
                     }
                     if (embedded) {
+                        QString coinError;
+                        if (!runOriginalFreeCADPython(QStringLiteral(
+                                "import drnas_android_runtime as _drnas_runtime\n"
+                                "_drnas_runtime._drnas_load_coin_bindings()\n"), coinError))
+                            DrnasDiagnostics::note(QStringLiteral("COIN_BINDINGS FAILED: ") + coinError);
                         auto* freecadWindow = qobject_cast<QMainWindow*>(centralWidget());
                         if (!freecadWindow && centralWidget())
                             freecadWindow=centralWidget()->findChild<QMainWindow*>();
@@ -1794,3 +1799,4 @@ extern "C" __attribute__((visibility("default")))
 void* drnas_create_qt_gui_shell_after_qt_android_bootstrap() {
     return new DrnasQtCADShell();
 }
+

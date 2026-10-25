@@ -121,6 +121,21 @@ def _drnas_part_commands():
 # changes to the document, ViewProviders, or saved material properties.
 _drnas_render_observer = None
 _drnas_framed_documents = {}
+_drnas_coin_module = None
+
+
+def _drnas_load_coin_bindings():
+    """Register genuine Pivy SWIG types before FreeCAD wraps a Coin pointer."""
+    global _drnas_coin_module
+    if _drnas_coin_module is None:
+        # find_spec('pivy') only checks a path. It never loads _coin or creates
+        # the shared SWIG runtime type table used by getCameraNode().
+        from pivy import coin
+        _drnas_coin_module = coin
+        _drnas_mark('COIN_BINDINGS loaded=' + str(coin.__file__)
+                    + ' runtimes=' + repr(sorted(name for name in sys.modules
+                                                if 'swig_runtime_data' in name)))
+    return _drnas_coin_module
 
 
 def _drnas_mobile_view_tick():
@@ -140,6 +155,18 @@ def _drnas_mobile_view_tick():
     # Do this once per document, not on each camera gesture or recompute.
     # Preserve real ViewProviders, visibility, materials and subsequent views.
     if _drnas_framed_documents.get(doc.Name) is not doc:
+        # Report the real Python/C++ bridge independently of camera framing.
+        # A binding error must not prevent the native fit/redraw operations.
+        try:
+            _drnas_load_coin_bindings()
+            camera = view.getCameraNode()
+            if camera is None:
+                raise RuntimeError('Active 3D view has no Coin camera')
+            root = view.getSceneGraph()
+            _drnas_mark('COIN_BRIDGE PASS camera=' + str(camera.getTypeId().getName())
+                        + ' scene_children=' + str(root.getNumChildren()))
+        except Exception:
+            _drnas_mark('COIN_BRIDGE FAIL\n' + traceback.format_exc())
         view.viewAxonometric()
         view.fitAll()
         _drnas_framed_documents[doc.Name] = doc
@@ -282,3 +309,4 @@ if not getattr(App, '__drnas_runtime_installed__', False):
     App.__drnas_runtime_installed__ = True
     _drnas_storage_test()
     _drnas_material_test()
+

@@ -460,6 +460,8 @@ class DrnasTouchInput final : public QObject {
         // Work in the existing Coin camera. No GL context, framebuffer, native
         // surface or synthetic multi-button mouse navigation is created here.
         command(QStringLiteral(R"PY(import FreeCAD as App, FreeCADGui as Gui, math
+from drnas_android_runtime import _drnas_load_coin_bindings
+_drnas_load_coin_bindings()
 _drnas_doc=Gui.activeDocument()
 if _drnas_doc:
     _v=_drnas_doc.activeView()
@@ -1055,3 +1057,4 @@ public:
         DrnasDiagnostics::note(QStringLiteral("INPUT: direct touch; viewport orbit/pan/pinch; relative mouse removed"));
     }
 };
+

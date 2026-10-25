@@ -404,6 +404,12 @@ jobs:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
         run: bash full-gui/integrated-apk/stage-runtime.sh
 
+      - name: Repair Qt 6.8.3 Android selection handle null dereference
+        run: |
+          bash full-gui/qt-activity/patch-qt-cursor-handle.sh \
+            "out/full-deps/qt/$QT_VERSION/android_arm64_v8a" \
+            "$ANDROID_HOME/platforms/android-35/android.jar"
+
       - name: Configure Android QtActivity and real FreeCAD native GUI integration
         run: |
           set -euo pipefail
@@ -485,3 +491,4 @@ jobs:
           path: out/integrated-freecad-qtapk/
           retention-days: 30
           if-no-files-found: warn
+
