@@ -5,7 +5,7 @@ name: DRNAS FreeCADGui QtActivity APK Integration
 # genuinely new successful native GUI build.
 on:
   push:
-    branches: [feature/full-freecad-android]
+    branches: [test/r264-measure-delayed-boot-20261025]
     paths:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
       - 'full-gui/integrated-apk/**'
@@ -42,7 +42,7 @@ jobs:
   package-real-gui:
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
+    if: github.ref == 'refs/heads/test/r264-measure-delayed-boot-20261025' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -80,9 +80,8 @@ jobs:
           if [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
-            # Always package the most recent verified native compile. The old
-            # fixed run predates Android SAF and silently rejected new fixes.
-            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=feature/full-freecad-android&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
+            # Preserve exactly the successful native binary source from APK #264.
+            run_id="40213096292"
           fi
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
