@@ -446,6 +446,7 @@ bool runOriginalFreeCADPython(const QString& script, QString& error)
 // Child overlay: never docks into the CAD layout or creates an Android window.
 class DrnasFloatingCommands : public QObject {
     QMainWindow* host;
+    QPointer<QMainWindow> upstream;
     QWidget* panel;
     QPushButton* launcher;
     DrnasDraggableLauncher* launcherDrag = nullptr;
@@ -464,6 +465,23 @@ class DrnasFloatingCommands : public QObject {
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override {
         if (obj == host && event->type() == QEvent::Resize) constrain();
+        // The real embedded FreeCAD MainWindow is shown *after* we create
+        // Tools. Showing it can place the CAD window above this host child.
+        // Bring Tools back to the top after Qt finishes the show/resize.
+        // This only changes QWidget stacking; no GL/EGL/window resize.
+        if ((obj == upstream.data() &&
+             (event->type() == QEvent::Show || event->type() == QEvent::Resize)) ||
+            (obj == host && event->type() == QEvent::WindowActivate)) {
+            QTimer::singleShot(0, this, [this] {
+                if (!launcher || !host) return;
+                constrain();
+                launcher->show();
+                launcher->raise();
+                DrnasDiagnostics::note(QStringLiteral(
+                    "DRNAS Tools restored over embedded GUI; visible=%1 pos=%2,%3")
+                    .arg(launcher->isVisible()).arg(launcher->x()).arg(launcher->y()));
+            });
+        }
         if (obj == grip) {
             auto* mouse = dynamic_cast<QMouseEvent*>(event);
             if (mouse && event->type() == QEvent::MouseButtonPress &&
@@ -483,8 +501,8 @@ protected:
         return QObject::eventFilter(obj, event);
     }
 public:
-    DrnasFloatingCommands(QMainWindow* shell, QToolBar* toolbar)
-        : QObject(shell), host(shell) {
+    DrnasFloatingCommands(QMainWindow* shell, QMainWindow* freecad, QToolBar* toolbar)
+        : QObject(shell), host(shell), upstream(freecad) {
         panel = new QWidget(host);
         panel->setObjectName(QStringLiteral("drnasFloatingCommands"));
         panel->setStyleSheet(QStringLiteral("background:#182d42;color:white;"));
@@ -512,8 +530,17 @@ public:
         });
         connect(close, &QPushButton::clicked, panel, &QWidget::hide);
         host->installEventFilter(this);
+        if (upstream) upstream->installEventFilter(this);
         panel->move(6,6); constrain();
-        panel->hide(); launcher->show();
+        panel->hide(); launcher->show(); launcher->raise();
+        // FreeCAD's original window is initially hidden while embedding.
+        // Re-raise when it has finished the first show / workbench activation.
+        QTimer::singleShot(0, this, [this] {
+            if (launcher) { constrain(); launcher->show(); launcher->raise(); }
+        });
+        QTimer::singleShot(450, this, [this] {
+            if (launcher) { constrain(); launcher->show(); launcher->raise(); }
+        });
         DrnasDiagnostics::note(QStringLiteral("DRNAS floating tools: collapsed; CAD layout unreserved"));
     }
 };
@@ -981,7 +1008,7 @@ finally:
     toolbar->addSeparator();
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
-    new DrnasFloatingCommands(shell, toolbar);
+    new DrnasFloatingCommands(shell, freecad, toolbar);
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });

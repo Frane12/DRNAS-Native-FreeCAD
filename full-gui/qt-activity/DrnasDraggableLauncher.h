@@ -152,7 +152,7 @@ public:
         if (!host_ || !button_) return;
         QSettings settings;
         const double initialX = right ? normalized(double(std::max(0, host_->width() -
-                                      button_->width() - 5)) /
+                                      button_->width() - 55)) /
                                       std::max(1, host_->width() - button_->width()))
                                       : normalized(5.0 / std::max(1, host_->width() - button_->width()));
         const double initialY = normalized(double(std::max(0, host_->height() -
