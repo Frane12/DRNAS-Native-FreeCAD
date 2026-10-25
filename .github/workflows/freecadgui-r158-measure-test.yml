@@ -1,0 +1,420 @@
+# Preserve complete #158 application source; add only verified Measure dependencies.
+name: DRNAS FreeCAD R158 Measure dependency-only APK
+# Repackage the already-compiled native FreeCAD artifact when Android-only
+# integration changes. No full FreeCAD C++ rebuild is triggered on these paths.
+# The main-branch workflow_run controller still dispatches packaging after a
+# genuinely new successful native GUI build.
+on:
+  push:
+    branches: [feature/full-freecad-android]
+    paths:
+      - '.github/workflows/freecadgui-r158-measure-test.yml'
+  workflow_dispatch:
+    inputs:
+      upstream_run_id:
+        description: 'Successful upstream FreeCADGui run ID (empty = latest success)'
+        type: string
+        required: false
+      numpy_run_id:
+        description: 'Successful NumPy Android ARM64 wheel workflow run ID'
+        type: string
+        required: false
+      bindings_run_id:
+        description: 'Successful sequential ARM64 bindings run (empty = latest success)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: drnas-r158-measure-dependencies
+  cancel-in-progress: false
+
+env:
+  QT_VERSION: '6.8.3'
+  NDK_VERSION: '27.2.12479018'
+  ANDROID_API: '26'
+
+jobs:
+  package-real-gui:
+    # Always dispatched on feature/full-freecad-android: feature caches for
+    # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
+    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - name: Preflight successful ARM64 binding build provenance
+        id: bindings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_BINDINGS_RUN: ${{ inputs.bindings_run_id }}
+        run: |
+          set -euo pipefail
+          run="${INPUT_BINDINGS_RUN:-39941334444}"
+          if [[ -z "$run" ]]; then
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=feature/arm64-python-bindings-gates&status=success&per_page=50" --jq '[.workflow_runs[] | select(.path == ".github/workflows/android-bindings-sequential-pipeline.yml")][0].id')"
+          fi
+          [[ "$run" =~ ^[0-9]+$ ]] || { echo "::error::No successful ARM64 bindings run available"; exit 1; }
+          for attempt in {1..12}; do
+            info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"
+            [[ "$(jq -r '.status' <<< "$info")" == completed ]] && break
+            sleep 5
+          done
+          test "$(jq -r '.conclusion' <<< "$info")" = success
+          test "$(jq -r '.head_branch' <<< "$info")" = feature/arm64-python-bindings-gates
+          test "$(jq -r '.head_repository.full_name' <<< "$info")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r '.path' <<< "$info")" = .github/workflows/android-bindings-sequential-pipeline.yml
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" --jq '.artifacts[] | select(.name == "android-python-bindings-arm64" and .expired == false) | .id' | grep -E '^[0-9]+$'
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      - name: Select successful native GUI artifact and immutable source commit
+        id: upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RUN_ID: ${{ inputs.upstream_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_RUN_ID" ]]; then
+            run_id="$INPUT_RUN_ID"
+          else
+            run_id="40093671283"
+          fi
+          [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
+          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+          test "$(jq -r '.conclusion' <<<"$info")" = success
+          test "$(jq -r '.name' <<<"$info")" = 'DRNAS REAL upstream FreeCADGui Full ARM64 Build'
+          test "$(jq -r '.head_branch' <<<"$info")" = feature/full-freecad-android
+          test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"
+          commit="$(jq -r '.head_sha' <<<"$info")"
+          attempt="$(jq -r '.run_attempt' <<<"$info")"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          # Package the latest integration glue on our trusted feature branch.
+          # Native binary provenance remains pinned to the successful source SHA.
+          package_sha="6792c1bf3615e411c4ca79af4737c34b81d64a4d"
+          [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "package_sha=$package_sha" >> "$GITHUB_OUTPUT"
+          echo "Packaging commit: $GITHUB_REPOSITORY@$package_sha; upstream binary source: $commit; successful upstream workflow run: $run_id / attempt $attempt"
+
+      - name: Checkout pinned Android integration source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.upstream.outputs.package_sha }}
+          persist-credentials: false
+
+      - name: Download real GUI, App, Base, Coin3D, GL4ES artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.upstream.outputs.run_id }}
+          github-token: ${{ github.token }}
+          name: DRNAS-Actual-Upstream-FreeCADGui-ARM64-${{ steps.upstream.outputs.run_id }}-${{ steps.upstream.outputs.attempt }}
+          path: out/upstream-freecad-gui
+
+      - name: Checkout original material and icon resources matching the native FreeCAD revision
+        uses: actions/checkout@v4
+        with:
+          repository: FreeCAD/FreeCAD
+          ref: d4ffc7f725973e073907746e88d320d3e438fd34
+          path: .deps/freecad-runtime-resources
+          persist-credentials: false
+          sparse-checkout: |
+            src/Mod/Material
+            src/Mod/Part/Gui/Resources
+            src/Mod/Sketcher/Gui/Resources
+            src/Mod/PartDesign/Gui/Resources
+            src/Mod/Measure
+
+      - name: Stage and verify default material libraries before APK packaging
+        run: |
+          python3 full-gui/integrated-apk/stage-material-resources.py \
+            .deps/freecad-runtime-resources out/upstream-freecad-gui/resources
+
+      - name: Require complete original FreeCAD GUI/workbench/overlay resources
+        run: |
+          set -euo pipefail
+          root=out/upstream-freecad-gui/resources
+          if [[ ! -d "$root" ]]; then
+            echo "::error::Upstream native GUI artifact lacks resources/. Select a successful full GUI run that includes 'Stage real native FreeCAD Part, Sketcher, PartDesign workbench UI and icons'."
+            exit 1
+          fi
+          for module in Part Sketcher PartDesign Measure; do
+            test -s "$root/Mod/$module/InitGui.py" || {
+              echo "::error::Original $module/InitGui.py missing in upstream artifact"
+              exit 1
+            }
+          done
+          for icon in taskshow taskshow_lightgray editshow editshow_lightgray edithide edithide_lightgray float overlay close mode transparent autohide autohide_lightgray; do
+            test -s "$root/data/Gui/Stylesheets/overlay/icons/$icon.svg" || {
+              echo "::error::Missing upstream original overlay icon: $icon.svg"
+              exit 1
+            }
+          done
+          echo 'PASS: Genuine FreeCAD GUI workbenches and all on-device qss:overlay SVG icons are present.'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android tools and ELF relinker
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
+          mkdir -p out/integrated-freecad-qtapk
+
+      - name: Restore Qt GUI 6.8.3 native SDK
+        id: qt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/qt
+          key: drnas-qt-gui-6.8.3-arm64-v1-${{ hashFiles('full-gui/bootstrap-qt-gui-android.sh', 'full-port/bootstrap-qt.sh', 'full-port/verify-qt-android.sh') }}
+      - name: Restore host ICU73 for Qt Android tooling
+        id: hosticu
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-gui/host-icu73
+          key: drnas-qt-host-icu73-v1-${{ hashFiles('full-gui/bootstrap-icu73-host.sh') }}
+      - name: Restore verified OCCT Android native SDK
+        id: occt
+        uses: actions/cache/restore@v4
+        with:
+          path: out/occt-android
+          key: occt-fullcad-android-arm64-V7_9_3-ndk27.2-api26-v1-${{ hashFiles('scripts/build-occt-android.sh', 'scripts/verify-android-elf.sh') }}
+      - name: Restore native Boost
+        id: boost
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/boost
+          key: drnas-boost188-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-boost-android.sh') }}
+      - name: Restore native ICU 75
+        id: icu
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/icu
+          key: drnas-icu75-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-icu-android.sh') }}
+      - name: Restore native Python 3.14
+        id: python
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/python
+          key: drnas-python-3.14.8-official-android-arm64-v1-${{ hashFiles('full-port/bootstrap-python-android.sh') }}
+      - name: Restore native Xerces-C
+        id: xerces
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/xerces-c
+          key: drnas-xerces325-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-xerces-android.sh') }}
+      - name: Restore native yaml-cpp
+        id: yaml
+        uses: actions/cache/restore@v4
+        with:
+          path: out/full-deps/yaml-cpp
+          key: drnas-yaml-cpp-0.8.0-android-arm64-ndk27-v1-${{ hashFiles('full-port/bootstrap-yaml-android.sh') }}
+
+      - name: Validate ABI caches and native GUI artifact
+        run: |
+          set -euo pipefail
+          for hit in "${{ steps.qt.outputs.cache-hit }}" "${{ steps.hosticu.outputs.cache-hit }}" \
+             "${{ steps.occt.outputs.cache-hit }}" "${{ steps.boost.outputs.cache-hit }}" \
+             "${{ steps.icu.outputs.cache-hit }}" "${{ steps.python.outputs.cache-hit }}" \
+             "${{ steps.xerces.outputs.cache-hit }}" "${{ steps.yaml.outputs.cache-hit }}"; do
+             test "$hit" = true || { echo "::error::Verified dependency cache missing"; exit 1; }
+          done
+          test -f out/full-gui/host-icu73/lib/libicui18n.so.73
+          test -f out/upstream-freecad-gui/native/libFreeCADGui.so
+          test -f out/upstream-freecad-gui/native/libCoin.so
+          for mod in TKXSBase TKDESTEP TKDEIGES TKLCAF TKCAF; do
+            test -s "out/occt-android/lib/lib${mod}.so" || { echo "::error::Missing complete OCCT lib${mod}.so"; exit 1; }
+          done
+          bash scripts/verify-android-elf.sh "$GITHUB_WORKSPACE/out/occt-android"
+          echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/out/full-gui/host-icu73/lib" >> "$GITHUB_ENV"
+
+      - name: Download completed binding bundle from the selected run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.bindings.outputs.run }}
+          github-token: ${{ github.token }}
+          name: android-python-bindings-arm64
+          path: out/bindings
+      - name: Preflight binding ABI and transitive libraries then integrate into native payload
+        run: |
+          set -euo pipefail
+          sha256sum -c out/bindings/android-python-bindings-arm64.sha256
+          mkdir -p out/bindings/runtime
+          tar xzf out/bindings/android-python-bindings-arm64.tar.gz -C out/bindings/runtime
+          python3 full-gui/integrated-apk/integrate-bindings.py
+          cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
+          python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
+
+
+      - name: Verify provenance of genuine Measure donor build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/40218602929")"
+          test "$(jq -r '.conclusion' <<<"$info")" = success
+          test "$(jq -r '.head_branch' <<<"$info")" = feature/full-freecad-android
+          test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r '.head_sha' <<<"$info")" = 08c1b832f2d3d7d94583e881c9d17de4c691adf2
+
+      - name: Download Measure donor separately from baseline renderer
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 40218602929
+          github-token: ${{ github.token }}
+          name: DRNAS-Actual-Upstream-FreeCADGui-ARM64-40218602929-1
+          path: out/measure-donor
+
+      - name: Add only Measure modules and verify original libraries remain identical
+        run: |
+          python3 full-gui/integrated-apk/integrate-measure.py \
+            out/measure-donor out/upstream-freecad-gui out/integrated-freecad-qtapk
+
+      # The native GUI artifact may predate the Qt default-FBO bridge.
+      # Apply AFTER integrate-bindings.py, which includes its older GL pair.
+      # Rebuild only GL4ES/GLU from current integration sources, retaining
+      # the verified FreeCAD/Coin binaries and all dependency caches.
+      - name: Remove artifact OpenGL payload before restoring current bridge
+        run: rm -rf out/upstream-freecad-gui/opengl-compat
+      - name: Restore GL4ES with Qt default framebuffer bridge
+        id: qt_fbo_gl
+        uses: actions/cache/restore@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+      - name: Build and require exported Qt framebuffer bridge
+        run: |
+          set -euo pipefail
+          gl=out/upstream-freecad-gui/opengl-compat/lib/libGL.so
+          if ! readelf --dyn-syms --wide "$gl" 2>/dev/null | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'; then
+            bash full-gui/upstream/build-android-gl4es-glu.sh
+          fi
+          readelf --dyn-syms --wide "$gl" | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'
+          for name in GL GLU; do
+            readelf -h "out/upstream-freecad-gui/opengl-compat/lib/lib${name}.so" | grep -q AArch64
+          done
+          echo 'PASS: current Android GL4ES exports Qt default framebuffer bridge'
+      - name: Cache verified GL4ES Qt framebuffer bridge
+        if: steps.qt_fbo_gl.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: out/upstream-freecad-gui/opengl-compat
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+
+      - name: Resolve successful NumPy wheel workflow run
+        id: numpy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_NUMPY_RUN: ${{ inputs.numpy_run_id }}
+        run: |
+          set -euo pipefail
+          run="${INPUT_NUMPY_RUN:-40081766053}"
+          if [ -z "$run" ]; then
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/numpy-android-arm64.yml/runs?branch=feature/full-freecad-android&status=success&per_page=10" --jq '.workflow_runs[0].id')"
+          fi
+          test "$run" != null && [[ "$run" =~ ^[0-9]+$ ]]
+          info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"
+          test "$(jq -r .conclusion <<< "$info")" = success
+          test "$(jq -r .head_branch <<< "$info")" = feature/full-freecad-android
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      - name: Download verified NumPy CPython 3.14 Android ARM64 wheel
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.numpy.outputs.run }}
+          github-token: ${{ github.token }}
+          name: drnas-numpy-cp314-android-arm64
+          path: out/numpy-wheel
+      - name: Stage NumPy wheel for APK packaging and verify native ABI
+        run: |
+          set -euo pipefail
+          mkdir -p out/integrated-freecad-qtapk
+          python3 full-gui/integrated-apk/stage-numpy-wheel.py out/numpy-wheel out/integrated-freecad-qtapk/numpy-stage
+      - name: Stage native FreeCADGui and all verified Android dependencies
+        env:
+          UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
+        run: bash full-gui/integrated-apk/stage-runtime.sh
+
+      - name: Configure Android QtActivity and real FreeCAD native GUI integration
+        run: |
+          set -euo pipefail
+          qt="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/android_arm64_v8a"
+          host="$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64"
+          ndk="$ANDROID_HOME/ndk/$NDK_VERSION"
+          cmake -S full-gui/qt-activity -B .build/freecad-native-integration -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$ANDROID_API" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$qt" -DCMAKE_FIND_ROOT_PATH="$qt" \
+            -DQT_HOST_PATH="$host" -DANDROID_SDK_ROOT="$ANDROID_HOME" \
+            -DOCCT_ANDROID_ROOT="$GITHUB_WORKSPACE/out/occt-android" \
+            -DDRNAS_FREECAD_RUNTIME_DIR="$GITHUB_WORKSPACE/.build/freecad-integration-staging/native-libs" \
+            2>&1 | tee out/integrated-freecad-qtapk/configure.log
+
+      - name: Build signed installable QtActivity ARM64 APK with real FreeCADGui
+        run: |
+          set -euo pipefail
+          cmake --build .build/freecad-native-integration \
+            --target drnas_freecad_qtgui_make_apk --parallel 4 \
+            2>&1 | tee out/integrated-freecad-qtapk/compile.log
+
+      - name: Install ZIP packer for deferred native runtime
+        run: |
+          set -euo pipefail
+          if ! command -v zip >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends zip
+          fi
+
+      - name: Repack FreeCADGui as deferred native libraries and re-sign Safe Mode APK
+        run: bash full-gui/integrated-apk/package-safe-mode.sh
+
+      - name: Verify actual APK ABI, signatures and native GUI library presence
+        run: |
+          set -euo pipefail
+          apk="out/integrated-freecad-qtapk/DRNAS-FreeCAD-GuiNative-QtActivity-ARM64-SafeMode-debug.apk"
+          test -n "$apk" && test -s "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" \
+            | tee out/integrated-freecad-qtapk/badging.txt
+          grep -F "package: name='org.drnas.freecad.integrated'" out/integrated-freecad-qtapk/badging.txt
+          unzip -Z1 "$apk" > out/integrated-freecad-qtapk/apk-files.txt
+          grep -Fx 'lib/arm64-v8a/libFreeCADGui.so' out/integrated-freecad-qtapk/apk-files.txt
+          for module in Measure MeasureGui; do
+            grep -Fx "lib/arm64-v8a/$module.so" out/integrated-freecad-qtapk/apk-files.txt
+            grep -Fx "assets/drnas/freecad/lib/$module.so" out/integrated-freecad-qtapk/apk-files.txt
+          done
+          grep -Fx 'assets/drnas/freecad/Mod/Measure/InitGui.py' out/integrated-freecad-qtapk/apk-files.txt
+          test -s out/integrated-freecad-qtapk/MEASURE-DEPENDENCY-INFO.json
+          for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
+            grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
+          done
+          unzip -p "$apk" lib/arm64-v8a/libGL.so > out/integrated-freecad-qtapk/apk-libGL.so
+          readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
+            | awk '$7 != "UND" && $8 == "drnas_gl4es_bind_qt_default_fbo" { found=1 } END { exit !found }'
+          rm out/integrated-freecad-qtapk/apk-libGL.so
+          # Verify transitive dependencies for EVERY arm64 library, not only
+          # FreeCADGui/Base/App. Prior signed APK crashed instantly because
+          # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.
+          python3 full-gui/integrated-apk/verify-apk-native-dependencies.py "$apk" \
+            2>&1 | tee out/integrated-freecad-qtapk/native-dt-needed-audit.txt
+          python3 full-gui/upstream/audit-python-bindings.py "$apk" --require-all
+          (cd out/integrated-freecad-qtapk && sha256sum *.apk > APK-SHA256SUMS.txt)
+          echo 'PASS: Signed SAFE MODE ARM64 APK bundles FreeCADGui and Coin3D without eager QtLoader loading.'
+          echo 'NOTICE: Runtime and FreeCAD desktop MainWindow have not yet been tested on a physical phone.'
+
+      - name: Upload APK and diagnostics even if integration fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DRNAS-FreeCAD-R158-Measure-Only-APK-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/integrated-freecad-qtapk/
+          retention-days: 30
+          if-no-files-found: warn
