@@ -270,14 +270,22 @@ public:
             QObject::connect(action,&QAction::triggered,this,[this,i]{setStage(i);});
         }
         const bool geometryReady=dlsym(RTLD_DEFAULT,"drnas_geometry_probe_version")!=nullptr;
-        const QStringList geometryLabels={QStringLiteral("9 GL4ES trokut"),QStringLiteral("10 Coin kocka (zasebna scena)")};
-        for(int i=9;i<=10;++i) {
+        const bool documentProbeReady=dlsym(RTLD_DEFAULT,"drnas_geometry_document_probe_version")!=nullptr;
+        const QStringList geometryLabels={
+            QStringLiteral("9 GL4ES trokut"),
+            QStringLiteral("10 Coin kocka (zasebna scena)"),
+            QStringLiteral("11 FreeCAD tijelo (nova kamera)"),
+            QStringLiteral("12 FreeCAD tijelo (izvorna kamera)")};
+        for(int i=9;i<=12;++i) {
             auto* action=gpuMenu->addAction(geometryLabels[i-9]);
             action->setCheckable(true); action->setData(i);
-            action->setEnabled(geometryReady); stages->addAction(action);
+            action->setObjectName(QStringLiteral("drnasGeometryProbe%1").arg(i));
+            action->setEnabled(i<=10 ? geometryReady : documentProbeReady);
+            stages->addAction(action);
             QObject::connect(action,&QAction::triggered,this,[this,i]{setStage(i);});
         }
-        DrnasDiagnostics::note(QStringLiteral("GEOMETRY_PROBE installed native=%1 modes=9,10").arg(geometryReady));
+        DrnasDiagnostics::note(QStringLiteral("GEOMETRY_PROBE installed native=%1 document=%2 modes=9-12")
+            .arg(geometryReady).arg(documentProbeReady));
         DrnasDiagnostics::note(QStringLiteral("GPU_TEST installed native=%1 modes=6,7,8").arg(gpuReady));
         auto* refresh=toolbar->addAction(QStringLiteral("Osvježi naš prikaz"));
         QObject::connect(refresh,&QAction::triggered,this,[this]{setStage(0);tick(true);});
@@ -336,7 +344,7 @@ public:
             // dismissing the Tools popup. This does not modify the OCCT renderer.
             const int requestedStage=stage;
             QTimer::singleShot(180,this,[this,requestedStage] {
-                if (stage!=requestedStage || stage<1 || stage>10 || stage==5) return;
+                if (stage!=requestedStage || stage<1 || stage>12 || stage==5) return;
                 if (upstream) {
                     const auto views=upstream->findChildren<QOpenGLWidget*>();
                     DrnasDiagnostics::note(QStringLiteral("COIN_REPAINT_AB stage=%1 views=%2 activePopup=%3")

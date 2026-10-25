@@ -497,7 +497,7 @@ static int drnasRenderStage()
     if (!stage) return 4;
     char* end = nullptr;
     const long value = std::strtol(stage, &end, 10);
-    return end != stage && *end == '\0' && value >= 0 && value <= 10 ? int(value) : 4;
+    return end != stage && *end == '\0' && value >= 0 && value <= 12 ? int(value) : 4;
 }
 #else
 static int drnasRenderStage() { return 4; }
@@ -687,10 +687,18 @@ static void drnasSyncQtCoinFbo(QOpenGLWidget* widget)
 #ifdef __ANDROID__
 #include <Inventor/nodes/SoCube.h>
 #include <Inventor/nodes/SoOrthographicCamera.h>
+#include <Inventor/nodes/SoCamera.h>
+#include <Inventor/actions/SoGetBoundingBoxAction.h>
+#include <algorithm>
+#include <cmath>
 extern "C" __attribute__((visibility("default")))
 int drnas_geometry_probe_version() { return 1; }
+// Separate feature gate: do not enable new document probes with old native .so.
+extern "C" __attribute__((visibility("default")))
+int drnas_geometry_document_probe_version() { return 1; }
 
-static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cacheContext)
+static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cacheContext,
+                               SoNode* documentScene, SoCamera* documentCamera)
 {
     if (!widget || !QOpenGLContext::currentContext()) return;
     const int width=qRound(widget->width()*widget->devicePixelRatioF());
@@ -718,7 +726,11 @@ static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cac
     glClearColor(0.03f,0.05f,0.10f,1.f);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_STENCIL_BUFFER_BIT);
     const GLenum setupError=glGetError();
-    ::drnasDocumentPhase(mode==9 ? "GEOMETRY_PROBE GL4ES triangle" : "GEOMETRY_PROBE isolated Coin cube", "BEGIN");
+    const char* probeName = mode == 9 ? "GEOMETRY_PROBE GL4ES triangle"
+        : mode == 10 ? "GEOMETRY_PROBE isolated Coin cube"
+        : mode == 11 ? "GEOMETRY_PROBE FreeCAD auto-fit scene"
+        : "GEOMETRY_PROBE FreeCAD original camera";
+    ::drnasDocumentPhase(probeName, "BEGIN");
     if(mode==9) {
         glColor4f(1.f,0.3f,0.05f,1.f);
         glBegin(GL_TRIANGLES);
@@ -727,25 +739,93 @@ static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cac
         glVertex3f(0.f,0.75f,0.f);
         glEnd();
     } else {
-        // Independent graph and camera: no FreeCAD ViewProvider or document.
+        // Stages 10-12 share the known-good OpenGL reset, rendering setup and
+        // fresh Coin action. 10 remains the untouched independent SoCube
+        // control; 11/12 draw the genuine FreeCAD ViewProvider scene graph.
         const CoinPtr<SoSeparator> root(new SoSeparator);
         root->renderCaching=SoSeparator::OFF;
         auto* camera=new SoOrthographicCamera;
-        camera->position.setValue(3.f,2.f,5.f);
-        camera->pointAt(SbVec3f(0.f,0.f,0.f));
-        camera->height=4.5f;
-        camera->nearDistance=0.1f; camera->farDistance=30.f;
-        root->addChild(camera);
+        const SbViewportRegion viewport(width,height);
+        int sceneChildren=-1;
+        bool bboxEmpty=true;
+        SbVec3f center(0.f,0.f,0.f), dimensions(0.f,0.f,0.f);
+        float span=2.f;
+        if(mode>=11 && documentScene) {
+            // Bounding-box traversal is a diagnostic, not a change to the
+            // FreeCAD document. It lets the independent camera frame shapes
+            // whose CAD dimensions would be clipped by the 4.5-unit cube view.
+            SoGetBoundingBoxAction bounds(viewport);
+            bounds.apply(documentScene);
+            const SbBox3f box=bounds.getBoundingBox();
+            bboxEmpty=box.isEmpty();
+            if(!bboxEmpty) {
+                center=box.getCenter();
+                dimensions=box.getSize();
+                span=std::max(0.1f,std::max(dimensions[0],
+                    std::max(dimensions[1], dimensions[2])));
+            }
+            if(documentScene->isOfType(SoGroup::getClassTypeId()))
+                sceneChildren=static_cast<SoGroup*>(documentScene)->getNumChildren();
+        }
+        if(mode==12 && documentCamera) {
+            // Same independent GL reset/action, but genuine FreeCAD camera.
+            root->addChild(documentCamera);
+        } else {
+            if(mode>=11 && !bboxEmpty) {
+                camera->position.setValue(center[0]+span*1.5f,
+                    center[1]+span*1.0f,center[2]+span*2.5f);
+                camera->pointAt(center);
+                const float aspect = float(width)/float(height);
+                camera->height=std::max(1.f,span*2.5f
+                    * std::max(1.f,1.f/std::max(aspect,0.1f)));
+                camera->nearDistance=0.1f;
+                camera->farDistance=std::max(30.f,span*12.f);
+            } else {
+                camera->position.setValue(3.f,2.f,5.f);
+                camera->pointAt(SbVec3f(0.f,0.f,0.f));
+                camera->height=4.5f;
+                camera->nearDistance=0.1f; camera->farDistance=30.f;
+            }
+            root->addChild(camera);
+        }
         auto* light=new SoLightModel; light->model=SoLightModel::BASE_COLOR;
         root->addChild(light);
         auto* material=new SoMaterial;
-        material->diffuseColor.setValue(0.1f,0.95f,0.35f);
+        material->diffuseColor.setValue(mode==10 ? 0.1f : 0.20f,
+            mode==10 ? 0.95f : 0.75f,mode==10 ? 0.35f : 0.98f);
+        if(mode>=11) {
+            material->transparency.setValue(0.0f);
+            material->setOverride(true);
+        }
         root->addChild(material);
-        root->addChild(new SoCube);
-        const SbViewportRegion viewport(width,height);
+        if(mode==10) root->addChild(new SoCube);
+        else if(documentScene) root->addChild(documentScene);
+        if(mode>=11) {
+            char details[512];
+            std::snprintf(details,sizeof(details),
+                "GEOMETRY_DOC mode=%d root=%p children=%d camera=%p bboxEmpty=%d center=%.3f,%.3f,%.3f size=%.3f,%.3f,%.3f span=%.3f",
+                mode,static_cast<void*>(documentScene),sceneChildren,
+                static_cast<void*>(documentCamera),int(bboxEmpty),
+                double(center[0]),double(center[1]),double(center[2]),
+                double(dimensions[0]),double(dimensions[1]),double(dimensions[2]),
+                double(span));
+            static int detailsCount=0;
+            if(detailsCount++<24) ::drnasDocumentPhase(details,"SCENE");
+        }
+        const GLenum beforeAction=glGetError();
         SoGLRenderAction action(viewport);
         action.setCacheContext(cacheContext);
         action.apply(root);
+        if(mode>=11) {
+            const GLenum afterAction=glGetError();
+            char outcome[192];
+            std::snprintf(outcome,sizeof(outcome),
+                "GEOMETRY_DOC mode=%d beforeAction=0x%x afterAction=0x%x",
+                mode,unsigned(beforeAction),unsigned(afterAction));
+            static int outcomes=0;
+            if(outcomes++<32 || afterAction!=GL_NO_ERROR)
+                ::drnasDocumentPhase(outcome,"ACTION");
+        }
     }
     glFinish();
     const GLenum drawError=glGetError();
@@ -777,9 +857,11 @@ static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cac
     auto* abWidget = qobject_cast<QOpenGLWidget*>(this->viewport());
     if (traceViewport) drnasViewportAbSnapshot("BEFORE_GL_VIEWPORT", abWidget, size[0], size[1]);
     drnasSyncQtCoinFbo(abWidget);
-    if (drnasRenderStage()==9 || drnasRenderStage()==10) {
+    if (drnasRenderStage()>=9 && drnasRenderStage()<=12) {
+        // 9/10 are unchanged controls, 11/12 receive actual FreeCAD nodes.
         drnasGeometryProbe(abWidget,drnasRenderStage(),
-            this->getSoRenderManager()->getGLRenderAction()->getCacheContext());
+            this->getSoRenderManager()->getGLRenderAction()->getCacheContext(),
+            this->pcViewProviderRoot, this->getSoRenderManager()->getCamera());
         return;
     }
     if (traceViewport) drnasViewportAbSnapshot("AFTER_FBO_SYNC", abWidget, size[0], size[1]);

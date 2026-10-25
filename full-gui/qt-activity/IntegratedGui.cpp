@@ -596,7 +596,7 @@ class DrnasFloatingCommands final : public QObject {
             } else addActionButton(grid,n,action);
         }
         if (!gpuTests.isEmpty()) {
-            auto* gpuHeading=new QLabel(QStringLiteral("GPU TEST · načini 6–10"),
+            auto* gpuHeading=new QLabel(QStringLiteral("GPU TEST · načini 6–12"),
                 grid->parentWidget());
             gpuHeading->setStyleSheet(QStringLiteral("color:#d6e6f2;font-weight:bold;"));
             const int groupRow=(n+1)/2;
