@@ -30,6 +30,8 @@ int main(int argc,char** argv) {
     // Populate overflow so a real finger drag over buttons must scroll.
     for (int i=0;i<18;++i) bar->addAction(QStringLiteral("Tool %1").arg(i));
     auto* later=new QToolBar("Sketcher",&cad);later->addAction("Line");cad.addToolBar(later);later->hide();
+    auto* renderTest=new QAction("2 Coin",&host);renderTest->setObjectName("drnasRenderStage2");
+    int renderTriggers=0;QObject::connect(renderTest,&QAction::triggered,[&]{++renderTriggers;});
     new DrnasTouchInput(&host,&cad,[](const QString&){qFatal("command UI cannot replace FreeCAD commands with Python");});
     host.takeCentralWidget();
     auto* ui=new DrnasAndroidCommandUi(&host,&cad);host.setCentralWidget(ui);
@@ -45,6 +47,12 @@ int main(int argc,char** argv) {
     auto all=ui->findChildren<QToolButton*>("drnasAndroidAction_Std_New");
     require(!all.isEmpty(),"native New command must be represented in the Android UI");
     auto* copy=all.first();
+    auto* renderButton=ui->findChild<QPushButton*>("drnasAndroidTest_drnasRenderStage2");
+    require(renderButton && renderButton->isVisible(),"Coin test must be reachable without a popup");
+    tap(renderButton,20);
+    require(renderTriggers==1 && !QApplication::activePopupWidget(),"direct finger tap must invoke the render test once without a menu");
+    renderTest->setEnabled(false);drain();
+    require(!renderButton->isEnabled(),"unavailable native renderer test must remain disabled");
     auto* partPin=ui->findChild<QToolButton*>("drnasAndroidAction_Std_Part");
     require(partPin && partPin->isVisible() && partPin->defaultAction()==part,
         "New Part must remain pinned even when the source menu action is hidden");

@@ -270,6 +270,21 @@ public:
         quickLayout->setContentsMargins(0,0,0,0);quickLayout->setSpacing(2);
         quickLayout->setSizeConstraint(QLayout::SetMinimumSize);
         row->addWidget(scroller(quickContent,54),1);
+        // Render diagnostics must remain reachable when the floating Tools
+        // panel or its menu cannot be operated on Android.
+        for (const auto& test:{qMakePair(QStringLiteral("drnasRenderStage2"),QStringLiteral("Coin tijelo")),
+                              qMakePair(QStringLiteral("drnasRenderStage3"),QStringLiteral("Coin izgled"))}) {
+            auto* source=host->findChild<QAction*>(test.first);
+            if (!source) continue;
+            auto* button=new QPushButton(test.second,header);
+            button->setObjectName(QStringLiteral("drnasAndroidTest_")+test.first);
+            button->setMinimumWidth(96);button->setFixedHeight(48);
+            button->setFocusPolicy(Qt::NoFocus);button->setEnabled(source->isEnabled());
+            connect(button,&QPushButton::clicked,source,&QAction::trigger);
+            connect(source,&QAction::changed,button,[button,source]{button->setEnabled(source->isEnabled());});
+            connect(source,&QObject::destroyed,button,&QWidget::hide);
+            row->addWidget(button);
+        }
         for (const auto& name:{QStringLiteral("drnasTouchCancel"),QStringLiteral("drnasTouchContext"),QStringLiteral("drnasTouchInputLauncher")}) {
             auto* source=host->findChild<QPushButton*>(name);
             if (!source) continue;
