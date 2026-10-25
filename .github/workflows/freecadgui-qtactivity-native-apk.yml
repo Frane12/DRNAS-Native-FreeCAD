@@ -109,6 +109,9 @@ jobs:
           ref: ${{ steps.upstream.outputs.package_sha }}
           persist-credentials: false
 
+      - name: Regression-test Measure InitGui boot guard
+        run: python3 -m unittest discover -s tests -p 'test_measure_initgui_guard.py' -v
+
       - name: Download real GUI, App, Base, Coin3D, GL4ES artifact
         uses: actions/download-artifact@v4
         with:
