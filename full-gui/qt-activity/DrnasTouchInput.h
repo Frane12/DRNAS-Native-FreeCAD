@@ -399,6 +399,7 @@ protected:
                 if (name == QStringLiteral("drnasFloatingCommandsLauncher") ||
                     name == QStringLiteral("drnasDebugLauncher") ||
                     name == QStringLiteral("drnasLiveLabButton") ||
+                    name == QStringLiteral("drnasViewportSoloToggle") ||
                     name == QStringLiteral("drnasFloatingCommands") ||
                     name == QStringLiteral("drnasDebugPanel") ||
                     name == QStringLiteral("drnasLiveLabPanel")) return true;

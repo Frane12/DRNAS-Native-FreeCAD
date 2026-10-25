@@ -618,7 +618,9 @@ protected:
             QTimer::singleShot(0,this,[this] {
                 if (!launcher || !host) return;
                 constrain();
-                launcher->show(); launcher->raise();
+                if (!host->property("drnasViewportSolo").toBool()) {
+                    launcher->show(); launcher->raise();
+                } else launcher->hide();
             });
         }
         if (obj==grip) {
@@ -700,6 +702,145 @@ public:
         });
         DrnasDiagnostics::note(QStringLiteral(
             "DRNAS floating tools: inline scrolling actions; no native Qt overflow popup"));
+    }
+};
+
+// Visual-only A/B isolation. Never reparent the original FreeCAD MainWindow,
+// its document QMdiArea or QOpenGLWidget: doing so would recreate the Android
+// EGLSurface and discard Qt's default framebuffer. Hide ONLY GUI chrome.
+class DrnasViewportSolo final : public QObject {
+    QMainWindow* shell_;
+    QPointer<QMainWindow> cad_;
+    QPushButton* toggle_;
+    QList<QPointer<QWidget>> previouslyVisible_;
+    bool solo_ = false;
+
+    void place() {
+        if (!shell_ || !toggle_) return;
+        toggle_->move(std::max(4, shell_->width() - toggle_->width() - 10),
+                      std::max(4, shell_->height() / 2 - toggle_->height() / 2));
+        toggle_->raise();
+    }
+    void hideOne(QWidget* widget) {
+        if (!widget || widget == toggle_ || !widget->isVisible()) return;
+        for (const auto& old : previouslyVisible_)
+            if (old.data() == widget) return;
+        previouslyVisible_.append(QPointer<QWidget>(widget));
+        widget->hide();
+    }
+    void hideChrome() {
+        if (!cad_ || !shell_) return;
+        // Only conventional FreeCAD chrome; do not touch document children,
+        // QMdiArea, QuarterWidget, Coin3D, or native window parents.
+        for (QToolBar* bar : cad_->findChildren<QToolBar*>()) {
+            if (!bar->property("drnasFloatingOverlay").toBool())
+                hideOne(bar);
+        }
+        for (QDockWidget* dock : cad_->findChildren<QDockWidget*>())
+            hideOne(dock);
+        if (auto* status = cad_->statusBar())
+            hideOne(status);
+        constexpr const char* floatingNames[] = {
+            "drnasFloatingCommands",
+            "drnasFloatingCommandsLauncher",
+            "drnasTouchInputPanel",
+            "drnasTouchInputLauncher",
+            "drnasDebugPanel",
+            "drnasDebugLauncher",
+            "drnasLiveLabPanel",
+            "drnasLiveLabButton"
+        };
+        for (const char* name : floatingNames)
+            hideOne(shell_->findChild<QWidget*>(QString::fromLatin1(name)));
+    }
+    void snapshot(const QString& state) {
+        if (!cad_) return;
+        int bars = 0;
+        for (auto* bar : cad_->findChildren<QToolBar*>())
+            if (bar->isVisible()) ++bars;
+        int docks = 0;
+        for (auto* dock : cad_->findChildren<QDockWidget*>())
+            if (dock->isVisible()) ++docks;
+        auto* mdi = cad_->findChild<QMdiArea*>();
+        auto* sub = mdi ? mdi->activeSubWindow() : nullptr;
+        auto* gl = sub ? sub->findChild<QOpenGLWidget*>() : nullptr;
+        DrnasDiagnostics::note(QStringLiteral(
+            "VIEW_SOLO %1: toolbarVisible=%2 docksVisible=%3 mdi=%4x%5 "
+            "gl=%6 valid=%7 visible=%8 size=%9x%10")
+            .arg(state).arg(bars).arg(docks)
+            .arg(mdi ? mdi->width() : 0).arg(mdi ? mdi->height() : 0)
+            .arg(gl != nullptr).arg(gl && gl->isValid())
+            .arg(gl && gl->isVisible()).arg(gl ? gl->width() : 0)
+            .arg(gl ? gl->height() : 0));
+    }
+    void switchMode() {
+        if (!shell_ || !cad_) return;
+        solo_ = !solo_;
+        shell_->setProperty("drnasViewportSolo", solo_);
+        DrnasDiagnostics::note(solo_ ?
+            QStringLiteral("VIEW_SOLO ENTER: hide chrome, keep existing Coin EGL/FBO") :
+            QStringLiteral("VIEW_SOLO EXIT: restore previous GUI visibility"));
+        if (solo_) {
+            previouslyVisible_.clear();
+            hideChrome();
+            toggle_->setText(QStringLiteral("VRATI UI"));
+            toggle_->setChecked(true);
+        } else {
+            // Restore only widgets which were visible on entry; do not
+            // revive originally hidden report panels or hidden action owner.
+            const auto before = previouslyVisible_;
+            previouslyVisible_.clear();
+            for (const auto& w : before) if (w) w->show();
+            toggle_->setText(QStringLiteral("3D SOLO"));
+            toggle_->setChecked(false);
+        }
+        // Allow Qt's existing QMainWindow layout to recompute the viewport;
+        // update() requests a normal repaint, never rebinds or creates FBOs.
+        QPointer<QMainWindow> guard(cad_);
+        QTimer::singleShot(200, this, [this, guard] {
+            if (!guard) return;
+            if (solo_) hideChrome();
+            auto* mdi = guard->findChild<QMdiArea*>();
+            auto* sub = mdi ? mdi->activeSubWindow() : nullptr;
+            auto* gl = sub ? sub->findChild<QOpenGLWidget*>() : nullptr;
+            if (gl && gl->isValid() && gl->isVisible()) gl->update();
+            snapshot(solo_ ? QStringLiteral("ACTIVE") : QStringLiteral("RESTORED"));
+            place();
+        });
+        place();
+    }
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        if (obj == shell_ && (event->type() == QEvent::Resize
+                           || event->type() == QEvent::WindowActivate)) {
+            if (solo_) hideChrome();
+            QTimer::singleShot(0, this, [this] { place(); });
+        }
+        return QObject::eventFilter(obj, event);
+    }
+public:
+    DrnasViewportSolo(QMainWindow* shell, QMainWindow* cad)
+        : QObject(shell), shell_(shell), cad_(cad) {
+        toggle_ = new QPushButton(QStringLiteral("3D SOLO"), shell_);
+        toggle_->setObjectName(QStringLiteral("drnasViewportSoloToggle"));
+        toggle_->setToolTip(QStringLiteral(
+            "Hide FreeCAD toolbars, docks and floating controls without "
+            "reparenting Coin3D, Qt GL widget, or changing EGL surface"));
+        toggle_->setCheckable(true);
+        toggle_->setFocusPolicy(Qt::NoFocus);
+        toggle_->setFixedSize(74, 38);
+        toggle_->setStyleSheet(QStringLiteral(
+            "QPushButton{background:#294d68;color:white;border:1px solid #789eb8;"
+            "border-radius:6px;font-size:11px;}"
+            "QPushButton:checked{background:#256d86;}"));
+        QObject::connect(toggle_, &QPushButton::clicked, this,
+                         [this] { switchMode(); });
+        shell_->installEventFilter(this);
+        place();
+        toggle_->show();
+        toggle_->raise();
+        DrnasDiagnostics::note(QStringLiteral(
+            "VIEW_SOLO ready: reversible chrome-only isolation; Coin framebuffer untouched"));
     }
 };
 
@@ -1468,6 +1609,7 @@ finally:
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });
+    new DrnasViewportSolo(shell, freecad);
 }
 
 // Android QtActivity has one usable content surface. A second desktop-style
