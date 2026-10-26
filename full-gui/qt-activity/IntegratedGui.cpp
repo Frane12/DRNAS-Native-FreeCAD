@@ -24,7 +24,8 @@
 #include <QUrl>
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
-#include <QNativeInterface>
+// Qt 6.8 exposes QNativeInterface::QAndroidApplication via <QCoreApplication>.
+// There is no standalone <QNativeInterface> header in our Qt Android SDK.
 #endif
 #include <QSaveFile>
 #include <QStandardPaths>
