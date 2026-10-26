@@ -1,4 +1,5 @@
 #include "../DrnasDocumentOpen.h"
+#include "../DrnasDocumentSave.h"
 #include <QApplication>
 #include <QMenu>
 #include <QToolBar>
@@ -7,6 +8,29 @@
 class DocumentOpenTests : public QObject {
     Q_OBJECT
 private slots:
+    void routeLateSaveAndSaveAsSeparatelyFromOpen() {
+        QObject window;
+        QAction saveTarget(&window), asTarget(&window), open(&window);
+        DrnasDocumentActionRouter saveRouter(&window, &saveTarget, {}, QStringLiteral("Std_Save"));
+        DrnasDocumentActionRouter asRouter(&window, &asTarget, {}, QStringLiteral("Std_SaveAs"));
+        QObject owner(&window);
+        QAction save(&owner), saveAs(&owner);
+        save.setObjectName(QStringLiteral("Std_Save"));
+        saveAs.setObjectName(QStringLiteral("Std_SaveAs"));
+        open.setObjectName(QStringLiteral("Std_Open"));
+        int oldCalls = 0;
+        QObject::connect(&save, &QAction::triggered, &owner, [&] { ++oldCalls; });
+        QObject::connect(&saveAs, &QAction::triggered, &owner, [&] { ++oldCalls; });
+        QSignalSpy saved(&saveTarget, &QAction::triggered), savedAs(&asTarget, &QAction::triggered);
+        QCoreApplication::processEvents();
+        save.trigger();
+        QCOMPARE(saved.count(), 1);
+        QCOMPARE(savedAs.count(), 0);
+        saveAs.trigger();
+        QCOMPARE(savedAs.count(), 1);
+        QCOMPARE(oldCalls, 0);
+        QVERIFY(!open.property("drnasAndroidActionRouted").toBool());
+    }
     void routeActionCreatedAfterRouterAndAfterWorkbenchRebuild() {
         QObject window;
         QAction target(&window);

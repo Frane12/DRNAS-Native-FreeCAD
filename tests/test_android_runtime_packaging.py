@@ -38,6 +38,7 @@ class AndroidPackagingTests(unittest.TestCase):
                 after = (bundle / 'freecad-manifest.txt').read_text()
             self.assertNotEqual(before, after)
             self.assertIn('lib/drnas_android_runtime.py', after)
+            self.assertIn('lib/drnas_android_save.py', after)
 
     def test_storage_probe_and_missing_dependency_are_journaled(self):
         with tempfile.TemporaryDirectory() as td:

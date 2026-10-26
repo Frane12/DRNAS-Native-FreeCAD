@@ -89,6 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           reuse_native=0
+          native_branch="$TARGET_BRANCH"
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # Packaging-only changes can reuse a successful native compile when
             # GitHub confirms that none of its native build inputs changed.
@@ -141,6 +142,24 @@ jobs:
             [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Matching native FreeCAD build not ready"; exit 1; }
           elif [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
+          elif [[ "$TARGET_BRANCH" == feature/full-freecad-android ]]; then
+            baseline_run=40309325619
+            baseline_sha=ee342e9b976b31e4b9601aac67554b8cbe8928b4
+            comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$baseline_sha...$GITHUB_SHA")"
+            if jq -e '(.status == "ahead" or .status == "identical") and
+                (.total_commits <= 250) and ((.files | length) < 300) and
+                ([.files[] | (.filename, (.previous_filename // "")) | select(length > 0) |
+                  select((startswith("full-gui/integrated-apk/") or
+                          startswith("full-gui/qt-activity/") or startswith("tests/") or
+                          . == "AGENTS.md" or . == "README.md" or . == "WORKING_BASELINE.md" or
+                          . == ".github/workflows/freecadgui-qtactivity-native-apk.yml" or
+                          . == ".github/workflows/drnas-r264-async-file-open.yml") | not)] | length == 0)' <<< "$comparison" >/dev/null; then
+              run_id="$baseline_run"
+              native_branch=diagnostics/partdesign-shiboken-20261026
+              echo "Verified unchanged native build inputs: reuse phone-confirmed APK 316 native run $run_id"
+            else
+              run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
+            fi
           else
             # Always package the most recent verified native compile. The old
             # fixed run predates Android SAF and silently rejected new fixes.
@@ -150,11 +169,14 @@ jobs:
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
           test "$(jq -r '.conclusion' <<<"$info")" = success
           test "$(jq -r '.name' <<<"$info")" = 'DRNAS REAL upstream FreeCADGui Full ARM64 Build'
-          test "$(jq -r '.head_branch' <<<"$info")" = "$TARGET_BRANCH"
+          test "$(jq -r '.head_branch' <<<"$info")" = "$native_branch"
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             test "$(jq -r '.event' <<<"$info")" = pull_request
           fi
           test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"
+          if [[ "$native_branch" != "$TARGET_BRANCH" ]]; then
+            test "$(jq -r '.head_sha' <<<"$info")" = "$baseline_sha"
+          fi
           commit="$(jq -r '.head_sha' <<<"$info")"
           attempt="$(jq -r '.run_attempt' <<<"$info")"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
@@ -253,6 +275,14 @@ jobs:
 
       - name: Test GUI resize and real GL4ES state isolation before packaging
         run: bash full-gui/qt-activity/tests/check-render-isolation.sh
+
+      - name: Test FCStd destination transfer and failure handling
+        run: |
+          mkdir -p .build/save-transfer-tests
+          javac -d .build/save-transfer-tests \
+            full-gui/qt-activity/android/src/org/drnas/freecad/bootstrap/FcstdTransfer.java \
+            full-gui/qt-activity/tests/FcstdTransferTest.java
+          java -cp .build/save-transfer-tests org.drnas.freecad.bootstrap.FcstdTransferTest
 
       - name: Restore Qt GUI 6.8.3 native SDK
         id: qt

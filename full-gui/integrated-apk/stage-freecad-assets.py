@@ -105,6 +105,9 @@ def main():
     runtime = bundle / "freecad" / "lib" / "drnas_android_runtime.py"
     shutil.copyfile(Path(__file__).with_name("drnas_android_runtime.py"), runtime)
     names.append("lib/drnas_android_runtime.py")
+    save_runtime = bundle / "freecad" / "lib" / "drnas_android_save.py"
+    shutil.copyfile(Path(__file__).with_name("drnas_android_save.py"), save_runtime)
+    names.append("lib/drnas_android_save.py")
     # Include payload hashes in a bundled asset so a same-name binary/script
     # update changes the manifest identity and invalidates on-device extraction.
     hashes = "\n".join(

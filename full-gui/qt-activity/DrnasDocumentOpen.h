@@ -13,37 +13,42 @@
 // Keep FreeCAD's existing QAction, icon, shortcut and menu/toolbar placement.
 // Only its Gui::Action activation receiver is replaced with the Android picker.
 // Repeated workbench/layout setup must not add duplicate handlers.
-inline int drnasRouteDocumentOpen(QObject* window, QAction* androidOpen)
+inline int drnasRouteDocumentAction(QObject* window, QAction* targetAction, const QString& command)
 {
     int count = 0;
-    for (auto* action : window->findChildren<QAction*>(QStringLiteral("Std_Open"))) {
-        if (action->property("drnasAndroidOpenRouted").toBool()) continue;
+    for (auto* action : window->findChildren<QAction*>(command)) {
+        if (action->property("drnasAndroidActionRouted").toBool()) continue;
         QObject* owner = action->parent();
         if (!owner || !QObject::disconnect(action, SIGNAL(triggered(bool)), owner, nullptr))
             continue;
-        const QPointer<QAction> target(androidOpen);
+        const QPointer<QAction> target(targetAction);
         QObject::connect(action, &QAction::triggered, action, [target] {
             if (target) target->trigger();
         });
-        action->setProperty("drnasAndroidOpenRouted", true);
+        action->setProperty("drnasAndroidActionRouted", true);
         ++count;
     }
     return count;
 }
 
+inline int drnasRouteDocumentOpen(QObject* window, QAction* target) {
+    return drnasRouteDocumentAction(window, target, QStringLiteral("Std_Open"));
+}
+
 // The embedded MainWindow is installed BEFORE FreeCAD creates its standard
 // actions. Watch later toolbar/menu construction and workbench rebuilds, and
 // bind synchronously before a user's click/shortcut can activate the old path.
-class DrnasDocumentOpenRouter final : public QObject {
+class DrnasDocumentActionRouter final : public QObject {
     QPointer<QObject> window_;
     QPointer<QAction> target_;
     QTimer retry_;
     bool queued_ = false;
     std::function<void(int)> report_;
+    QString command_;
 
     void bind() {
         if (!window_ || !target_) return;
-        const int count = drnasRouteDocumentOpen(window_, target_);
+        const int count = drnasRouteDocumentAction(window_, target_, command_);
         if (count > 0) {
             retry_.stop();
             if (report_) report_(count);
@@ -71,13 +76,16 @@ protected:
         return QObject::eventFilter(watched, event);
     }
 public:
-    DrnasDocumentOpenRouter(QObject* window, QAction* target,
-                            std::function<void(int)> report = {})
+    DrnasDocumentActionRouter(QObject* window, QAction* target,
+                            std::function<void(int)> report = {},
+                            QString command = QStringLiteral("Std_Open"))
         : QObject(window), window_(window), target_(target), retry_(this),
-          report_(std::move(report)) {
+          report_(std::move(report)), command_(std::move(command)) {
         QCoreApplication::instance()->installEventFilter(this);
         QObject::connect(&retry_, &QTimer::timeout, this, [this] { bind(); });
         retry_.start(250);
         bind();
     }
 };
+
+using DrnasDocumentOpenRouter = DrnasDocumentActionRouter;

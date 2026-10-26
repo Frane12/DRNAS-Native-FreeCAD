@@ -10,6 +10,7 @@
 #include "DrnasTouchInput.h"
 #include "DrnasDraggableLauncher.h"
 #include "DrnasDocumentOpen.h"
+#include "DrnasDocumentSave.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -1199,6 +1200,10 @@ finally:
         DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN Std_Open ROUTED count=%1").arg(count));
     });
     DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN router installed; watches deferred Std_Open actions"));
+    new DrnasDocumentSave(shell, freecad, androidSelect, standardAndroidOpen,
+                         [](const QString& code, QString& error) {
+                             return runOriginalFreeCADPython(code, error);
+                         }, report);
 #endif
     QObject::connect(androidOpen, &QAction::triggered, shell, [report] {
         const QString path = QSettings().value(QStringLiteral("nativeProbe/lastSafFile")).toString();

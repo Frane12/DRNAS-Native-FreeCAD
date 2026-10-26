@@ -51,4 +51,18 @@ private storage, let Android select a destination through SAF, then stream the
 completed file through its content URI. Retain the local copy on cancellation
 or transfer failure. Remember the granted destination for subsequent Save;
 Save As selects a new destination. Report success only after the destination
-write completes. This is a plan, not implemented Android Save support.
+write completes.
+
+The integration now implements this handshake for `Std_Save`, `Std_SaveAs`,
+and `Std_SaveCopy`. The first Save chooses a new Android destination; later
+Save operations on the same open document reuse it. A copy operation always
+chooses a destination and preserves the document's modified state. Existing
+Open sources are read-only imports; the original provider file is not silently
+overwritten. Native serialization uses `saveCopy` with `DirectAccess=False`,
+validates the FCStd archive and retains it under private `drnas-documents`.
+Provider writing is asynchronous, with no success acknowledgement until the
+output stream flushes and closes. Concurrent edits remain marked modified.
+
+Host tests cover the handshake and transfer failures. This Save implementation
+still requires a device round-trip check; APK 316 remains the confirmed Open
+baseline until the user confirms the new build.
