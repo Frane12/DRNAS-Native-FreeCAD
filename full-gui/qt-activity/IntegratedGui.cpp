@@ -1195,8 +1195,10 @@ finally:
         androidSelect->trigger();
     });
 #ifdef Q_OS_ANDROID
-    const int openRoutes = drnasRouteDocumentOpen(freecad, standardAndroidOpen);
-    DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN Std_Open routes=%1").arg(openRoutes));
+    new DrnasDocumentOpenRouter(freecad, standardAndroidOpen, [](int count) {
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN Std_Open ROUTED count=%1").arg(count));
+    });
+    DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN router installed; watches deferred Std_Open actions"));
 #endif
     QObject::connect(androidOpen, &QAction::triggered, shell, [report] {
         const QString path = QSettings().value(QStringLiteral("nativeProbe/lastSafFile")).toString();
@@ -1219,17 +1221,15 @@ finally:
         }
         const QString encodedPath = QString::fromLatin1(path.toUtf8().toBase64());
         DrnasDiagnostics::note(QStringLiteral(
-            "ANDROID_SAF_OPEN 05 DIRECT_BEGIN suffix=%1 bytes=%2")
+            "ANDROID_SAF_OPEN 05 CACHED_BEGIN suffix=%1 bytes=%2")
             .arg(suffix).arg(info.size()));
         QString error;
         const QString python = QStringLiteral(
             "import FreeCAD as App, base64\n"
             "_drnas_saf_path = base64.b64decode('%1').decode('utf-8')\n"
             "_drnas_mark('ANDROID_SAF_OPEN 06 PYTHON_BEGIN')\n"
-            "_drnas_part_pref = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')\n"
-            "_drnas_part_pref.SetBool('DirectAccess', True)\n"
-            "_drnas_mark('BREP_AB DIRECT_MODE DirectAccess=True')\n"
-            "_drnas_saf_document = App.openDocument(_drnas_saf_path)\n"
+            "from drnas_android_runtime import _drnas_open_android_document\n"
+            "_drnas_saf_document = _drnas_open_android_document(_drnas_saf_path)\n"
             "_drnas_mark('ANDROID_SAF_OPEN 07 PYTHON_RETURN document=' + str(_drnas_saf_document.Name))\n")
             .arg(encodedPath);
         const bool ok = runOriginalFreeCADPython(python, error);
@@ -2059,6 +2059,7 @@ void recordOriginalGuiStage(const char* stageName)
                 "_drnas_part_commands = _drnas_runtime._drnas_part_commands\n"
                 "_drnas_fault_file = _drnas_runtime._drnas_fault_file\n"
                 "import FreeCAD as App\n"
+                "_drnas_runtime._drnas_configure_document_open()\n"
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"

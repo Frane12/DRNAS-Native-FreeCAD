@@ -69,6 +69,14 @@ class DocumentOpenTests(unittest.TestCase):
         self.assertTrue(self.value)
         self.assertEqual(self.history, [('DirectAccess', False), ('DirectAccess', True)])
 
+    def test_boot_default_also_covers_native_and_recent_file_commands(self):
+        self.app.openDocument = lambda path: self.fail('boot must not open a document')
+        self.runtime._drnas_configure_document_open()
+        self.assertFalse(self.value)
+        self.assertIn(str(self.root / 'Mod/BIM'), self.app.__ModDirs__)
+        self.assertIn('ANDROID_OPEN DEFAULT DirectAccess=False',
+                      (self.root / 'journal').read_text())
+
     def test_failed_open_restores_both_existing_preference_values(self):
         def fail(path):
             self.assertFalse(self.value)

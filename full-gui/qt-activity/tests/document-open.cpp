@@ -7,6 +7,43 @@
 class DocumentOpenTests : public QObject {
     Q_OBJECT
 private slots:
+    void routeActionCreatedAfterRouterAndAfterWorkbenchRebuild() {
+        QObject window;
+        QAction target(&window);
+        DrnasDocumentOpenRouter router(&window, &target);
+        QSignalSpy androidCalls(&target, &QAction::triggered);
+        int nativeCalls = 0;
+        for (int generation = 0; generation < 2; ++generation) {
+            auto* owner = new QObject(&window);
+            auto* action = new QAction(owner);
+            action->setObjectName(QStringLiteral("Std_Open"));
+            QObject::connect(action, &QAction::triggered, owner, [&] { ++nativeCalls; });
+            QToolBar bar;
+            bar.addAction(action);
+            QCoreApplication::processEvents();
+            action->trigger();
+            QCOMPARE(nativeCalls, 0);
+            QCOMPARE(androidCalls.count(), generation + 1);
+            delete owner;
+        }
+    }
+    void routeFirstInputBeforeDeferredCallback() {
+        QObject window;
+        QAction target(&window);
+        DrnasDocumentOpenRouter router(&window, &target);
+        QObject owner(&window);
+        QAction action(&owner);
+        action.setObjectName(QStringLiteral("Std_Open"));
+        int nativeCalls = 0;
+        QObject::connect(&action, &QAction::triggered, &owner, [&] { ++nativeCalls; });
+        QSignalSpy androidCalls(&target, &QAction::triggered);
+        // Deliberately don't process the queued ChildAdded callback first.
+        QEvent press(QEvent::MouseButtonPress);
+        QCoreApplication::sendEvent(&window, &press);
+        action.trigger();
+        QCOMPARE(nativeCalls, 0);
+        QCOMPARE(androidCalls.count(), 1);
+    }
     void routeExistingActionOnce() {
         QObject window;
         QObject owner(&window);

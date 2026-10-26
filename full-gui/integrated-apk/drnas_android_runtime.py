@@ -145,6 +145,15 @@ def _drnas_prepare_document_restore():
         _drnas_mark('RESTORE MODULE READY ' + name + ' origin=' + origin)
 
 
+def _drnas_configure_document_open():
+    # Apply before FreeCAD constructs its GUI actions. This also covers recent
+    # files and native Open commands that don't go through the SAF QAction.
+    parameters = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')
+    parameters.SetBool('DirectAccess', False)
+    _drnas_mark('ANDROID_OPEN DEFAULT DirectAccess=False')
+    _drnas_prepare_document_restore()
+
+
 def _drnas_open_android_document(path):
     """Use the phone-tested file-backed BRep reader for standard Android Open."""
     _drnas_prepare_document_restore()
