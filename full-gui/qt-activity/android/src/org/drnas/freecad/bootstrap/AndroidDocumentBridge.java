@@ -38,13 +38,20 @@ public final class AndroidDocumentBridge {
         }
         pickerResult = "PENDING";
         try {
-            Intent picker = new Intent(activity, DocumentPickerActivity.class);
-            activity.startActivity(picker);
-            Log.i(TAG, "SAF_PICKER LAUNCH");
+            activity.runOnUiThread(() -> {
+                try {
+                    Intent picker = new Intent(activity, DocumentPickerActivity.class);
+                    activity.startActivity(picker);
+                    Log.i(TAG, "SAF_PICKER LAUNCH");
+                } catch (Exception error) {
+                    Log.e(TAG, "SAF_PICKER launch failed", error);
+                    finishPicker("ERROR: Cannot launch Android picker: " + error);
+                }
+            });
             return true;
         } catch (Exception error) {
-            pickerResult = "ERROR: Cannot launch Android picker: " + error;
-            Log.e(TAG, "SAF_PICKER launch failed", error);
+            pickerResult = "ERROR: Cannot schedule Android picker: " + error;
+            Log.e(TAG, "SAF_PICKER scheduling failed", error);
             return false;
         }
     }
