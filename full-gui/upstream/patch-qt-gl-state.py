@@ -162,19 +162,19 @@ replace_once(root / "glstate.c", "    glstate->blendsfactorrgb = GL_ONE;", "    
 # gl4es_glPushAttrib/glPopAttrib in blit.c owns restoration after drawing.
 blit_path = root / "blit.c"
 blit_source = blit_path.read_text()
-blend_off = "    gl4es_glDisable(GL_BLEND);\\n    int alpha = 0;"
+blend_off = "    gl4es_glDisable(GL_BLEND);\n    int alpha = 0;"
 blend_save = (
-    "    // DRNAS Sketcher SoImage glDrawPixels: preserve transparent RGBA glyphs.\\n"
-    "    // GL4ES BLIT_COLOR must honor Coin's enabled blend state.\\n"
-    "    const int drnas_cad_blend = glstate->enable.blend && !globals4es.shaderblend;\\n"
-    "    gl4es_glDisable(GL_BLEND);\\n"
+    "    // DRNAS Sketcher SoImage glDrawPixels: preserve transparent RGBA glyphs.\n"
+    "    // GL4ES BLIT_COLOR must honor Coin's enabled blend state.\n"
+    "    const int drnas_cad_blend = glstate->enable.blend && !globals4es.shaderblend;\n"
+    "    gl4es_glDisable(GL_BLEND);\n"
     "    int alpha = 0;"
 )
-color_case = "        case BLIT_COLOR:\\n            //gl4es_glColor4f(1.0f, 1.0f, 1.0f, 1.0f);\\n            break;"
+color_case = "        case BLIT_COLOR:\n            //gl4es_glColor4f(1.0f, 1.0f, 1.0f, 1.0f);\n            break;"
 color_restore = (
-    "        case BLIT_COLOR:\\n"
-    "            // glDrawPixels RGBA must composite transparent Sketcher overlays.\\n"
-    "            if (drnas_cad_blend) gl4es_glEnable(GL_BLEND);\\n"
+    "        case BLIT_COLOR:\n"
+    "            // glDrawPixels RGBA must composite transparent Sketcher overlays.\n"
+    "            if (drnas_cad_blend) gl4es_glEnable(GL_BLEND);\n"
     "            break;"
 )
 assert blit_source.count(blend_off) == 1, "Pinned GLES2 BLIT blend guard changed"
