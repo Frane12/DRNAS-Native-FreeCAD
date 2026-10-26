@@ -308,6 +308,16 @@ protected:
         if (target == host_ && (event->type() == QEvent::Resize
             || event->type() == QEvent::Show || event->type() == QEvent::WindowStateChange))
             QTimer::singleShot(0, this, [this] { arrange(); });
+        // Returning from Android's document picker may restore system bars.
+        // Reapply on resume only, leaving Android's transient swipe UI alone.
+        if (target == qApp && event->type() == QEvent::ApplicationStateChange &&
+            QGuiApplication::applicationState() == Qt::ApplicationActive &&
+            immersive_ && immersive_->isChecked()) {
+            QTimer::singleShot(100, this, [this] {
+                if (immersive_ && immersive_->isChecked())
+                    setImmersiveAndroid(true);
+            });
+        }
         if (!verbose_->isChecked()) return false;
         const QEvent::Type t = event->type();
         if (t != QEvent::Show && t != QEvent::Hide && t != QEvent::Resize &&
@@ -481,6 +491,12 @@ public:
             fullscreen_->setChecked(false);
             immersive_->setChecked(false);
             syncing_ = false;
+            // setChecked(false) is intentionally blocked during reset: apply
+            // the same Android bar change and saved preference explicitly.
+            setImmersiveAndroid(false);
+            QSettings resetSettings;
+            resetSettings.setValue(QStringLiteral("drnasDebug/immersive"), false);
+            resetSettings.sync();
             applyScale(2);
             setFullScreen(false);
             QTimer::singleShot(350, this, [this] { applyWindowSize(0); });
@@ -512,13 +528,23 @@ public:
         launcher_->show();
         arrange();
         QSettings s;
+        // One-time Android Part Design layout migration: start with system
+        // bars hidden so the right Tasks dock is fully accessible. Keep the
+        // existing DBG toggle and honor later explicit user changes.
+        if (!s.value(QStringLiteral("drnasDebug/immersiveDefaultPartDesignV1"), false).toBool()) {
+            s.setValue(QStringLiteral("drnasDebug/immersiveDefaultPartDesignV1"), true);
+            s.setValue(QStringLiteral("drnasDebug/immersive"), true);
+            s.sync();
+            DrnasDiagnostics::note(QStringLiteral(
+                "ANDROID_LAYOUT default immersive=1 (user can disable in DBG)"));
+        }
         if (s.value(QStringLiteral("drnasDebug/fullscreen"), false).toBool()) {
             QTimer::singleShot(0, this, [this] {
                 syncing_ = true; fullscreen_->setChecked(true); syncing_ = false;
                 setFullScreen(true);
             });
         }
-        if (s.value(QStringLiteral("drnasDebug/immersive"), false).toBool()) {
+        if (s.value(QStringLiteral("drnasDebug/immersive"), true).toBool()) {
             QTimer::singleShot(100, this, [this] { immersive_->setChecked(true); });
         }
         DrnasDiagnostics::note(QStringLiteral("DBG panel available at bottom-left"));
