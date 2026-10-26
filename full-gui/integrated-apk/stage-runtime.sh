@@ -19,6 +19,13 @@ for essential in FreeCADBase FreeCADApp FreeCADGui Coin; do
         exit 1
     }
 done
+# The phone still aborts inside native saveCopy. This integration requires the
+# new real native writer checkpoints; never ship an old App library silently.
+readelf --dyn-syms --wide "$NATIVE/libFreeCADApp.so" \
+    | awk '$7 != "UND" && $8 == "drnas_android_save_trace_v1" { found=1 } END { exit !found }' || {
+    echo "::error::Native FreeCADApp lacks Save trace v1; select the new successful native writer build." >&2
+    exit 1
+}
 for gl in GL GLU; do
     test -s "$ARTIFACT/opengl-compat/lib/lib${gl}.so" || {
         echo "::error::Missing verified Android GL4ES/Mesa ${gl} build." >&2

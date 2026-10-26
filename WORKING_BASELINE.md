@@ -75,3 +75,12 @@ not established by the available native stack. The FCStd still contains native
 document, geometry, parameters and GUI state; only the generated preview image
 is omitted. The Save helper enforces this for serialization and restores the
 prior setting afterward; Android startup defaults it off for native Save paths.
+
+The subsequent `nece.txt` phone report still aborts in saveCopy for a newly
+created cylinder with thumbnails disabled. BRep export succeeds in the same
+session, and the scoped C++ terminate handler is not invoked. The native Save
+cause is still unresolved. The next source build adds durable checkpoints in
+the real Python binding, filename validation, canonical path/stream creation,
+ZIP construction, document/property serialization, GUI data, BRep output and
+archive finalization. Packaging requires `drnas_android_save_trace_v1` from
+FreeCADApp so an older native binary cannot be mistaken for this diagnostic.
