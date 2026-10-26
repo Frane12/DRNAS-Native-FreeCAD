@@ -55,7 +55,8 @@
 #include <QTimer>
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
-#include <QNativeInterface>
+// Qt 6.8 QNativeInterface::QAndroidApplication is declared by
+// QCoreApplication (already included above), not <QNativeInterface>.
 #endif
 #include <QTreeWidget>
 #include <QVBoxLayout>
