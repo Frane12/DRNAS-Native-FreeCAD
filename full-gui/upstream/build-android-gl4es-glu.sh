@@ -39,6 +39,8 @@ test -f "$gl" || { echo 'Upstream GL4ES libGL.so not built' >&2; exit 1; }
 cp -L "$gl" "$OUT/lib/libGL.so"
 readelf --dyn-syms --wide "$OUT/lib/libGL.so" \
   | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
+readelf --dyn-syms --wide "$OUT/lib/libGL.so" \
+  | awk '$7 != "UND" && $8 == "drnas_gl4es_sketcher_alpha_blit_v1" { found=1 } END { exit !found }'
 
 test -f "$SRC/gl4es-freecad/include/GL/gl.h"
 cp -a "$SRC/gl4es-freecad/include/." "$OUT/include/"
