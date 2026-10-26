@@ -1067,6 +1067,36 @@ try:
         _tp_mark('MODULE_BEGIN ' + _tp_module)
         __import__(_tp_module)
         _tp_mark('MODULE_OK ' + _tp_module)
+    # Both a private Python copy and a JNI native copy are bundled. One
+    # mapped instance per SONAME is expected. Two independently mapped
+    # Part.so instances can split C++ static type registration across DSOs.
+    try:
+        import sys
+        for _tp_module in ('Part', 'Sketcher', '_PartDesign', 'PartDesignGui'):
+            _tp_loaded = sys.modules.get(_tp_module)
+            if _tp_loaded is not None:
+                _tp_mark('PYTHON_DSO ' + _tp_module + ' source=' +
+                         str(getattr(_tp_loaded, '__file__', '(built-in)')))
+        _tp_basenames = ('Part.so', 'Sketcher.so', '_PartDesign.so',
+                         'PartDesignGui.so', 'libFreeCADBase.so',
+                         'libFreeCADApp.so', 'libFreeCADGui.so',
+                         'libshiboken6.abi3.so', 'libpyside6.abi3.so')
+        _tp_found = {}
+        with open('/proc/self/maps', encoding='utf-8') as _tp_f:
+            for _tp_line in _tp_f:
+                _tp_loc = _tp_line.split()[-1]
+                if any(_tp_loc.endswith('/' + _tp_name) for _tp_name in _tp_basenames):
+                    _tp_name = _tp_loc.rsplit('/', 1)[-1]
+                    _tp_found.setdefault(_tp_name, set()).add(_tp_loc)
+        for _tp_name in _tp_basenames:
+            _tp_paths = sorted(_tp_found.get(_tp_name, ()))
+            _tp_mark('DSO_MAP ' + _tp_name + ' count=' + str(len(_tp_paths)) +
+                     ' paths=' + repr(_tp_paths))
+        _tp_duplicates = [name for name in _tp_basenames
+                          if len(_tp_found.get(name, ())) > 1]
+        _tp_mark('DSO_DUPLICATES ' + repr(_tp_duplicates))
+    except BaseException:
+        _tp_mark('DSO_MAP_ERROR ' + traceback.format_exc())
     _tp_mark('DOCUMENT_BEGIN hidden=True temp=True')
     _tp_doc = App.newDocument('DRNAS_TypeProbe', hidden=True, temp=True)
     _tp_mark('DOCUMENT_OK name=' + _tp_doc.Name)
