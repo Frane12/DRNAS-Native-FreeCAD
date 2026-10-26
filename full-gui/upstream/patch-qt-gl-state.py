@@ -181,6 +181,7 @@ assert blit_source.count(blend_off) == 1, "Pinned GLES2 BLIT blend guard changed
 assert blit_source.count(color_case) == 1, "Pinned GLES2 BLIT_COLOR case changed"
 blit_source = blit_source.replace(blend_off, blend_save, 1)
 blit_source = blit_source.replace(color_case, color_restore, 1)
+blit_source += "\n__attribute__((visibility(\\\"default\\\"))) int drnas_gl4es_sketcher_alpha_blit_v1(void) { return 1; }\n"
 blit_path.write_text(blit_source)
 print("DRNAS Sketcher alpha: GLES2 BLIT_COLOR preserves caller GL_BLEND")
 print("DRNAS Qt/GL4ES v3: native FBO ownership and tracked CAD raster state restored")
