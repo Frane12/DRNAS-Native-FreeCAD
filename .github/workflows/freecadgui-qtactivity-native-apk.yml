@@ -51,7 +51,7 @@ jobs:
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
     # Diagnostic branch packages only AFTER the successful native build dispatch.
     # Its push has no native ARM64 artifact yet; avoid a misleading early failure.
-    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/sketcher-icon-alpha-20261026') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/sketcher-icon-alpha-20261026' || github.head_ref == 'diagnostics/sketcher-native-icon-capture-20261026') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -366,6 +366,13 @@ jobs:
           test -f out/full-gui/host-icu73/lib/libicui18n.so.73
           test -f out/upstream-freecad-gui/native/libFreeCADGui.so
           test -f out/upstream-freecad-gui/native/libCoin.so
+          if [[ "${GITHUB_HEAD_REF:-}" == diagnostics/sketcher-native-icon-capture-20261026 ]]; then
+            test -s out/upstream-freecad-gui/native/SketcherGui.so
+            grep -aFq "SKETCHER_NATIVE_ICON" out/upstream-freecad-gui/native/SketcherGui.so || {
+              echo "::error::SketcherGui.so lacks genuine image capture hook; refusing stale native artifact"
+              exit 1
+            }
+          fi
           # No silently repacking a pre-fix upstream library.
           test -f full-gui/qt-activity/android/src/org/drnas/freecad/bootstrap/AndroidDocumentBridge.java
           # Do not publish an APK with stale FreeCADApp/document restore objects.
