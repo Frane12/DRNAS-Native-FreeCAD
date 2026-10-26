@@ -89,8 +89,27 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            # Pin successful diagnostic native #94, never the old production DSO.
-            run_id="40248988009"
+            # The native build must contain ALL C++ probes from our current
+            # upstream source revision. Never reuse stale native run #94.
+            native_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits?sha=${DIAG_PR_COMMIT}&path=full-gui/upstream&per_page=1" --jq '.[0].sha')"
+            [[ "$native_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Cannot resolve native source revision"; exit 1; }
+            run_id=""
+            for attempt_no in $(seq 1 90); do
+              runs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&per_page=100")"
+              native_status="$(jq -r --arg sha "$native_sha" '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request" and .head_sha == $sha)] | sort_by(.id) | last | (.conclusion // .status // "pending")' <<<"$runs_json")"
+              run_id="$(jq -r --arg sha "$native_sha" '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request" and .head_sha == $sha)] | sort_by(.id) | last | (.id // empty)' <<<"$runs_json")"
+              if [[ "$native_status" == success && "$run_id" =~ ^[0-9]+$ ]]; then
+                echo "Matching native ARM64 build ready: $run_id @ $native_sha"
+                break
+              fi
+              if [[ "$native_status" == failure || "$native_status" == cancelled ]]; then
+                echo "::error::Native FreeCAD ARM64 build for $native_sha finished $native_status"
+                exit 1
+              fi
+              echo "Waiting for native FreeCAD ARM64 source=$native_sha; attempt=$attempt_no status=$native_status"
+              sleep 20
+            done
+            [[ "$native_status" == success ]] || { echo "::error::Timed out waiting for matching native source"; exit 1; }
           elif [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
