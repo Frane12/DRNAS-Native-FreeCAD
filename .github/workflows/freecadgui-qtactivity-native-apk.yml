@@ -37,7 +37,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: drnas-real-freecadgui-qtapk
+  group: ${{ github.head_ref == 'fix/android-sketch-plane-picker-20261026' && 'drnas-sketch-picker-apk' || 'drnas-real-freecadgui-qtapk' }}
   cancel-in-progress: false
 
 env:
@@ -290,9 +290,9 @@ jobs:
       - name: Install Android tools and ELF relinker
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+          sudo timeout 180s apt-get update
+          sudo timeout 240s apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
+          timeout 240s "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
           mkdir -p out/integrated-freecad-qtapk
 
