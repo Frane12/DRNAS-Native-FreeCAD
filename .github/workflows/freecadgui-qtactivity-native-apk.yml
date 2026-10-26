@@ -418,10 +418,10 @@ jobs:
                        if name.startswith("classes") and name.endswith(".dex")]
               assert dexes, "Android APK contains no DEX bytecode"
               for clazz in ("AndroidDocumentBridge", "DocumentPickerActivity"):
-              signature = ("Lorg/drnas/freecad/bootstrap/" + clazz + ";").encode()
-              assert any(signature in package.read(name) for name in dexes), (
-                  f"{clazz} missing from packaged DEX"
-              )
+                  signature = ("Lorg/drnas/freecad/bootstrap/" + clazz + ";").encode()
+                  assert any(signature in package.read(name) for name in dexes), (
+                      f"{clazz} missing from packaged DEX"
+                  )
           print("PASS: APK contains Java SAF document import bridge")
           PY_ANDROID_SAF_DEX
           grep -Fx 'lib/arm64-v8a/libFreeCADGui.so' out/integrated-freecad-qtapk/apk-files.txt
