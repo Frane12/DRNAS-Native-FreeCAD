@@ -339,6 +339,24 @@ void restoreOriginalFreeCADIconPaths()
     paths.removeAll(iconRoot);
     paths.prepend(iconRoot);
     QDir::setSearchPaths(QStringLiteral("qss"), paths);
+
+    // Android fallback for upstream Sketcher constraint SVGs. The original
+    // SketcherGui registration may already supply an icons: resource path;
+    // append this verified on-device directory without replacing other modules.
+    // Only 2D Qt resource lookup changes; no Coin3D, FBO or CAD operations.
+    const QString sketcherConstraints =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/drnas-freecad-home/Mod/Sketcher/Gui/Resources/icons/constraints");
+    if (QFileInfo::exists(sketcherConstraints + QStringLiteral("/Constraint_Horizontal.svg"))
+        && QFileInfo::exists(sketcherConstraints + QStringLiteral("/Constraint_Vertical.svg"))) {
+        QStringList iconPaths = QDir::searchPaths(QStringLiteral("icons"));
+        if (!iconPaths.contains(sketcherConstraints)) {
+            iconPaths.append(sketcherConstraints);
+            QDir::setSearchPaths(QStringLiteral("icons"), iconPaths);
+            DrnasDiagnostics::note(QStringLiteral(
+                "SKETCHER_ICON_PATH fallback registered; original paths retained"));
+        }
+    }
 }
 
 // Qt for Android maps floating QDockWidgets to independent native platform
@@ -1711,7 +1729,8 @@ except BaseException:
             : QStringLiteral(
                 "import sys\n"
                 "_drnas_mark('MEASURE_AB PRE_GUI core_loaded=' + str('Measure' in sys.modules))\n"
-                "import MeasureGui\n");
+                "import MeasureGui\n"
+                "_drnas_runtime._drnas_refresh_measure_commands()\n");
         QString error;
         const bool ok = runOriginalFreeCADPython(script, error);
         DrnasDiagnostics::note(QStringLiteral(
@@ -2205,6 +2224,12 @@ void recordOriginalGuiStage(const char* stageName)
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"
+                "# Diagnostic isolation: Sketcher rectangle displays live QuantitySpinBox labels after its first corner.\n"
+                "# Hide on-view parameters for this APK experiment; leave geometry, solver and Coin3D unchanged.\n"
+                "_drnas_sketcher_tools = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Sketcher/Tools')\n"
+                "_drnas_sketcher_visibility_before = _drnas_sketcher_tools.GetInt('OnViewParameterVisibility', 1)\n"
+                "_drnas_sketcher_tools.SetInt('OnViewParameterVisibility', 0)\n"
+                "_drnas_mark('SKETCHER_OVP_TEST hidden=1 previous=%s: rectangle dimension overlays disabled; no native engine edits' % _drnas_sketcher_visibility_before)\n"
                 "_drnas_mark('RA11 ISOLATION: ShowNaviCube=False before viewer construction; main scene renderer unchanged')\n"), runtimeError)) {
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
