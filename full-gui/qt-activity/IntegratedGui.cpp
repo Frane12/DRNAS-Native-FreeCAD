@@ -53,6 +53,10 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QTimer>
+#ifdef Q_OS_ANDROID
+#include <QJniObject>
+#include <QNativeInterface>
+#endif
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -1086,6 +1090,121 @@ finally:
             .arg(nonNative ? QStringLiteral("QT_WIDGET") : QStringLiteral("ANDROID_NATIVE"))
             .arg(ok).arg(error));
     }
+
+
+    // Explicit SAF A/B without QFileDialog: first select/cache, then open.
+    // Keeping these as separate actions proves where a fatal abort happens.
+    auto* androidSelect = toolbar->addAction(QStringLiteral("ANDROID DATOTEKA"));
+    androidSelect->setObjectName(QStringLiteral("drnasAndroidSafSelect"));
+    androidSelect->setToolTip(QStringLiteral(
+        "Android DocumentsUI: select and copy .FCStd to app-private cache; does not open it."));
+    auto* androidOpen = toolbar->addAction(QStringLiteral("OTVORI KOPIJU"));
+    androidOpen->setObjectName(QStringLiteral("drnasAndroidSafOpen"));
+    androidOpen->setToolTip(QStringLiteral(
+        "Open the last successfully staged Android .FCStd directly through FreeCAD App.openDocument."));
+    QObject::connect(androidSelect, &QAction::triggered, shell,
+                     [androidSelect, shell, report] {
+#ifdef Q_OS_ANDROID
+        const QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        if (!activity.isValid()) {
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER ERROR missing QtActivity"));
+            report(QStringLiteral("Android Activity unavailable"));
+            return;
+        }
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 01 LAUNCH_BEGIN"));
+        androidSelect->setEnabled(false);
+        const jboolean launched = QJniObject::callStaticMethod<jboolean>(
+            "org/drnas/freecad/bootstrap/AndroidDocumentBridge", "launchPicker",
+            "(Landroid/app/Activity;)Z", activity.object<jobject>());
+        if (!launched) {
+            androidSelect->setEnabled(true);
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 01 LAUNCH_FAILED"));
+            report(QStringLiteral("Android DocumentsUI launch failed"));
+            return;
+        }
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 02 LAUNCHED"));
+        auto* poll = new QTimer(shell);
+        poll->setInterval(300);
+        auto polls = std::make_shared<int>(0);
+        QObject::connect(poll, &QTimer::timeout, shell,
+                         [poll, androidSelect, report, polls] {
+            const QJniObject result = QJniObject::callStaticObjectMethod(
+                "org/drnas/freecad/bootstrap/AndroidDocumentBridge",
+                "pollPickerResult", "()Ljava/lang/String;");
+            const QString status = result.isValid()
+                ? result.toString() : QStringLiteral("ERROR: JNI picker result unavailable");
+            if (status == QStringLiteral("PENDING") || status == QStringLiteral("IDLE")) {
+                if (++(*polls) < 1000) return;
+                DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER TIMEOUT"));
+            }
+            poll->stop();
+            poll->deleteLater();
+            androidSelect->setEnabled(true);
+            if (!status.startsWith(QStringLiteral("OK:"))) {
+                DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 03 RESULT %1")
+                                       .arg(status.left(160)));
+                report(QStringLiteral("Android odabir: ") + status.left(110));
+                return;
+            }
+            const QString localFile = status.mid(3);
+            QFileInfo info(localFile);
+            if (!info.isFile() || info.size() <= 0) {
+                DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER ERROR staged file missing"));
+                report(QStringLiteral("Odabrana datoteka nije kopirana"));
+                return;
+            }
+            QSettings settings;
+            settings.setValue(QStringLiteral("nativeProbe/lastSafFile"), localFile);
+            settings.sync();
+            // Do not log private provider URI or full filesystem path.
+            DrnasDiagnostics::note(QStringLiteral(
+                "ANDROID_SAF_PICKER 04 STAGED suffix=%1 bytes=%2 readable=%3")
+                .arg(info.suffix()).arg(info.size()).arg(info.isReadable()));
+            report(QStringLiteral("Kopirano: %1 (%2 B). Pritisni OTVORI KOPIJU.")
+                   .arg(info.fileName()).arg(info.size()));
+        });
+        poll->start();
+#else
+        report(QStringLiteral("Android SAF only available on Android"));
+#endif
+    });
+    QObject::connect(androidOpen, &QAction::triggered, shell, [report] {
+        const QString path = QSettings().value(QStringLiteral("nativeProbe/lastSafFile")).toString();
+        const QFileInfo info(path);
+        if (path.isEmpty() || !info.isFile() || info.size() <= 0) {
+            report(QStringLiteral("Prvo pritisni ANDROID DATOTEKA"));
+            return;
+        }
+        const QString suffix = info.suffix().toLower();
+        if (suffix != QStringLiteral("fcstd") && suffix != QStringLiteral("fcbak")) {
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_OPEN ERROR unsupported extension: %1").arg(suffix));
+            report(QStringLiteral("Ovaj test otvara samo FCStd/FCBak dokumente"));
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || !file.peek(4).startsWith("PK")) {
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_OPEN ERROR not a ZIP-based FCStd file"));
+            report(QStringLiteral("FCStd kopija nije ispravna ZIP datoteka"));
+            return;
+        }
+        const QString encodedPath = QString::fromLatin1(path.toUtf8().toBase64());
+        DrnasDiagnostics::note(QStringLiteral(
+            "ANDROID_SAF_OPEN 05 DIRECT_BEGIN suffix=%1 bytes=%2")
+            .arg(suffix).arg(info.size()));
+        QString error;
+        const QString python = QStringLiteral(
+            "import FreeCAD as App, base64\n"
+            "_drnas_saf_path = base64.b64decode('%1').decode('utf-8')\n"
+            "_drnas_mark('ANDROID_SAF_OPEN 06 PYTHON_BEGIN')\n"
+            "_drnas_saf_document = App.openDocument(_drnas_saf_path)\n"
+            "_drnas_mark('ANDROID_SAF_OPEN 07 PYTHON_RETURN document=' + str(_drnas_saf_document.Name))\n")
+            .arg(encodedPath);
+        const bool ok = runOriginalFreeCADPython(python, error);
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_OPEN 08 BRIDGE_RETURN ok=%1 error=%2")
+                               .arg(ok).arg(error.left(200)));
+        report(ok ? QStringLiteral("FCStd otvoren iz Android kopije")
+                  : QStringLiteral("FreeCAD open failed: ") + error);
+    });
 
     // Isolated type-registration diagnostic for documents with Body/Pad/Sketch
     // restore errors. Opt-in only; original Open and the Coin viewport unchanged.
