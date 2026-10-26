@@ -1034,6 +1034,52 @@ finally:
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
+    // Android file-open A/B diagnostic. The upstream FreeCAD DialogOptions
+    // preference selects between Qt's Android picker and FreeCAD's non-native
+    // QWidget QFileDialog. Do not change original Std_Open or the Coin viewer.
+    auto* fileDialogAB = toolbar->addAction(QStringLiteral("OTVORI QT TEST"));
+    fileDialogAB->setObjectName(QStringLiteral("drnasAndroidFileDialogAB"));
+    fileDialogAB->setToolTip(QStringLiteral(
+        "ON: Qt widget file dialog; OFF: Android native picker. Tap original Open after changing."));
+    fileDialogAB->setCheckable(true);
+    const QString fileDialogABKey = QStringLiteral("nativeProbe/openWithQtWidgets");
+    fileDialogAB->setChecked(QSettings().value(fileDialogABKey, false).toBool());
+    QObject::connect(fileDialogAB, &QAction::toggled, shell,
+                     [fileDialogABKey, report](bool widgetDialog) {
+        QSettings settings;
+        settings.setValue(fileDialogABKey, widgetDialog);
+        settings.sync();
+        DrnasDiagnostics::note(QStringLiteral(
+            "FILE_DIALOG_AB SELECT backend=%1; next original Std_Open uses selected mode")
+                .arg(widgetDialog ? QStringLiteral("QT_WIDGET")
+                                  : QStringLiteral("ANDROID_NATIVE")));
+        QString error;
+        const QString command = QStringLiteral(
+            "import FreeCAD as App\n"
+            "App.ParamGet('User parameter:BaseApp/Preferences/Dialog')"
+            ".SetBool('DontUseNativeFileDialog', %1)\n"
+            "_drnas_mark('FILE_DIALOG_AB ACTIVE backend=%2')\n")
+            .arg(widgetDialog ? QStringLiteral("True") : QStringLiteral("False"),
+                 widgetDialog ? QStringLiteral("QT_WIDGET") : QStringLiteral("ANDROID_NATIVE"));
+        const bool ok = runOriginalFreeCADPython(command, error);
+        DrnasDiagnostics::note(QStringLiteral("FILE_DIALOG_AB APPLY ok=%1 error=%2")
+                                   .arg(ok).arg(error));
+        report(ok ? QStringLiteral("FILE_DIALOG_AB: %1 — pritisni original Otvori")
+                   .arg(widgetDialog ? QStringLiteral("Qt prozor") : QStringLiteral("Android"))
+                  : QStringLiteral("FILE_DIALOG_AB FAILED: ") + error);
+    });
+    // The FreeCAD preference persists across launches; reapply the user's
+    // diagnostic selection on boot so the toggle and runtime backend agree.
+    if (fileDialogAB->isChecked()) {
+        QString error;
+        const bool ok = runOriginalFreeCADPython(QStringLiteral(
+            "import FreeCAD as App\n"
+            "App.ParamGet('User parameter:BaseApp/Preferences/Dialog')"
+            ".SetBool('DontUseNativeFileDialog', True)\n"), error);
+        DrnasDiagnostics::note(QStringLiteral(
+            "FILE_DIALOG_AB RESTORE QT_WIDGET ok=%1 error=%2").arg(ok).arg(error));
+    }
+
     // Isolated type-registration diagnostic for documents with Body/Pad/Sketch
     // restore errors. Opt-in only; original Open and the Coin viewport unchanged.
     auto* typeProbe = toolbar->addAction(QStringLiteral("TEST TIPOVA"));

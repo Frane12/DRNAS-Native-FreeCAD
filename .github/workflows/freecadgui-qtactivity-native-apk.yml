@@ -16,6 +16,7 @@ on:
     paths:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
       - 'full-gui/integrated-apk/**'
+      - 'full-gui/qt-activity/**'
   workflow_dispatch:
     inputs:
       upstream_run_id:
