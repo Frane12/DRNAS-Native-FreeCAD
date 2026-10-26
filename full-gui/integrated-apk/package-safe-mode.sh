@@ -159,6 +159,23 @@ test -s "$numpy_stage/numpy/__init__.py"
 test -d "$numpy_stage/numpy/_core"
 cp -a "$numpy_stage/." "$work/bundle/assets/drnas/freecad/Mod/"
 echo 'PASS: NumPy staged as extractable ARM64 package in APK.'
+# Diagnostic-branch-only ELF ABI intervention. Match 2336 native libc++
+# exported signatures before remapping both NumPy modules to QtActivity's
+# libc++_shared.so. Never patchelf: PT_LOAD/FBO layout must remain unchanged.
+# Qt already includes libc++_shared.so in its original APK; the staging
+# loop intentionally skips any duplicate JNI library from STAGE. Compare against
+# the ACTUAL ELF that will be installed, not the missing skipped file.
+qt_libcxx="$work/qtloader-original-libc++_shared.so"
+if ! grep -Fxq 'lib/arm64-v8a/libc++_shared.so' "$OUT/qtloader-original-apk-files.txt"; then
+  echo '::error::QtLoader base APK missing libc++_shared.so' >&2
+  exit 1
+fi
+unzip -p "$qt_apk" 'lib/arm64-v8a/libc++_shared.so' > "$qt_libcxx"
+test -s "$qt_libcxx"
+python3 "$ROOT/full-gui/integrated-apk/consolidate-numpy-cxx.py" \
+  "$qt_libcxx" \
+  "$work/bundle/assets/drnas/freecad/Mod" \
+  "$OUT/integrated-freecad-qtapk/numpy-cxx-consolidation.json"
 # zipimport cannot load extension modules directly from APK assets.
 python3 "$ROOT/full-gui/upstream/audit-python-bindings.py" \
   "$work/bundle/assets/drnas/freecad/Mod" --require-all

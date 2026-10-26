@@ -1,6 +1,14 @@
 name: DRNAS REAL upstream FreeCADGui Full ARM64 Build
 on:
   push:
+    branches: [feature/full-freecad-android, diagnostics/partdesign-shiboken-20261026]
+    paths:
+      - 'full-gui/upstream/**'
+      - '.github/workflows/upstream-freecadgui-full-android.yml'
+  # Draft PR targeting the trusted FreeCAD feature branch can restore its Qt,
+  # Boost, ICU, Python, Xerces caches. Ordinary diagnostic-branch pushes cannot.
+  # Native ABI is unaffected by Android packaging-only edits.
+  pull_request:
     branches: [feature/full-freecad-android]
     paths:
       - 'full-gui/upstream/**'
@@ -36,6 +44,13 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build only the experimental branch code, not a merged production GUI.
+          # The PR event still grants read-only access to the base branch's caches.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify read-only native registration diagnostics
+        run: python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
+
       - name: Python host tools matching FreeCAD embedded ABI
         uses: actions/setup-python@v5
         with:
@@ -341,10 +356,11 @@ jobs:
           retention-days: 30
 
       - name: Launch APK integration after successful native build
-        if: success()
+        # Pull-request diagnostics must never dispatch or publish a production APK.
+        if: success() && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh workflow run freecadgui-qtactivity-native-apk.yml --ref feature/full-freecad-android -f upstream_run_id="$GITHUB_RUN_ID"
+          gh workflow run freecadgui-qtactivity-native-apk.yml --ref "$GITHUB_REF_NAME" -f upstream_run_id="$GITHUB_RUN_ID"
           echo "Triggered DRNAS APK integration from $GITHUB_RUN_ID"

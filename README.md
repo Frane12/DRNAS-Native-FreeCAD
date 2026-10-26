@@ -1,3 +1,11 @@
+## Current FreeCAD Android working baseline
+
+**APK 316 is confirmed on the user's phone for standard Open and real FCStd
+rendering.** Development continues on `feature/full-freecad-android`; the exact
+tested snapshot is `baseline/android-working-316`. See
+[WORKING_BASELINE.md](WORKING_BASELINE.md) for source/binary provenance, download,
+device evidence, and the remaining Android Save work.
+
 ## ✅ Native CAD Viewer + STL LAB v0.0.4 — Android arm64-v8a
 
 [**Successful CI run #39565267562**](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39565267562) • [**Download Android APK artifact ZIP**](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/39565267562/artifacts/12329646322)

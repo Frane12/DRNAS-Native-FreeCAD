@@ -9,6 +9,7 @@
 #include "DrnasDebugCenter.h"
 #include "DrnasTouchInput.h"
 #include "DrnasDraggableLauncher.h"
+#include "DrnasDocumentOpen.h"
 #include <QFont>
 #include <QSizePolicy>
 #include <QAction>
@@ -53,6 +54,11 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QTimer>
+#ifdef Q_OS_ANDROID
+#include <QJniObject>
+// Qt 6.8 QNativeInterface::QAndroidApplication is declared by
+// QCoreApplication (already included above), not <QNativeInterface>.
+#endif
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -1034,6 +1040,245 @@ finally:
                QStringLiteral("New document"));
         DrnasDiagnostics::note(QStringLiteral("NEW_CPP C03 Python invocation returned to QAction handler"));
     });
+    // Android file-open A/B diagnostic. The upstream FreeCAD DialogOptions
+    // preference selects between Qt's Android picker and FreeCAD's non-native
+    // QWidget QFileDialog. Do not change original Std_Open or the Coin viewer.
+    auto* fileDialogAB = toolbar->addAction(QStringLiteral("OTVORI QT TEST"));
+    fileDialogAB->setObjectName(QStringLiteral("drnasAndroidFileDialogAB"));
+    fileDialogAB->setToolTip(QStringLiteral(
+        "ON: Qt widget file dialog; OFF: Android native picker. Tap original Open after changing."));
+    fileDialogAB->setCheckable(true);
+    const QString fileDialogABKey = QStringLiteral("nativeProbe/openWithQtWidgets");
+    fileDialogAB->setChecked(QSettings().value(fileDialogABKey, false).toBool());
+    QObject::connect(fileDialogAB, &QAction::toggled, shell,
+                     [fileDialogABKey, report](bool widgetDialog) {
+        QSettings settings;
+        settings.setValue(fileDialogABKey, widgetDialog);
+        settings.sync();
+        DrnasDiagnostics::note(QStringLiteral(
+            "FILE_DIALOG_AB SELECT backend=%1; next original Std_Open uses selected mode")
+                .arg(widgetDialog ? QStringLiteral("QT_WIDGET")
+                                  : QStringLiteral("ANDROID_NATIVE")));
+        QString error;
+        const QString command = QStringLiteral(
+            "import FreeCAD as App\n"
+            "App.ParamGet('User parameter:BaseApp/Preferences/Dialog')"
+            ".SetBool('DontUseNativeDialog', %1)\n"
+            "_drnas_mark('FILE_DIALOG_AB ACTIVE backend=%2')\n")
+            .arg(widgetDialog ? QStringLiteral("True") : QStringLiteral("False"),
+                 widgetDialog ? QStringLiteral("QT_WIDGET") : QStringLiteral("ANDROID_NATIVE"));
+        const bool ok = runOriginalFreeCADPython(command, error);
+        DrnasDiagnostics::note(QStringLiteral("FILE_DIALOG_AB APPLY ok=%1 error=%2")
+                                   .arg(ok).arg(error));
+        report(ok ? QStringLiteral("FILE_DIALOG_AB: %1 — pritisni original Otvori")
+                   .arg(widgetDialog ? QStringLiteral("Qt prozor") : QStringLiteral("Android"))
+                  : QStringLiteral("FILE_DIALOG_AB FAILED: ") + error);
+    });
+    // The FreeCAD preference persists across launches; reapply the user's
+    // diagnostic selection on boot so the toggle and runtime backend agree.
+    {
+        QString error;
+        // FreeCAD stores the setting independently from our Qt toggle.
+        // Always synchronize ON and OFF at boot (not just ON).
+        const bool nonNative = fileDialogAB->isChecked();
+        const QString bootCode = QStringLiteral(
+            "import FreeCAD as App\n"
+            "App.ParamGet('User parameter:BaseApp/Preferences/Dialog')"
+            ".SetBool('DontUseNativeDialog', %1)\n")
+            .arg(nonNative ? QStringLiteral("True") : QStringLiteral("False"));
+        const bool ok = runOriginalFreeCADPython(bootCode, error);
+        DrnasDiagnostics::note(QStringLiteral(
+            "FILE_DIALOG_AB RESTORE backend=%1 ok=%2 error=%3")
+            .arg(nonNative ? QStringLiteral("QT_WIDGET") : QStringLiteral("ANDROID_NATIVE"))
+            .arg(ok).arg(error));
+    }
+
+
+    // Keep the LAB split actions, and route normal Open through their tested
+    // SAF -> private file -> file-backed BRep path in one operation.
+    auto* standardAndroidOpen = new QAction(shell);
+    standardAndroidOpen->setObjectName(QStringLiteral("drnasAndroidDocumentOpen"));
+    auto* androidBrepTemp = toolbar->addAction(QStringLiteral("OTVORI BREP TEMP"));
+    auto autoOpenPending = std::make_shared<bool>(false);
+    auto* androidSelect = toolbar->addAction(QStringLiteral("ANDROID DATOTEKA"));
+    androidSelect->setObjectName(QStringLiteral("drnasAndroidSafSelect"));
+    androidSelect->setToolTip(QStringLiteral(
+        "Android DocumentsUI: select and copy .FCStd to app-private cache; does not open it."));
+    auto* androidOpen = toolbar->addAction(QStringLiteral("OTVORI KOPIJU"));
+    androidOpen->setObjectName(QStringLiteral("drnasAndroidSafOpen"));
+    androidOpen->setToolTip(QStringLiteral(
+        "Open the last successfully staged Android .FCStd directly through FreeCAD App.openDocument."));
+    QObject::connect(androidSelect, &QAction::triggered, shell,
+                     [androidSelect, shell, report, autoOpenPending, androidBrepTemp] {
+#ifdef Q_OS_ANDROID
+        const QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        if (!activity.isValid()) {
+            *autoOpenPending = false;
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER ERROR missing QtActivity"));
+            report(QStringLiteral("Android Activity unavailable"));
+            return;
+        }
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 01 LAUNCH_BEGIN"));
+        androidSelect->setEnabled(false);
+        const jboolean launched = QJniObject::callStaticMethod<jboolean>(
+            "org/drnas/freecad/bootstrap/AndroidDocumentBridge", "launchPicker",
+            "(Landroid/app/Activity;)Z", activity.object<jobject>());
+        if (!launched) {
+            *autoOpenPending = false;
+            androidSelect->setEnabled(true);
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 01 LAUNCH_FAILED"));
+            report(QStringLiteral("Android DocumentsUI launch failed"));
+            return;
+        }
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 02 LAUNCHED"));
+        auto* poll = new QTimer(shell);
+        poll->setInterval(300);
+        auto polls = std::make_shared<int>(0);
+        QObject::connect(poll, &QTimer::timeout, shell,
+                         [poll, androidSelect, report, polls, shell, autoOpenPending, androidBrepTemp] {
+            // Consume the result only after the QtActivity surface resumes.
+            if (QGuiApplication::applicationState() != Qt::ApplicationActive ||
+                !shell->windowHandle() || !shell->windowHandle()->isExposed()) return;
+            const QJniObject result = QJniObject::callStaticObjectMethod(
+                "org/drnas/freecad/bootstrap/AndroidDocumentBridge",
+                "pollPickerResult", "()Ljava/lang/String;");
+            const QString status = result.isValid()
+                ? result.toString() : QStringLiteral("ERROR: JNI picker result unavailable");
+            if (status == QStringLiteral("PENDING") || status == QStringLiteral("IDLE")) {
+                if (++(*polls) < 1000) return;
+                DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER TIMEOUT"));
+            }
+            poll->stop();
+            poll->deleteLater();
+            androidSelect->setEnabled(true);
+            if (!status.startsWith(QStringLiteral("OK:"))) {
+                *autoOpenPending = false;
+                DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER 03 RESULT %1")
+                                       .arg(status.left(160)));
+                report(QStringLiteral("Android odabir: ") + status.left(110));
+                return;
+            }
+            const QString localFile = status.mid(3);
+            QFileInfo info(localFile);
+            if (!info.isFile() || info.size() <= 0) {
+                *autoOpenPending = false;
+                DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_PICKER ERROR staged file missing"));
+                report(QStringLiteral("Odabrana datoteka nije kopirana"));
+                return;
+            }
+            QSettings settings;
+            settings.setValue(QStringLiteral("nativeProbe/lastSafFile"), localFile);
+            settings.sync();
+            // Do not log private provider URI or full filesystem path.
+            DrnasDiagnostics::note(QStringLiteral(
+                "ANDROID_SAF_PICKER 04 STAGED suffix=%1 bytes=%2 readable=%3")
+                .arg(info.suffix()).arg(info.size()).arg(info.isReadable()));
+            if (*autoOpenPending) {
+                *autoOpenPending = false;
+                DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN PICKER_READY -> BREP_TEMP"));
+                androidBrepTemp->trigger();
+            } else {
+                report(QStringLiteral("Kopirano: %1 (%2 B). Pritisni OTVORI BREP TEMP.")
+                       .arg(info.fileName()).arg(info.size()));
+            }
+        });
+        poll->start();
+#else
+        report(QStringLiteral("Android SAF only available on Android"));
+#endif
+    });
+    QObject::connect(standardAndroidOpen, &QAction::triggered, shell,
+                     [androidSelect, autoOpenPending] {
+        if (!androidSelect->isEnabled()) return;
+        *autoOpenPending = true;
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN ICON_REQUEST -> SAF_PICKER"));
+        androidSelect->trigger();
+    });
+#ifdef Q_OS_ANDROID
+    new DrnasDocumentOpenRouter(freecad, standardAndroidOpen, [](int count) {
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN Std_Open ROUTED count=%1").arg(count));
+    });
+    DrnasDiagnostics::note(QStringLiteral("ANDROID_OPEN router installed; watches deferred Std_Open actions"));
+#endif
+    QObject::connect(androidOpen, &QAction::triggered, shell, [report] {
+        const QString path = QSettings().value(QStringLiteral("nativeProbe/lastSafFile")).toString();
+        const QFileInfo info(path);
+        if (path.isEmpty() || !info.isFile() || info.size() <= 0) {
+            report(QStringLiteral("Prvo pritisni ANDROID DATOTEKA"));
+            return;
+        }
+        const QString suffix = info.suffix().toLower();
+        if (suffix != QStringLiteral("fcstd") && suffix != QStringLiteral("fcbak")) {
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_OPEN ERROR unsupported extension: %1").arg(suffix));
+            report(QStringLiteral("Ovaj test otvara samo FCStd/FCBak dokumente"));
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || !file.peek(4).startsWith("PK")) {
+            DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_OPEN ERROR not a ZIP-based FCStd file"));
+            report(QStringLiteral("FCStd kopija nije ispravna ZIP datoteka"));
+            return;
+        }
+        const QString encodedPath = QString::fromLatin1(path.toUtf8().toBase64());
+        DrnasDiagnostics::note(QStringLiteral(
+            "ANDROID_SAF_OPEN 05 CACHED_BEGIN suffix=%1 bytes=%2")
+            .arg(suffix).arg(info.size()));
+        QString error;
+        const QString python = QStringLiteral(
+            "import FreeCAD as App, base64\n"
+            "_drnas_saf_path = base64.b64decode('%1').decode('utf-8')\n"
+            "_drnas_mark('ANDROID_SAF_OPEN 06 PYTHON_BEGIN')\n"
+            "from drnas_android_runtime import _drnas_open_android_document\n"
+            "_drnas_saf_document = _drnas_open_android_document(_drnas_saf_path)\n"
+            "_drnas_mark('ANDROID_SAF_OPEN 07 PYTHON_RETURN document=' + str(_drnas_saf_document.Name))\n")
+            .arg(encodedPath);
+        const bool ok = runOriginalFreeCADPython(python, error);
+        DrnasDiagnostics::note(QStringLiteral("ANDROID_SAF_OPEN 08 BRIDGE_RETURN ok=%1 error=%2")
+                               .arg(ok).arg(error.left(200)));
+        report(ok ? QStringLiteral("FCStd otvoren iz Android kopije")
+                  : QStringLiteral("FreeCAD open failed: ") + error);
+    });
+
+    // Explicit A/B for Android BRep crash: retain original direct mode and add
+    // a file-backed path using FreeCAD's built-in DirectAccess=False preference.
+    // No changes to Coin3D, render stage, OpenGL, or input handling.
+    androidBrepTemp->setObjectName(QStringLiteral("drnasAndroidSafBrepTemp"));
+    androidBrepTemp->setToolTip(QStringLiteral(
+        "A/B: otvori istu FCStd kopiju preko privremene BRep datoteke, umjesto izravnog ZIP toka."));
+    QObject::connect(androidBrepTemp, &QAction::triggered, shell, [report] {
+        const QString path = QSettings().value(QStringLiteral("nativeProbe/lastSafFile")).toString();
+        const QFileInfo info(path);
+        if (path.isEmpty() || !info.isFile() || info.size() <= 0) {
+            report(QStringLiteral("Prvo pritisni ANDROID DATOTEKA"));
+            return;
+        }
+        const QString suffix = info.suffix().toLower();
+        if (suffix != QStringLiteral("fcstd") && suffix != QStringLiteral("fcbak")) {
+            report(QStringLiteral("Test podrzava FCStd/FCBak datoteke"));
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || !file.peek(4).startsWith("PK")) {
+            report(QStringLiteral("Kopija nije ispravna FCStd ZIP arhiva"));
+            return;
+        }
+        const QString encodedPath = QString::fromLatin1(path.toUtf8().toBase64());
+        DrnasDiagnostics::note(QStringLiteral(
+            "BREP_AB TEMP_REQUEST suffix=%1 bytes=%2").arg(suffix).arg(info.size()));
+        QString error;
+        const QString python = QStringLiteral(
+            "import FreeCAD as App, base64\n"
+            "_drnas_saf_path = base64.b64decode('%1').decode('utf-8')\n"
+            "from drnas_android_runtime import _drnas_open_android_document\n"
+            "_drnas_saf_document = _drnas_open_android_document(_drnas_saf_path)\n")
+            .arg(encodedPath);
+        const bool ok = runOriginalFreeCADPython(python, error);
+        DrnasDiagnostics::note(QStringLiteral(
+            "BREP_AB TEMP_BRIDGE_RETURN ok=%1 error=%2").arg(ok).arg(error.left(200)));
+        report(ok ? QStringLiteral("FCStd otvoren kroz privremeni BRep")
+                  : QStringLiteral("BRep TEMP test failed: ") + error);
+    });
+
     // Isolated type-registration diagnostic for documents with Body/Pad/Sketch
     // restore errors. Opt-in only; original Open and the Coin viewport unchanged.
     auto* typeProbe = toolbar->addAction(QStringLiteral("TEST TIPOVA"));
@@ -1067,6 +1312,36 @@ try:
         _tp_mark('MODULE_BEGIN ' + _tp_module)
         __import__(_tp_module)
         _tp_mark('MODULE_OK ' + _tp_module)
+    # Both a private Python copy and a JNI native copy are bundled. One
+    # mapped instance per SONAME is expected. Two independently mapped
+    # Part.so instances can split C++ static type registration across DSOs.
+    try:
+        import sys
+        for _tp_module in ('Part', 'Sketcher', '_PartDesign', 'PartDesignGui'):
+            _tp_loaded = sys.modules.get(_tp_module)
+            if _tp_loaded is not None:
+                _tp_mark('PYTHON_DSO ' + _tp_module + ' source=' +
+                         str(getattr(_tp_loaded, '__file__', '(built-in)')))
+        _tp_basenames = ('Part.so', 'Sketcher.so', '_PartDesign.so',
+                         'PartDesignGui.so', 'libFreeCADBase.so',
+                         'libFreeCADApp.so', 'libFreeCADGui.so',
+                         'libshiboken6.abi3.so', 'libpyside6.abi3.so')
+        _tp_found = {}
+        with open('/proc/self/maps', encoding='utf-8') as _tp_f:
+            for _tp_line in _tp_f:
+                _tp_loc = _tp_line.split()[-1]
+                if any(_tp_loc.endswith('/' + _tp_name) for _tp_name in _tp_basenames):
+                    _tp_name = _tp_loc.rsplit('/', 1)[-1]
+                    _tp_found.setdefault(_tp_name, set()).add(_tp_loc)
+        for _tp_name in _tp_basenames:
+            _tp_paths = sorted(_tp_found.get(_tp_name, ()))
+            _tp_mark('DSO_MAP ' + _tp_name + ' count=' + str(len(_tp_paths)) +
+                     ' paths=' + repr(_tp_paths))
+        _tp_duplicates = [name for name in _tp_basenames
+                          if len(_tp_found.get(name, ())) > 1]
+        _tp_mark('DSO_DUPLICATES ' + repr(_tp_duplicates))
+    except BaseException:
+        _tp_mark('DSO_MAP_ERROR ' + traceback.format_exc())
     _tp_mark('DOCUMENT_BEGIN hidden=True temp=True')
     _tp_doc = App.newDocument('DRNAS_TypeProbe', hidden=True, temp=True)
     _tp_mark('DOCUMENT_OK name=' + _tp_doc.Name)
@@ -1111,6 +1386,49 @@ finally:
         report(ok ? QStringLiteral("TEST TIPOVA PASS — vidi DBG")
                   : QStringLiteral("TEST TIPOVA FAIL — DBG: ") + error);
         typeProbe->setEnabled(true);
+    });
+
+    // Opt-in test of the exact native Qt pointer -> PySide/Shiboken boundary.
+    // A real QWidget is created and wrapped back to Python; the pointer is
+    // never dereferenced manually or truncated to signed 64-bit.
+    auto* shibokenProbe = toolbar->addAction(QStringLiteral("TEST SHIBOKEN"));
+    shibokenProbe->setObjectName(QStringLiteral("drnasShibokenUnsignedPointerProbe"));
+    shibokenProbe->setToolTip(QStringLiteral(
+        "Inspect Android tagged Qt pointers through shiboken6; no Coin viewport changes"));
+    QObject::connect(shibokenProbe, &QAction::triggered, shell, [shibokenProbe, report] {
+        shibokenProbe->setEnabled(false);
+        DrnasDiagnostics::note(QStringLiteral(
+            "SHIBOKEN_AB BEGIN: tagged QWidget address and wrapInstance"));
+        QString error;
+        const bool ok = runOriginalFreeCADPython(QStringLiteral(R"DRNAS(
+import traceback
+try:
+    import shiboken6
+    from PySide6.QtWidgets import QWidget
+    _sb_widget = QWidget()
+    try:
+        _sb_pointer = int(shiboken6.getCppPointer(_sb_widget)[0])
+        _drnas_mark('SHIBOKEN_AB ADDRESS unsigned=' + str(_sb_pointer) +
+                    ' signBit=' + str(int(_sb_pointer >= (1 << 63))) +
+                    ' signed=' + str(_sb_pointer - (1 << 64) if _sb_pointer >= (1 << 63) else _sb_pointer))
+        _sb_wrap = shiboken6.wrapInstance(_sb_pointer, QWidget)
+        _sb_verify = int(shiboken6.getCppPointer(_sb_wrap)[0])
+        _drnas_mark('SHIBOKEN_AB WRAP_OK valid=' + str(shiboken6.isValid(_sb_wrap)) +
+                    ' pointerPreserved=' + str(_sb_verify == _sb_pointer))
+        if not shiboken6.isValid(_sb_wrap) or _sb_verify != _sb_pointer:
+            raise RuntimeError('Shiboken changed the C++ pointer while wrapping')
+    finally:
+        _sb_widget.close()
+        _sb_widget.deleteLater()
+except BaseException:
+    _drnas_mark('SHIBOKEN_AB WRAP_FAIL ' + traceback.format_exc())
+    raise
+)DRNAS"), error);
+        DrnasDiagnostics::note(QStringLiteral("SHIBOKEN_AB END ok=%1 error=%2")
+            .arg(ok).arg(error));
+        report(ok ? QStringLiteral("TEST SHIBOKEN PASS — DBG")
+                  : QStringLiteral("TEST SHIBOKEN FAIL — DBG: ") + error);
+        shibokenProbe->setEnabled(true);
     });
 
     // A deterministic real FreeCAD/Part smoke object for Android Coin3D.
@@ -1741,6 +2059,7 @@ void recordOriginalGuiStage(const char* stageName)
                 "_drnas_part_commands = _drnas_runtime._drnas_part_commands\n"
                 "_drnas_fault_file = _drnas_runtime._drnas_fault_file\n"
                 "import FreeCAD as App\n"
+                "_drnas_runtime._drnas_configure_document_open()\n"
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"

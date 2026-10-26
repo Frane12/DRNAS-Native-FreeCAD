@@ -5,6 +5,13 @@ name: DRNAS FreeCADGui QtActivity APK Integration
 # genuinely new successful native GUI build.
 on:
   push:
+    branches: [feature/full-freecad-android, diagnostics/partdesign-shiboken-20261026]
+    paths:
+      - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
+      - 'full-gui/integrated-apk/**'
+      - 'full-gui/qt-activity/**'
+  # The diagnostic PR inherits trusted feature-branch Qt/OCCT/Python caches.
+  pull_request:
     branches: [feature/full-freecad-android]
     paths:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
@@ -42,7 +49,9 @@ jobs:
   package-real-gui:
     # Always dispatched on feature/full-freecad-android: feature caches for
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
-    if: github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
+    # Diagnostic branch packages only AFTER the successful native build dispatch.
+    # Its push has no native ARM64 artifact yet; avoid a misleading early failure.
+    if: (github.event_name == 'pull_request' && github.head_ref == 'diagnostics/partdesign-shiboken-20261026' && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -75,28 +84,92 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_RUN_ID: ${{ inputs.upstream_run_id }}
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+          DIAG_PR_COMMIT: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          if [[ -n "$INPUT_RUN_ID" ]]; then
+          reuse_native=0
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            # Packaging-only changes can reuse a successful native compile when
+            # GitHub confirms that none of its native build inputs changed.
+            latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request")][0].id // empty')"
+            run_id=""
+            if [[ "$latest" =~ ^[0-9]+$ ]]; then
+              native_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$latest" --jq .head_sha)"
+              comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$native_sha...$DIAG_PR_COMMIT")"
+              if jq -e '(.status == "ahead" or .status == "identical") and
+                  (.total_commits <= 250) and ((.files | length) < 300)' <<< "$comparison" >/dev/null; then
+                # Allowlist the complete diff: resources, Qt integration, tests,
+                # and this packaging workflow; everything else requires compile.
+                if jq -e '[.files[] | (.filename, (.previous_filename // "")) |
+                    select(length > 0) |
+                    select((startswith("full-gui/integrated-apk/") or
+                            startswith("full-gui/qt-activity/") or
+                            startswith("tests/") or
+                            . == ".github/workflows/freecadgui-qtactivity-native-apk.yml") | not)] | length == 0' <<< "$comparison" >/dev/null; then
+                  run_id="$latest"
+                  reuse_native=1
+                  echo "Verified packaging-only diff: reuse native $latest at $native_sha"
+                fi
+              fi
+            fi
+            # Native changes still require a successful exact-source compile.
+            # Wait for the corresponding upstream build of this exact PR commit.
+            for attempt_no in $(seq 1 150); do
+              [[ "$run_id" =~ ^[0-9]+$ ]] && break
+              native_list="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&per_page=100")"
+              native_row="$(jq -c --arg sha "$DIAG_PR_COMMIT" '
+                [.workflow_runs[]
+                 | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build"
+                          and .event == "pull_request"
+                          and .head_sha == $sha)]
+                | sort_by(.id) | last // null' <<< "$native_list")"
+              native_status="$(jq -r '.conclusion // .status // "pending"' <<< "$native_row")"
+              native_id="$(jq -r '.id // empty' <<< "$native_row")"
+              if [[ "$native_status" == success && "$native_id" =~ ^[0-9]+$ ]]; then
+                run_id="$native_id"
+                echo "Matching FreeCAD native build $run_id for $DIAG_PR_COMMIT is ready"
+                break
+              fi
+              if [[ "$native_status" == failure || "$native_status" == cancelled ]]; then
+                echo "::error::Matching FreeCAD native build ended $native_status"
+                exit 1
+              fi
+              echo "Native build not yet successful for $DIAG_PR_COMMIT, attempt $attempt_no: $native_status"
+              sleep 20
+            done
+            [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Matching native FreeCAD build not ready"; exit 1; }
+          elif [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
             # Always package the most recent verified native compile. The old
             # fixed run predates Android SAF and silently rejected new fixes.
-            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=feature/full-freecad-android&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
+            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
           fi
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
           test "$(jq -r '.conclusion' <<<"$info")" = success
           test "$(jq -r '.name' <<<"$info")" = 'DRNAS REAL upstream FreeCADGui Full ARM64 Build'
-          test "$(jq -r '.head_branch' <<<"$info")" = feature/full-freecad-android
+          test "$(jq -r '.head_branch' <<<"$info")" = "$TARGET_BRANCH"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            test "$(jq -r '.event' <<<"$info")" = pull_request
+          fi
           test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"
           commit="$(jq -r '.head_sha' <<<"$info")"
           attempt="$(jq -r '.run_attempt' <<<"$info")"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
           # Package the latest integration glue on our trusted feature branch.
           # Native binary provenance remains pinned to the successful source SHA.
-          package_sha="$GITHUB_SHA"
+          package_sha="${DIAG_PR_COMMIT:-$GITHUB_SHA}"
           [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && "$reuse_native" != 1 ]]; then
+            # A native input change requires identical native/APK source.
+            test "$commit" = "$package_sha" || {
+              echo "::error::Mismatched FreeCAD source commit and APK packaging commit"
+              exit 1
+            }
+            echo "PASS: native and APK use identical PR source commit"
+          fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
@@ -133,6 +206,9 @@ jobs:
             src/Mod/Sketcher/Gui/Resources
             src/Mod/PartDesign/Gui/Resources
             src/Mod/Measure
+            src/Mod/BIM
+            src/Mod/Draft
+            src/3rdParty/lazy_loader
 
       - name: Stage and verify default material libraries before APK packaging
         run: |
@@ -241,6 +317,16 @@ jobs:
           test -f out/upstream-freecad-gui/native/libCoin.so
           # No silently repacking a pre-fix upstream library.
           test -f full-gui/qt-activity/android/src/org/drnas/freecad/bootstrap/AndroidDocumentBridge.java
+          # Do not publish an APK with stale FreeCADApp/document restore objects.
+          grep -aFq 'FCSTD_PRIVATE 11 set FileName' out/upstream-freecad-gui/native/libFreeCADApp.so || {
+            echo "::error::FreeCADApp library lacks FCStd filename checkpoint"; exit 1;
+          }
+          grep -aFq 'FCSTD_RESTORE 25 document objects' out/upstream-freecad-gui/native/libFreeCADApp.so || {
+            echo "::error::FreeCADApp library lacks FCStd restore checkpoint"; exit 1;
+          }
+          grep -aFq 'FCSTD_ZIP 30 first getNextEntry' out/upstream-freecad-gui/native/libFreeCADBase.so || {
+            echo "::error::FreeCADBase library lacks ZIP embedded-entry diagnostic checkpoints"; exit 1;
+          }
           if ! grep -aFq 'AndroidDocumentBridge' out/upstream-freecad-gui/native/libFreeCADGui.so; then
             echo "::error::Native FreeCADGui is older than the Android SAF file-open fix. Run upstream-freecadgui-full-android.yml first."
             exit 1
@@ -339,6 +425,13 @@ jobs:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
         run: bash full-gui/integrated-apk/stage-runtime.sh
 
+      - name: Stage pinned BIM and Draft restore modules and original Qt resources
+        run: |
+          python3 full-gui/integrated-apk/stage-bim-resources.py \
+            .deps/freecad-runtime-resources out/upstream-freecad-gui/resources \
+            "$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64/libexec/rcc"
+          python3 -m unittest discover -s tests -p 'test_android_*.py' -v
+
       - name: Configure Android QtActivity and real FreeCAD native GUI integration
         run: |
           set -euo pipefail
@@ -392,10 +485,11 @@ jobs:
               dexes = [name for name in package.namelist()
                        if name.startswith("classes") and name.endswith(".dex")]
               assert dexes, "Android APK contains no DEX bytecode"
-              signature = b"Lorg/drnas/freecad/bootstrap/AndroidDocumentBridge;"
-              assert any(signature in package.read(name) for name in dexes), (
-                  "AndroidDocumentBridge missing from packaged DEX"
-              )
+              for clazz in ("AndroidDocumentBridge", "DocumentPickerActivity"):
+                  signature = ("Lorg/drnas/freecad/bootstrap/" + clazz + ";").encode()
+                  assert any(signature in package.read(name) for name in dexes), (
+                      f"{clazz} missing from packaged DEX"
+                  )
           print("PASS: APK contains Java SAF document import bridge")
           PY_ANDROID_SAF_DEX
           grep -Fx 'lib/arm64-v8a/libFreeCADGui.so' out/integrated-freecad-qtapk/apk-files.txt

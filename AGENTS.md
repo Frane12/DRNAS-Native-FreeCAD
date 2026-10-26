@@ -22,6 +22,10 @@ on a real Android device. Never label one milestone as the other.
 
 ## Native GUI integration
 
+- Device-confirmed base: APK **316**, integration commit
+  `c0ebc95a6ce78d84b80eb81728359b230774c840`; exact snapshot branch
+  `baseline/android-working-316`. Read `WORKING_BASELINE.md` for native binary
+  provenance, phone evidence, and remaining Save limitations before new work.
 - Primary source branch: `feature/full-freecad-android`.
 - Real compiler workflow: `.github/workflows/upstream-freecadgui-full-android.yml`.
 - Android packaging helper: `full-gui/integrated-apk/stage-runtime.sh`.

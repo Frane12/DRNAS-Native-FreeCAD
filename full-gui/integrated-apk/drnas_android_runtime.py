@@ -117,6 +117,62 @@ def _drnas_part_commands():
     _drnas_mark('ACTIVE WORKBENCH ' + Gui.activeWorkbench().name())
 
 
+def _drnas_prepare_document_restore():
+    """Expose only bundled workbenches to the original FreeCAD restore guard.
+
+    Do not eagerly import Arch/Draft or activate BIM during startup. Native
+    restore imports the object's original proxy lazily from these directories.
+    Android /data/data and /data/user/0 aliases must match the origin's path.
+    """
+    root = os.path.realpath(os.environ['DRNAS_FREECAD_HOME'])
+    allowed = App.__ModDirs__
+    for relative in ('Mod/Draft', 'Mod/BIM'):
+        directory = os.path.join(root, relative)
+        if not os.path.isdir(directory):
+            raise FileNotFoundError('Bundled restore workbench missing: ' + relative)
+        if directory not in sys.path:
+            sys.path.append(directory)
+        if directory not in allowed:
+            allowed.append(directory)
+    importlib.invalidate_caches()
+    for name in ('Draft', 'ArchMaterial', 'ArchWall', 'ArchWindow'):
+        spec = importlib.util.find_spec(name)
+        origin = getattr(spec, 'origin', None)
+        if not origin or not any(
+                os.path.commonpath((os.path.realpath(origin), os.path.join(root, relative)))
+                == os.path.join(root, relative) for relative in ('Mod/Draft', 'Mod/BIM')):
+            raise ImportError('Restore module is not from bundled BIM/Draft: ' + name)
+        _drnas_mark('RESTORE MODULE READY ' + name + ' origin=' + origin)
+
+
+def _drnas_configure_document_open():
+    # Apply before FreeCAD constructs its GUI actions. This also covers recent
+    # files and native Open commands that don't go through the SAF QAction.
+    parameters = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')
+    parameters.SetBool('DirectAccess', False)
+    _drnas_mark('ANDROID_OPEN DEFAULT DirectAccess=False')
+    _drnas_prepare_document_restore()
+
+
+def _drnas_open_android_document(path):
+    """Use the phone-tested file-backed BRep reader for standard Android Open."""
+    _drnas_prepare_document_restore()
+    parameters = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')
+    previous = parameters.GetBool('DirectAccess', True)
+    parameters.SetBool('DirectAccess', False)
+    _drnas_mark('ANDROID_OPEN BEGIN DirectAccess=False')
+    try:
+        document = App.openDocument(path)
+        _drnas_mark('ANDROID_OPEN RETURN document=' + str(document.Name))
+        return document
+    except Exception:
+        _drnas_mark('ANDROID_OPEN FAILED\n' + traceback.format_exc())
+        raise
+    finally:
+        parameters.SetBool('DirectAccess', previous)
+        _drnas_mark('ANDROID_OPEN PREF_RESTORED')
+
+
 # Render Lab exports actual document BReps. No primitive substitutes and no
 # changes to the document, ViewProviders, or saved material properties.
 _drnas_render_observer = None

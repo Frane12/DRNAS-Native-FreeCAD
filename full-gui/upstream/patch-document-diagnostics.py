@@ -60,8 +60,144 @@ def patch_android_service_storage(root):
     path.write_text(source)
 
 
+
+def trace_original_open(root):
+    # Checkpoints for native FreeCAD's actual Std_Open, not a replacement
+    # command. C++ stderr+fsync journal survives Python fatal aborts.
+    path = root / "src/Gui/CommandDoc.cpp"
+    source = path.read_text()
+    begin = source.index("void StdCmdOpen::activated(int iMsg)")
+    end = source.index("// Std_Import", begin)
+    body = source[begin:end]
+    def mark(old, new):
+        nonlocal body
+        body = once(body, old, new)
+    mark('    QStringList fileList = FileDialog::getOpenFileNames(',
+         '    ::drnasDocumentPhase("FILE_OPEN 01 QFileDialog", "BEGIN");\n'
+         '    QStringList fileList = FileDialog::getOpenFileNames(')
+    mark('        &selectedFilterIndex\n    );\n    if (fileList.isEmpty()) {',
+         '        &selectedFilterIndex\n    );\n'
+         '    ::drnasDocumentPhase("FILE_OPEN 02 QFileDialog", "RETURN");\n'
+         '    if (fileList.isEmpty()) {')
+    mark('    SelectModule::Dict dict\n        = SelectModule::importHandler(fileList, formatList[selectedFilterIndex].toFilterString());',
+         '    ::drnasDocumentPhase("FILE_OPEN 03 importHandler", "BEGIN");\n'
+         '    SelectModule::Dict dict\n        = SelectModule::importHandler(fileList, formatList[selectedFilterIndex].toFilterString());\n'
+         '    ::drnasDocumentPhase("FILE_OPEN 04 importHandler", "RETURN");')
+    mark('        getGuiApplication()->open(file.toUtf8(), "FreeCAD");',
+         '        ::drnasDocumentPhase("FILE_OPEN 05 FCBak open", "BEGIN");\n'
+         '        getGuiApplication()->open(file.toUtf8(), "FreeCAD");\n'
+         '        ::drnasDocumentPhase("FILE_OPEN 06 FCBak open", "RETURN");')
+    mark('            getGuiApplication()->open(it.key().toUtf8(), it.value().toLatin1());',
+         '            ::drnasDocumentPhase("FILE_OPEN 07 GuiApp open", "BEGIN");\n'
+         '            getGuiApplication()->open(it.key().toUtf8(), it.value().toLatin1());\n'
+         '            ::drnasDocumentPhase("FILE_OPEN 08 GuiApp open", "RETURN");')
+    path.write_text(source[:begin] + body + source[end:])
+
+def trace_zip_archive_restore(root):
+    # Last phone log: Document::restore reached reader.readFiles(zipstream)
+    # then aborted. Trace the ORIGINAL zipios/getNextEntry and RestoreDocFile
+    # calls without modifying behavior or bypassing any serialized CAD data.
+    path = root / "src/Base/Reader.cpp"
+    source = path.read_text()
+    start = source.index("void Base::XMLReader::readFiles(zipios::ZipInputStream& zipstream) const")
+    end = source.index("const char* Base::XMLReader::addFile(", start)
+    body = source[start:end]
+    body = once(body,
+        '    zipios::ConstEntryPointer entry;\n    try {\n        entry = zipstream.getNextEntry();',
+        '    zipios::ConstEntryPointer entry;\n    try {\n'
+        '        ::drnasDocumentPhase("FCSTD_ZIP 30 first getNextEntry", "BEGIN");\n'
+        '        entry = zipstream.getNextEntry();\n'
+        '        ::drnasDocumentPhase("FCSTD_ZIP 30 first getNextEntry", "END");\n'
+        '        if (entry) ::drnasDocumentPhase("FCSTD_ZIP entry", entry->getName().c_str());')
+    body = once(body,
+        '    while (entry->isValid() && it != FileList.end()) {',
+        '    while (entry->isValid() && it != FileList.end()) {\n'
+        '        ::drnasDocumentPhase("FCSTD_ZIP 31 loop", entry->getName().c_str());')
+    body = once(body,
+        '        if (jt != FileList.end()) {\n            try {',
+        '        if (jt != FileList.end()) {\n'
+        '            ::drnasDocumentPhase("FCSTD_ZIP 32 registered", jt->FileName.c_str());\n'
+        '            try {')
+    body = once(body,
+        '                Base::Reader reader(zipstream, jt->FileName, FileVersion);',
+        '                ::drnasDocumentPhase("FCSTD_ZIP 33 BaseReader", "BEGIN");\n'
+        '                Base::Reader reader(zipstream, jt->FileName, FileVersion);\n'
+        '                ::drnasDocumentPhase("FCSTD_ZIP 33 BaseReader", "END");')
+    body = once(body,
+        '                jt->Object->RestoreDocFile(reader);',
+        '                ::drnasDocumentPhase("FCSTD_ZIP 34 RestoreDocFile", "BEGIN");\n'
+        '                jt->Object->RestoreDocFile(reader);\n'
+        '                ::drnasDocumentPhase("FCSTD_ZIP 34 RestoreDocFile", "END");')
+    body = once(body,
+        '                if (reader.getLocalReader()) {\n'
+        '                    reader.getLocalReader()->readFiles(zipstream);\n'
+        '                }',
+        '                if (reader.getLocalReader()) {\n'
+        '                    ::drnasDocumentPhase("FCSTD_ZIP 35 nested readFiles", "BEGIN");\n'
+        '                    reader.getLocalReader()->readFiles(zipstream);\n'
+        '                    ::drnasDocumentPhase("FCSTD_ZIP 35 nested readFiles", "END");\n'
+        '                }')
+    body = once(body,
+        '            catch (...) {\n                // For any exception',
+        '            catch (...) {\n'
+        '                ::drnasDocumentPhase("FCSTD_ZIP 36 embedded file exception", "CAUGHT");\n'
+        '                // For any exception')
+    body = once(body,
+        '        try {\n            entry = zipstream.getNextEntry();\n'
+        '        }\n        catch (const std::exception&) {',
+        '        try {\n'
+        '            ::drnasDocumentPhase("FCSTD_ZIP 37 next getNextEntry", "BEGIN");\n'
+        '            entry = zipstream.getNextEntry();\n'
+        '            ::drnasDocumentPhase("FCSTD_ZIP 37 next getNextEntry", "END");\n'
+        '            if (entry) ::drnasDocumentPhase("FCSTD_ZIP entry", entry->getName().c_str());\n'
+        '        }\n        catch (const std::exception&) {')
+    include = '#include <Base/AndroidDocumentDiagnostics.h>\n'
+    if include not in source:
+        source = include + source
+        start += len(include)
+        end += len(include)
+    path.write_text(source[:start] + body + source[end:])
+
+
+def trace_part_brep_restore(root):
+    # Actual Android SIGABRT follows FCSTD_ZIP 34 BEGIN for PartShape.brp.
+    # Pinpoint the original BRep direct-stream or temporary-file restore.
+    # All markers are observational, without changing CAD serialization.
+    part = "src/Mod/Part/App/PropertyTopoShape.cpp"
+    annotate(root, part, "void PropertyPartShape::RestoreDocFile(", [
+        ('auto elementMap = _Shape.resetElementMap();', 'BREP_PROP 40 reset element map'),
+        ('Base::FileInfo brep(reader.getFileName());', 'BREP_PROP 41 source name'),
+        ('shape.importBinary(reader);', 'BREP_PROP 42 binary import'),
+        ('loadFromFile(reader);', 'BREP_PROP 43 file restore'),
+        ('loadFromStream(reader);', 'BREP_PROP 44 direct stream restore'),
+        ('shape.resetElementMap(elementMap);', 'BREP_PROP 45 apply element map'),
+        ('setValue(shape);', 'BREP_PROP 46 set final shape'),
+    ], max_calls=32)
+    annotate(root, part, "void PropertyPartShape::loadFromStream(", [
+        ('auto savedLocale = reader.getloc();', 'BREP_STREAM 50 get locale'),
+        ('reader.exceptions(std::istream::failbit | std::istream::badbit);',
+         'BREP_STREAM 51 set exception mask'),
+        ('BRep_Builder builder;', 'BREP_STREAM 52 construct builder'),
+        ('TopoDS_Shape shape;', 'BREP_STREAM 53 construct shape'),
+        ('BRepTools::Read(shape, reader, builder);',
+         'BREP_STREAM 54 OCCT BRepTools Read'),
+        ('setValue(shape);', 'BREP_STREAM 55 set parsed shape'),
+    ], max_calls=32)
+    annotate(root, part, "void PropertyPartShape::loadFromFile(", [
+        ('Base::FileInfo fi(App::Application::getTempFileName());',
+         'BREP_FILE 60 temp file path'),
+        ('Base::ofstream file(fi, std::ios::out | std::ios::binary);',
+         'BREP_FILE 61 create temporary BRep'),
+        ('reader >> buf;', 'BREP_FILE 62 copy ZIP shape stream'),
+        ('file.close();', 'BREP_FILE 63 close temporary BRep'),
+        ('setValue(shape);', 'BREP_FILE 64 apply parsed shape'),
+    ], max_calls=32)
+
+
 def patch(root):
     patch_android_service_storage(root)
+    trace_zip_archive_restore(root)
+    trace_part_brep_restore(root)
     # No Python/Qt calls: durable native markers still work during a failure
     # below Python. This is ordinary execution logging, not a signal handler.
     (root / "src/Base/AndroidDocumentDiagnostics.h").write_text(r'''#pragma once
@@ -107,6 +243,35 @@ private:
         ('runCommand(Command::Doc, cmd.toUtf8());', 'D01 App.newDocument command'),
         ('doCommand(Command::Gui, "Gui.activeDocument().activeView().viewDefaultOrientation()");', 'D02 default orientation'),
         ('doCommand(Command::Gui, "Gui.ActiveDocument.ActiveView.setAxisCross(True)");', 'D03 axis cross'),
+    ])
+    trace_original_open(root)
+    # An actual phone trace reaches Application::newDocument EXIT, then SIGABRT
+    # before Python App.openDocument returns. Precisely isolate filename update,
+    # original ZIP/XML restore, and native GUI restore. No CAD behavior change.
+    annotate(root, "src/App/Application.cpp", "Document* Application::openDocumentPrivate(", [
+        ('Document* newDoc = newDocument(name.c_str(), label, initFlags);',
+         'FCSTD_PRIVATE 10 newDocument'),
+        ('newDoc->FileName.setValue(propFileName==FileName?File.filePath():propFileName);',
+         'FCSTD_PRIVATE 11 set FileName'),
+        ('newDoc->restore(File.filePath().c_str(),true,objNames);',
+         'FCSTD_PRIVATE 12 restore archive'),
+    ])
+    annotate(root, "src/App/Document.cpp", "void Document::restore(", [
+        ('clearUndos();', 'FCSTD_RESTORE 20 clear undo'),
+        ('Base::ifstream file(fi, std::ios::in | std::ios::binary);',
+         'FCSTD_RESTORE 21 open stream'),
+        ('zipios::ZipInputStream zipstream(file);',
+         'FCSTD_RESTORE 22 ZIP stream'),
+        ('Base::XMLReader reader(filename, zipstream);',
+         'FCSTD_RESTORE 23 XML reader'),
+        ('GetApplication().signalStartRestoreDocument(*this);',
+         'FCSTD_RESTORE 24 signal start'),
+        ('Document::Restore(reader);',
+         'FCSTD_RESTORE 25 document objects'),
+        ('signalRestoreDocument(reader);',
+         'FCSTD_RESTORE 26 GUI restore'),
+        ('reader.readFiles(zipstream);',
+         'FCSTD_RESTORE 27 archive payload'),
     ])
     annotate(root, "src/App/Application.cpp", "Document* Application::newDocument(", [
         ('auto doc = new Document(name.c_str());', 'A01 App Document constructor'),

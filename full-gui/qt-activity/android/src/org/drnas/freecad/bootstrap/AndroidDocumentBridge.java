@@ -2,6 +2,8 @@ package org.drnas.freecad.bootstrap;
 
 import android.content.ContentResolver;
 import android.content.Context;
+import android.app.Activity;
+import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
@@ -25,6 +27,48 @@ public final class AndroidDocumentBridge {
     private static final String TAG = "DRNAS_SAF";
 
     private AndroidDocumentBridge() {}
+
+    // An explicit Android SAF picker; no QFileDialog/content:// assumptions.
+    // Poll from Qt after Android restores the original QtActivity.
+    private static String pickerResult = "IDLE";
+
+    public static synchronized boolean launchPicker(Activity activity) {
+        if (activity == null || "PENDING".equals(pickerResult)) {
+            return false;
+        }
+        pickerResult = "PENDING";
+        try {
+            activity.runOnUiThread(() -> {
+                try {
+                    Intent picker = new Intent(activity, DocumentPickerActivity.class);
+                    activity.startActivity(picker);
+                    Log.i(TAG, "SAF_PICKER LAUNCH");
+                } catch (Exception error) {
+                    Log.e(TAG, "SAF_PICKER launch failed", error);
+                    finishPicker("ERROR: Cannot launch Android picker: " + error);
+                }
+            });
+            return true;
+        } catch (Exception error) {
+            pickerResult = "ERROR: Cannot schedule Android picker: " + error;
+            Log.e(TAG, "SAF_PICKER scheduling failed", error);
+            return false;
+        }
+    }
+
+    public static synchronized void finishPicker(String result) {
+        if ("PENDING".equals(pickerResult)) {
+            pickerResult = result != null ? result : "ERROR: No picker result";
+        }
+    }
+
+    public static synchronized String pollPickerResult() {
+        String result = pickerResult;
+        if (!"PENDING".equals(result) && !"IDLE".equals(result)) {
+            pickerResult = "IDLE";
+        }
+        return result;
+    }
 
     public static String cacheForOpen(Context context, String uriText) {
         if (context == null || uriText == null || uriText.isEmpty()) {
