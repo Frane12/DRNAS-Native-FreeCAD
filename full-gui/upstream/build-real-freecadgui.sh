@@ -392,7 +392,8 @@ PY_DRNAS_HOME
 """
 workbench_diagnostics_patch = ('python3 "$ROOT/full-gui/upstream/patch-workbench-diagnostics.py" "$SOURCE"\n'
                                'python3 "$ROOT/full-gui/upstream/patch-document-diagnostics.py" "$SOURCE"\n'
-                               'python3 "$ROOT/full-gui/upstream/patch-android-save-diagnostics.py" "$SOURCE"\n')
+                               'python3 "$ROOT/full-gui/upstream/patch-android-save-diagnostics.py" "$SOURCE"\n'
+                               'python3 "$ROOT/full-gui/upstream/patch-android-brep-save.py" "$SOURCE"\n')
 # Bring the Android native-pick content:// bridge into the authentic upstream
 # FreeCADGui compile. No extra build is launched here: the next manually
 # dispatched full native build compiles this patch along with its other patches.

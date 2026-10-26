@@ -26,6 +26,12 @@ readelf --dyn-syms --wide "$NATIVE/libFreeCADApp.so" \
     echo "::error::Native FreeCADApp lacks Save trace v1; select the new successful native writer build." >&2
     exit 1
 }
+# Reject the old Part module that aborts inside its copied BRep stream writer.
+readelf --dyn-syms --wide "$NATIVE/Part.so" \
+    | awk '$7 != "UND" && $8 == "drnas_android_brep_filename_save_v1" { found=1 } END { exit !found }' || {
+    echo "::error::Native Part lacks the Android OCCT filename Save fix; rebuild native libraries." >&2
+    exit 1
+}
 for gl in GL GLU; do
     test -s "$ARTIFACT/opengl-compat/lib/lib${gl}.so" || {
         echo "::error::Missing verified Android GL4ES/Mesa ${gl} build." >&2

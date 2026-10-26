@@ -84,3 +84,16 @@ the real Python binding, filename validation, canonical path/stream creation,
 ZIP construction, document/property serialization, GUI data, BRep output and
 archive finalization. Packaging requires `drnas_android_save_trace_v1` from
 FreeCADApp so an older native binary cannot be mistaken for this diagnostic.
+
+The `padedole.txt` phone report from APK 323 narrows the abort to the copied
+`BRepTools_Write` helper called for `Sphere.Shape.brp`. Document XML, ZIP
+construction and entry creation all complete. The abort occurs after
+`SAVE_BREP 54 ... BEGIN`, before that helper returns. Unlike the working
+`TopoShape::exportBrep(filename)` path, this helper constructs a FreeCAD-owned
+ofstream and passes it into OCCT's ShapeSet writer. The Android candidate now
+uses the same OCCT-owned filename writer and options as that export: format 1,
+triangulation and normals off. Desktop code and the rest of FCStd persistence
+(properties, object data, element maps and GUI state) remain unchanged.
+The exact instruction inside the old helper that aborts is not established;
+the replacement still requires a phone Save/Open round trip. Packaging requires
+`drnas_android_brep_filename_save_v1` in Part.so to prevent stale native reuse.
