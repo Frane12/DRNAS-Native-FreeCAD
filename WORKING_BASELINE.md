@@ -91,3 +91,20 @@ Save was not working in that earlier baseline.
   User asked “to je to druže meštre?” after installing this test build.
 - This confirms the raster sampler/blending fix on the phone. It is a separate
   rendering milestone; the earlier 326 Open/Save evidence remains scoped to 326.
+
+## User-designated working build: sketch plane picker (27 October 2026)
+
+- Immutable snapshot branch: `baseline/android-working-sketch-picker-20261026`
+  at the exact tested source commit `fbafd4ed6669203fd13a7d7e2ff9b3e7dba08939`.
+- Native Android build run: `40413118146`; APK packaging run:
+  `40413118153`; [APK ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40413118153/artifacts/12695950885).
+- After testing, Frane said “radi ovo sve dosad ovo prozovi radnim buildom”
+  and requested that it be designated a working build. This is a broad device
+  report; individual plane-picker steps and an exact crash trace were not supplied.
+- The earlier black constraint icons and repeated missing Measure command
+  warnings had separately been reported fixed. The camera orientation/view cube
+  still crashes on clicking according to the latest device report. The Qt touch
+  warning, clipboard notification and verbose Sketcher icon diagnostics were also
+  observed; their relationship to the crash has not been established.
+- Keep this snapshot unchanged when investigating camera navigation. Previous
+  baseline branches and their independently confirmed scope remain preserved.
