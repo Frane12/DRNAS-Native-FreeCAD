@@ -154,4 +154,33 @@ replace_once(root / "state.h", "              stencil_test,", "              ste
 replace_once(root / "enable.c", "        proxy_GO(GL_STENCIL_TEST, stencil_test);", "        proxy_GO(GL_STENCIL_TEST, stencil_test);\n        proxy_GO(GL_SCISSOR_TEST, scissor_test);")
 replace_once(root / "enable.c", "        isenabled(GL_STENCIL_TEST, stencil_test);", "        isenabled(GL_STENCIL_TEST, stencil_test);\n        isenabled(GL_SCISSOR_TEST, scissor_test);")
 replace_once(root / "glstate.c", "    glstate->blendsfactorrgb = GL_ONE;", "    glstate->blendeqrgb = glstate->blendeqalpha = GL_FUNC_ADD;\n    glstate->blendsfactorrgb = GL_ONE;")
+# Coin3D's Sketcher constraint SoImage emits RGBA glDrawPixels. In GL4ES
+# raster.c that becomes a texture BLIT_COLOR (not BLIT_ALPHA). Pinned GLES2
+# blit.c unconditionally disables GL_BLEND, so zero-alpha SVG background
+# pixels become opaque black squares. Retain the caller's blending ONLY for
+# BLIT_COLOR, leaving bitmap/opaque blits and caller-disabled blending intact.
+# gl4es_glPushAttrib/glPopAttrib in blit.c owns restoration after drawing.
+blit_path = root / "blit.c"
+blit_source = blit_path.read_text()
+blend_off = "    gl4es_glDisable(GL_BLEND);\\n    int alpha = 0;"
+blend_save = (
+    "    // DRNAS Sketcher SoImage glDrawPixels: preserve transparent RGBA glyphs.\\n"
+    "    // GL4ES BLIT_COLOR must honor Coin's enabled blend state.\\n"
+    "    const int drnas_cad_blend = glstate->enable.blend && !globals4es.shaderblend;\\n"
+    "    gl4es_glDisable(GL_BLEND);\\n"
+    "    int alpha = 0;"
+)
+color_case = "        case BLIT_COLOR:\\n            //gl4es_glColor4f(1.0f, 1.0f, 1.0f, 1.0f);\\n            break;"
+color_restore = (
+    "        case BLIT_COLOR:\\n"
+    "            // glDrawPixels RGBA must composite transparent Sketcher overlays.\\n"
+    "            if (drnas_cad_blend) gl4es_glEnable(GL_BLEND);\\n"
+    "            break;"
+)
+assert blit_source.count(blend_off) == 1, "Pinned GLES2 BLIT blend guard changed"
+assert blit_source.count(color_case) == 1, "Pinned GLES2 BLIT_COLOR case changed"
+blit_source = blit_source.replace(blend_off, blend_save, 1)
+blit_source = blit_source.replace(color_case, color_restore, 1)
+blit_path.write_text(blit_source)
+print("DRNAS Sketcher alpha: GLES2 BLIT_COLOR preserves caller GL_BLEND")
 print("DRNAS Qt/GL4ES v3: native FBO ownership and tracked CAD raster state restored")
