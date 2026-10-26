@@ -21,6 +21,7 @@
 #include <QTouchEvent>
 #include <QDir>
 #include <QDockWidget>
+#include <QMetaObject>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -386,6 +387,102 @@ void normalizeAndroidFreeCADDocks(QMainWindow* window)
             });
         }
     }
+}
+
+// Desktop FreeCAD ships a dedicated OverlayManager which can float Tasks
+// over the 3D view. It is part of the VERIFIED upstream libFreeCADGui.so,
+// not an Android imitation. Resolve only the two C++ ABI entry points from
+// that already-loaded library; never dlopen FreeCADGui ahead of Qt startup.
+// Pinned upstream header: Gui::OverlayManager::OverlayMode::DisableAll == 5.
+bool disableAndroidFreeCADOverlays()
+{
+    using Instance = void* (*)();
+    using SetMode = void (*)(void*, int);
+    auto instance = reinterpret_cast<Instance>(
+        dlsym(RTLD_DEFAULT, "_ZN3Gui14OverlayManager8instanceEv"));
+    auto setMode = reinterpret_cast<SetMode>(
+        dlsym(RTLD_DEFAULT,
+              "_ZN3Gui14OverlayManager14setOverlayModeENS0_11OverlayModeE"));
+    if (!instance || !setMode) {
+        DrnasDiagnostics::note(QStringLiteral(
+            "TASKS_DOCK overlay API unavailable; keeping Qt dock fallback"));
+        return false;
+    }
+    void* manager = instance();
+    if (!manager) {
+        DrnasDiagnostics::note(QStringLiteral("TASKS_DOCK overlay manager null"));
+        return false;
+    }
+    setMode(manager, 5); // original FreeCAD DisableAll: normal dock, not overlay
+    DrnasDiagnostics::note(QStringLiteral(
+        "TASKS_DOCK original FreeCAD OverlayManager DisableAll applied"));
+    return true;
+}
+
+// Preserve the genuine TaskView/commands and its original lifetime. Reposition
+// only its existing QDockWidget in the real FreeCAD MainWindow. This gives the
+// operation parameters their own right-hand width, instead of a transparent
+// hover pane obscuring Coin3D. Never reparent QOpenGLWidget or change its FBO.
+void pinAndroidPartDesignTasks(QMainWindow* freecad, QMainWindow* shell)
+{
+    if (!freecad || !shell) return;
+    auto* tasks = freecad->findChild<QDockWidget*>(QStringLiteral("Tasks"));
+    if (!tasks) {
+        DrnasDiagnostics::note(QStringLiteral(
+            "TASKS_DOCK awaiting original FreeCAD Tasks QDockWidget"));
+        return;
+    }
+    if (!tasks->property("drnasAndroidTasksConnected").toBool()) {
+        tasks->setProperty("drnasAndroidTasksConnected", true);
+        QPointer<QMainWindow> safeCad(freecad);
+        QPointer<QMainWindow> safeShell(shell);
+        QObject::connect(tasks, &QDockWidget::visibilityChanged, freecad,
+                         [safeCad, safeShell](bool visible) {
+            if (!visible || !safeCad || !safeShell) return;
+            QTimer::singleShot(0, safeCad.data(), [safeCad, safeShell] {
+                if (safeCad && safeShell)
+                    pinAndroidPartDesignTasks(safeCad.data(), safeShell.data());
+            });
+        });
+    }
+    const bool visible = tasks->isVisible();
+    if (tasks->isFloating()) {
+        tasks->hide();
+        tasks->setFloating(false);
+    }
+    tasks->setAllowedAreas(Qt::RightDockWidgetArea);
+    tasks->setFeatures(tasks->features() & ~QDockWidget::DockWidgetFloatable);
+    if (freecad->dockWidgetArea(tasks) != Qt::RightDockWidgetArea) {
+        freecad->addDockWidget(Qt::RightDockWidgetArea, tasks);
+    }
+    if (visible && !tasks->isVisible()) tasks->show();
+    if (!tasks->isVisible()) return;
+
+    // Width in Qt logical pixels, dynamically bounded for a phone. Qt's own
+    // splitter can shrink it if the viewport needs more room.
+    const int desired = std::clamp(freecad->width() * 32 / 100, 210, 310);
+    freecad->resizeDocks({tasks}, {desired}, Qt::Horizontal);
+
+    // Only relocate DRNAS launchers that are actually covering Tasks.
+    // They stay draggable; do not overwrite user-saved positions or reroute
+    // their original actions. Do not move any upstream FreeCAD widget.
+    const QRect taskRect(shell->mapFromGlobal(tasks->mapToGlobal(QPoint(0, 0))),
+                         tasks->size());
+    for (const char* name : {"drnasTouchInputLauncher", "drnasFloatingCommandsLauncher",
+                              "drnasLiveLabButton", "drnasViewportSoloToggle"}) {
+        auto* button = shell->findChild<QPushButton*>(QString::fromLatin1(name));
+        if (!button || !button->isVisible()) continue;
+        if (QRect(button->pos(), button->size()).intersects(taskRect)) {
+            const int safeX = std::max(0, taskRect.left() - button->width() - 10);
+            button->move(safeX, button->y());
+            DrnasDiagnostics::note(QStringLiteral(
+                "TASKS_DOCK shifted %1 outside right task area x=%2")
+                .arg(QString::fromLatin1(name)).arg(safeX));
+        }
+    }
+    DrnasDiagnostics::note(QStringLiteral(
+        "TASKS_DOCK pinned right, visible=%1 width=%2 target=%3 viewportPreserved=1")
+        .arg(tasks->isVisible()).arg(tasks->width()).arg(desired));
 }
 
 // An embedded FreeCAD menu bar uses a second row on small Android screens.
@@ -2429,13 +2526,22 @@ public:
                                 DrnasDiagnostics::note(QStringLiteral("AUTO 3/3 FAILED: PartDesign action unavailable"));
                             }
                         }
-                        // Do not resurrect the duplicate desktop menu row.
+                        // Run ONLY after FreeCAD's actual MainWindow has
+                        // finished initialization/restoring its desktop state.
+                        // The original overlay manager owns its own dock modes.
+                        disableAndroidFreeCADOverlays();
                         compactOriginalAndroidFreeCADChrome(freecadWindow);
-                        // FreeCAD's deferred restoreState() can run later.
-                        // Re-apply after it without touching the EGLSurface.
+                        pinAndroidPartDesignTasks(freecadWindow, this);
+                        // FreeCAD can restore saved overlay/layout settings
+                        // again after workbench activation. A guarded second
+                        // application retains a native Qt dock on the right.
                         QPointer<QMainWindow> guarded(freecadWindow);
-                        QTimer::singleShot(250, this, [guarded] {
-                            if (guarded) compactOriginalAndroidFreeCADChrome(guarded.data());
+                        QPointer<QMainWindow> safeShell(this);
+                        QTimer::singleShot(350, this, [guarded, safeShell] {
+                            if (!guarded || !safeShell) return;
+                            disableAndroidFreeCADOverlays();
+                            compactOriginalAndroidFreeCADChrome(guarded.data());
+                            pinAndroidPartDesignTasks(guarded.data(), safeShell.data());
                         });
                     } else {
                         QSettings fallback;
