@@ -1,99 +1,82 @@
-# Device-confirmed Android baseline: APK 316
+# Device-confirmed Android baseline: APK 326
 
-Frane confirmed this diagnostic build as the working base on 26 October 2026.
-The supplied `idemo.txt` device log confirms that the standard Open icon enters
-the Android SAF picker and completes real FCStd/BRep restore.
+On 26 October 2026 Frane explicitly confirmed both Save and reopening the
+saved `.FCStd` on his Android phone. Asked whether both steps succeeded, he
+answered “sveeere”. This is user-reported device evidence, following the
+successful native build and APK checks; no new post-fix device log was supplied.
 
 ## Exact tested build
 
-- Snapshot branch: `baseline/android-working-316` (retain the tested commit).
-- APK integration commit: `c0ebc95a6ce78d84b80eb81728359b230774c840`.
-- APK integration run: [316 / 40311394406](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40311394406).
-- [APK artifact ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40311394406/artifacts/12645043643).
-- Artifact SHA-256: `7701c123af6665179f72b5be7c8fa92d2497c3646e93994ba95623451d72ba17`.
-- Native libraries: successful [native run 115 / 40309325619](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40309325619), source `ee342e9b976b31e4b9601aac67554b8cbe8928b4`.
+- Snapshot branch: `baseline/android-working-326` (retain the exact tested commit).
+- APK integration and native source commit: `8a5b799fc5081fcd322448cc06962c8aaca783ed`.
+- APK integration run: [326 / 40330149643](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40330149643).
+- [APK artifact ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40330149643/artifacts/12654457741).
+- APK artifact ZIP SHA-256: `9762530d6e26beaf4c9d48e21af361e7aa251c1a5f4076f0b6126d83c2dc1344`.
+- Native libraries: successful [native run 119 / 40329326848](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40329326848).
+- Native artifact ID: `12654751633`; ZIP SHA-256: `af0847bc385f530038358015078671c65195db6869100e9107af9f66fa8cf83a`.
 - Upstream FreeCAD revision: `d4ffc7f725973e073907746e88d320d3e438fd34`.
 
-## Device evidence and scope
+## Confirmed scope
 
-The log contains `ANDROID_OPEN DEFAULT DirectAccess=False`,
-`ANDROID_OPEN Std_Open ROUTED count=1`,
-`ANDROID_OPEN ICON_REQUEST -> SAF_PICKER`,
-`ANDROID_OPEN PICKER_READY -> BREP_TEMP`,
-`ANDROID_OPEN RETURN document=...`, and `TEMP_BRIDGE_RETURN ok=1`.
-Subsequent Coin/Qt framebuffer diagnostics report PASS. Reopening the staged
-copy also succeeds. Draft/Arch module specifications resolve to bundled
-scripts; full BIM parametric editing is not established by this log.
+Standard Open, actual FCStd/BRep rendering, Save and reopening a saved FCStd
+are confirmed on the user's phone. CI also passed 15 Android host regression
+tests, Java file transfer tests, native ABI checks and APK v2/v3 signing checks.
+This does not establish every workbench, BIM parametric editing, every document
+type, every SAF provider, Save As/Save Copy edge case, or clean application exit.
 
-This establishes real document opening and rendering on the user's phone.
-It does not establish every workbench, save/export, or clean application exit.
-The log records a Save press without a save-success marker and later reports
-an unclean prior session; it does not contain a fatal Save stack trace.
+## Preserve these paths
 
-## Subsequent work
+Continue development on `feature/full-freecad-android`. Retain both baseline
+snapshots; do not move them when changing the renderer, input, file handling
+or dependencies. A later build needs its own device check before replacing
+this baseline.
 
-Continue from `feature/full-freecad-android`, which incorporates this source.
-Keep the snapshot branch as the exact comparison point. The promotion retains
-the runtime and native build sources from the tested commit, while preserving
-the feature branch's existing Measure regression step and R264 LAB workflow.
+Open uses Android SAF and an app-private staged copy. Keep file-backed BRep
+restore (`DirectAccess=False`) and lazy registration of the bundled BIM/Draft
+module directories. Bind the standard Open action after delayed creation and
+across workbench rebuilds, retaining its original icon and menu placement.
 
-Keep file-backed BRep restore as the Android default, and bind Open after
-delayed QAction creation and across workbench rebuilds. Preserve this baseline
-before experimenting with Save or renderer/input changes. Require a device
-check before calling another APK a confirmed replacement.
+Save first creates and validates a full native FCStd in durable app-private
+storage, then copies it through an Android SAF content URI. A first Save or
+Save As selects a destination; subsequent Save for the same open document
+reuses it. Save Copy selects a destination and preserves modified state.
+Cancellation and transfer failure retain the local copy and dirty state;
+success is acknowledged only after the output stream flushes and closes.
+Concurrent edits remain marked modified. Open imports do not silently overwrite
+the original provider file.
 
-## Save follow-up
+Native geometry serialization uses OCCT's filename writer inside the normal
+FCStd writer, matching `TopoShape::exportBrep(filename)`: format 1, triangulation
+and normals off. Document properties, object data, element maps and GUI state
+remain in the FCStd archive. Optional preview thumbnails remain disabled.
+Packaging requires `drnas_android_save_trace_v1` in FreeCADApp and
+`drnas_android_brep_filename_save_v1` in Part.so to reject stale native inputs.
+Android-only follow-up builds must select native run 119 or a compatible newer
+build; the old native-115 fallback lacks these required symbols.
 
-Open currently imports an app-private cached copy, not a writable reference to
-the provider's original file. Native Save targets that local filename.
-Android saving needs a separate write path: create a complete FCStd in durable
-private storage, let Android select a destination through SAF, then stream the
-completed file through its content URI. Retain the local copy on cancellation
-or transfer failure. Remember the granted destination for subsequent Save;
-Save As selects a new destination. Report success only after the destination
-write completes.
+## Save diagnosis leading to this baseline
 
-The integration now implements this handshake for `Std_Save`, `Std_SaveAs`,
-and `Std_SaveCopy`. The first Save chooses a new Android destination; later
-Save operations on the same open document reuse it. A copy operation always
-chooses a destination and preserves the document's modified state. Existing
-Open sources are read-only imports; the original provider file is not silently
-overwritten. Native serialization uses `saveCopy` with `DirectAccess=False`,
-validates the FCStd archive and retains it under private `drnas-documents`.
-Provider writing is asynchronous, with no success acknowledgement until the
-output stream flushes and closes. Concurrent edits remain marked modified.
+`save.txt` (APK 318) aborted inside `doc.saveCopy()` before the Android picker.
+Disabling thumbnail generation did not resolve it: `nece.txt` still aborted
+with `SaveThumbnail=False`, while a separate BRep export worked.
 
-Host tests cover the handshake and transfer failures. This Save implementation
-still requires a device round-trip check; APK 316 remains the confirmed Open
-baseline until the user confirms the new build.
+The native checkpoints in APK 323 and `padedole.txt` located the abort inside
+the copied `BRepTools_Write` helper, writing `Sphere.Shape.brp`. XML and ZIP
+entry creation completed; the last marker was `SAVE_BREP 54 ... BEGIN`.
+That helper creates a FreeCAD-owned ofstream and passes it into OCCT's
+ShapeSet writer. The Android fix uses OCCT's own filename writer, as the
+working BRep export does. The exact instruction inside the old helper that
+aborted is not established. APK 326's successful Save/Open device round trip
+confirms the replacement path works for the user's test.
 
-The phone's `save.txt` report for APK 318 reaches `doc.saveCopy()` and then
-aborts before the Android provider is launched. The current candidate disables
-optional `SaveThumbnail` generation: upstream `Thumbnail::SaveDocFile()` invokes
-`renderToImage()` on a separate offscreen GL path. This is a suspected cause,
-not established by the available native stack. The FCStd still contains native
-document, geometry, parameters and GUI state; only the generated preview image
-is omitted. The Save helper enforces this for serialization and restores the
-prior setting afterward; Android startup defaults it off for native Save paths.
+## Retained earlier Open baseline: APK 316
 
-The subsequent `nece.txt` phone report still aborts in saveCopy for a newly
-created cylinder with thumbnails disabled. BRep export succeeds in the same
-session, and the scoped C++ terminate handler is not invoked. The native Save
-cause is still unresolved. The next source build adds durable checkpoints in
-the real Python binding, filename validation, canonical path/stream creation,
-ZIP construction, document/property serialization, GUI data, BRep output and
-archive finalization. Packaging requires `drnas_android_save_trace_v1` from
-FreeCADApp so an older native binary cannot be mistaken for this diagnostic.
+- Snapshot: `baseline/android-working-316` at `c0ebc95a6ce78d84b80eb81728359b230774c840`.
+- [APK run 316 / 40311394406](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40311394406).
+- [Earlier APK ZIP](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40311394406/artifacts/12645043643).
+- Artifact ZIP SHA-256: `7701c123af6665179f72b5be7c8fa92d2497c3646e93994ba95623451d72ba17`.
+- Native run 115 / `40309325619`, source `ee342e9b976b31e4b9601aac67554b8cbe8928b4`.
 
-The `padedole.txt` phone report from APK 323 narrows the abort to the copied
-`BRepTools_Write` helper called for `Sphere.Shape.brp`. Document XML, ZIP
-construction and entry creation all complete. The abort occurs after
-`SAVE_BREP 54 ... BEGIN`, before that helper returns. Unlike the working
-`TopoShape::exportBrep(filename)` path, this helper constructs a FreeCAD-owned
-ofstream and passes it into OCCT's ShapeSet writer. The Android candidate now
-uses the same OCCT-owned filename writer and options as that export: format 1,
-triangulation and normals off. Desktop code and the rest of FCStd persistence
-(properties, object data, element maps and GUI state) remain unchanged.
-The exact instruction inside the old helper that aborts is not established;
-the replacement still requires a phone Save/Open round trip. Packaging requires
-`drnas_android_brep_filename_save_v1` in Part.so to prevent stale native reuse.
+`idemo.txt` confirmed standard Open -> SAF -> BREP_TEMP -> actual document
+restore and framebuffer PASS on the phone. It established Open/rendering;
+Save was not working in that earlier baseline.

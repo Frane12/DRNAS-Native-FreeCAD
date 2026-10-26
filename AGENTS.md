@@ -22,10 +22,12 @@ on a real Android device. Never label one milestone as the other.
 
 ## Native GUI integration
 
-- Device-confirmed base: APK **316**, integration commit
-  `c0ebc95a6ce78d84b80eb81728359b230774c840`; exact snapshot branch
-  `baseline/android-working-316`. Read `WORKING_BASELINE.md` for native binary
-  provenance, phone evidence, and remaining Save limitations before new work.
+- Device-confirmed base: APK **326** (Open, Save and reopening FCStd), commit
+  `8a5b799fc5081fcd322448cc06962c8aaca783ed`; exact snapshot branch
+  `baseline/android-working-326`. Retain the earlier Open baseline 316 too.
+  Read `WORKING_BASELINE.md` for native binary provenance, phone evidence
+  and validation scope before new work. Required native Save symbols need
+  native run 119 or a compatible newer build; native 115 is insufficient.
 - Primary source branch: `feature/full-freecad-android`.
 - Real compiler workflow: `.github/workflows/upstream-freecadgui-full-android.yml`.
 - Android packaging helper: `full-gui/integrated-apk/stage-runtime.sh`.
