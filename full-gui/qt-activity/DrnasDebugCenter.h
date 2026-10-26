@@ -33,6 +33,7 @@
 #include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QSysInfo>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -493,6 +494,86 @@ public:
                 + QDir::searchPaths(QStringLiteral("icons")).join(QStringLiteral(";"));
             DrnasDiagnostics::note(details);
             notify(details);
+        });
+        // Show exactly the RGBA images emitted by SketcherGui's actual native
+        // renderConstrIcon() and Coin SoSFImage, not newly re-rendered SVGs.
+        // QLabels live inside DBG, so no second Android native window or GL.
+        auto* nativeIconButton = new QPushButton(
+            QStringLiteral("VIEW REAL SKETCHER ICON (3 STAGES)"));
+        nativeIconButton->setMinimumHeight(46);
+        layout->addWidget(nativeIconButton);
+        struct DrnasIconPreview {
+            QString key;
+            QLabel* display;
+        };
+        const QStringList nativeKeys {
+            QStringLiteral("Constraint_Horizontal-source"),
+            QStringLiteral("Constraint_Horizontal-composed"),
+            QStringLiteral("Constraint_Horizontal-coin"),
+            QStringLiteral("Constraint_Vertical-source"),
+            QStringLiteral("Constraint_Vertical-composed"),
+            QStringLiteral("Constraint_Vertical-coin")
+        };
+        QList<DrnasIconPreview> nativePreviews;
+        for (int rowNumber=0; rowNumber<2; ++rowNumber) {
+            auto* iconRow = new QHBoxLayout;
+            for (int stageNumber=0; stageNumber<3; ++stageNumber) {
+                const int index = rowNumber*3+stageNumber;
+                auto* cell = new QVBoxLayout;
+                const QString caption = QStringLiteral("%1 %2")
+                    .arg(rowNumber == 0 ? QStringLiteral("H") : QStringLiteral("V"),
+                         stageNumber == 0 ? QStringLiteral("SVG")
+                           : stageNumber == 1 ? QStringLiteral("Composed")
+                                             : QStringLiteral("Coin"));
+                auto* title = new QLabel(caption);
+                auto* visual = new QLabel(QStringLiteral("—"));
+                visual->setFixedSize(64,64);
+                visual->setAlignment(Qt::AlignCenter);
+                visual->setStyleSheet(QStringLiteral(
+                    "QLabel{color:#ffffff;background:#596282;border:1px solid #aab7d9;}"));
+                cell->addWidget(title);
+                cell->addWidget(visual);
+                iconRow->addLayout(cell);
+                nativePreviews.append({nativeKeys.at(index), visual});
+            }
+            layout->addLayout(iconRow);
+        }
+        connect(nativeIconButton, &QPushButton::clicked, this,
+                [this, nativePreviews] {
+            const QString folder = QStandardPaths::writableLocation(
+                QStandardPaths::AppDataLocation)
+                + QStringLiteral("/diagnostics/sketcher-icons/");
+            QStringList status;
+            for (const auto& preview : nativePreviews) {
+                const QString filename = folder + preview.key + QStringLiteral(".png");
+                const QImage image(filename);
+                if (image.isNull()) {
+                    preview.display->setPixmap(QPixmap());
+                    preview.display->setText(QStringLiteral("NO PNG"));
+                    status << preview.key + QStringLiteral("=MISSING");
+                }
+                else {
+                    const QPixmap px = QPixmap::fromImage(image).scaled(
+                        62, 62, Qt::KeepAspectRatio, Qt::FastTransformation);
+                    preview.display->setPixmap(px);
+                    int zero=0, partial=0, opaque=0;
+                    for (int y=0; y<image.height(); ++y) {
+                        for (int x=0; x<image.width(); ++x) {
+                            int alpha=image.pixelColor(x,y).alpha();
+                            if (alpha==0) ++zero;
+                            else if (alpha==255) ++opaque;
+                            else ++partial;
+                        }
+                    }
+                    status << QStringLiteral("%1=%2x%3 Z=%4 P=%5 O=%6")
+                        .arg(preview.key).arg(image.width()).arg(image.height())
+                        .arg(zero).arg(partial).arg(opaque);
+                }
+            }
+            const QString result=QStringLiteral("SKETCHER_NATIVE_GALLERY ")
+                +status.join(QStringLiteral(" | "));
+            DrnasDiagnostics::note(result);
+            notify(result);
         });
         auto* row1 = new QHBoxLayout;
         auto* snapshotButton = new QPushButton(QStringLiteral("SNAPSHOT"));
