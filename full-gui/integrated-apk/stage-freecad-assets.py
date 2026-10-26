@@ -13,6 +13,10 @@ REQUIRED = {
     "share/Mod/Material/Resources/Materials/Appearance/Default.FCMat",
     "share/Mod/Material/Resources/Materials/Standard/Default.FCMat",
     "share/Mod/Material/Resources/Models/Rendering/BasicRendering.yml",
+    "Mod/BIM/ArchMaterial.py", "Mod/BIM/ArchWall.py", "Mod/BIM/ArchWindow.py",
+    "Mod/BIM/Arch_rc.py", "Mod/Draft/Draft.py", "Mod/Draft/Draft_rc.py",
+    "lib/lazy_loader/lazy_loader.py",
+    "Mod/PySide/QtWidgets.py",
 }
 
 
