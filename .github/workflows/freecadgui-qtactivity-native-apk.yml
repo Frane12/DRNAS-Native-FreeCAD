@@ -15,6 +15,7 @@ on:
     branches: [feature/full-freecad-android]
     paths:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
+      - 'full-gui/integrated-apk/**'
   workflow_dispatch:
     inputs:
       upstream_run_id:

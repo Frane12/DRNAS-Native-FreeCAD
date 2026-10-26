@@ -7,13 +7,12 @@ on:
       - '.github/workflows/upstream-freecadgui-full-android.yml'
   # Draft PR targeting the trusted FreeCAD feature branch can restore its Qt,
   # Boost, ICU, Python, Xerces caches. Ordinary diagnostic-branch pushes cannot.
+  # Native ABI is unaffected by Android packaging-only edits.
   pull_request:
     branches: [feature/full-freecad-android]
     paths:
       - 'full-gui/upstream/**'
       - '.github/workflows/upstream-freecadgui-full-android.yml'
-      - 'full-gui/integrated-apk/**'
-      - 'full-gui/qt-activity/**'
   workflow_dispatch:
 
 permissions:
