@@ -339,6 +339,24 @@ void restoreOriginalFreeCADIconPaths()
     paths.removeAll(iconRoot);
     paths.prepend(iconRoot);
     QDir::setSearchPaths(QStringLiteral("qss"), paths);
+
+    // Android fallback for upstream Sketcher constraint SVGs. The original
+    // SketcherGui registration may already supply an icons: resource path;
+    // append this verified on-device directory without replacing other modules.
+    // Only 2D Qt resource lookup changes; no Coin3D, FBO or CAD operations.
+    const QString sketcherConstraints =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/drnas-freecad-home/Mod/Sketcher/Gui/Resources/icons/constraints");
+    if (QFileInfo::exists(sketcherConstraints + QStringLiteral("/Constraint_Horizontal.svg"))
+        && QFileInfo::exists(sketcherConstraints + QStringLiteral("/Constraint_Vertical.svg"))) {
+        QStringList iconPaths = QDir::searchPaths(QStringLiteral("icons"));
+        if (!iconPaths.contains(sketcherConstraints)) {
+            iconPaths.append(sketcherConstraints);
+            QDir::setSearchPaths(QStringLiteral("icons"), iconPaths);
+            DrnasDiagnostics::note(QStringLiteral(
+                "SKETCHER_ICON_PATH fallback registered; original paths retained"));
+        }
+    }
 }
 
 // Qt for Android maps floating QDockWidgets to independent native platform
