@@ -89,15 +89,16 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            # The native build must contain ALL C++ probes from our current
-            # upstream source revision. Never reuse stale native run #94.
+            # Native source SHA may precede APK-only workflow/UI commits.
+            # Match either the exact source commit or the current PR head,
+            # but NEVER a pre-fix native revision such as old run #94.
             native_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits?sha=${DIAG_PR_COMMIT}&path=full-gui/upstream&per_page=1" --jq '.[0].sha')"
             [[ "$native_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Cannot resolve native source revision"; exit 1; }
             run_id=""
             for attempt_no in $(seq 1 90); do
               runs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&per_page=100")"
-              native_status="$(jq -r --arg sha "$native_sha" '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request" and .head_sha == $sha)] | sort_by(.id) | last | (.conclusion // .status // "pending")' <<<"$runs_json")"
-              run_id="$(jq -r --arg sha "$native_sha" '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request" and .head_sha == $sha)] | sort_by(.id) | last | (.id // empty)' <<<"$runs_json")"
+              native_status="$(jq -r --arg sha "$native_sha" --arg head "$DIAG_PR_COMMIT" '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request" and (.head_sha == $sha or .head_sha == $head))] | sort_by(.id) | last | (.conclusion // .status // "pending")' <<<"$runs_json")"
+              run_id="$(jq -r --arg sha "$native_sha" --arg head "$DIAG_PR_COMMIT" '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request" and (.head_sha == $sha or .head_sha == $head))] | sort_by(.id) | last | (.id // empty)' <<<"$runs_json")"
               if [[ "$native_status" == success && "$run_id" =~ ^[0-9]+$ ]]; then
                 echo "Matching native ARM64 build ready: $run_id @ $native_sha"
                 break

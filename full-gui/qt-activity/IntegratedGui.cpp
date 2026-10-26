@@ -1070,14 +1070,21 @@ finally:
     });
     // The FreeCAD preference persists across launches; reapply the user's
     // diagnostic selection on boot so the toggle and runtime backend agree.
-    if (fileDialogAB->isChecked()) {
+    {
         QString error;
-        const bool ok = runOriginalFreeCADPython(QStringLiteral(
+        // FreeCAD stores the setting independently from our Qt toggle.
+        // Always synchronize ON and OFF at boot (not just ON).
+        const bool nonNative = fileDialogAB->isChecked();
+        const QString bootCode = QStringLiteral(
             "import FreeCAD as App\n"
             "App.ParamGet('User parameter:BaseApp/Preferences/Dialog')"
-            ".SetBool('DontUseNativeDialog', True)\n"), error);
+            ".SetBool('DontUseNativeDialog', %1)\n")
+            .arg(nonNative ? QStringLiteral("True") : QStringLiteral("False"));
+        const bool ok = runOriginalFreeCADPython(bootCode, error);
         DrnasDiagnostics::note(QStringLiteral(
-            "FILE_DIALOG_AB RESTORE QT_WIDGET ok=%1 error=%2").arg(ok).arg(error));
+            "FILE_DIALOG_AB RESTORE backend=%1 ok=%2 error=%3")
+            .arg(nonNative ? QStringLiteral("QT_WIDGET") : QStringLiteral("ANDROID_NATIVE"))
+            .arg(ok).arg(error));
     }
 
     // Isolated type-registration diagnostic for documents with Body/Pad/Sketch
