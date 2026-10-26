@@ -2094,6 +2094,40 @@ finally:
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, freecad, toolbar);
+    // Two independent draggable buttons control the real active Coin camera.
+    // No extra viewport, native window, mouse injection or scene modification.
+    for (int direction : {-1, 1}) {
+        const bool left = direction < 0;
+        auto* rotate = new QPushButton(left ? QStringLiteral("↶") : QStringLiteral("↷"), shell);
+        rotate->setObjectName(left ? QStringLiteral("drnasRotateLeft")
+                                   : QStringLiteral("drnasRotateRight"));
+        rotate->setToolTip(left ? QStringLiteral("Zakreni pogled ulijevo")
+                                : QStringLiteral("Zakreni pogled udesno"));
+        rotate->setFixedSize(48, 42);
+        rotate->setStyleSheet(QStringLiteral(
+            "QPushButton{background:#315775;color:white;border:1px solid #6b91ad;"
+            "border-radius:5px;font-size:24px;} QPushButton:pressed{background:#4383a9;}"));
+        new DrnasDraggableLauncher(shell, rotate,
+            left ? QStringLiteral("drnasOverlay/rotateLeft")
+                 : QStringLiteral("drnasOverlay/rotateRight"),
+            left ? 58 : 108, false, shell);
+        QObject::connect(rotate, &QPushButton::clicked, shell, [direction, report] {
+            DrnasDiagnostics::note(QStringLiteral("CAMERA ARROW begin direction=%1").arg(direction));
+            QString error;
+            const QString code = QStringLiteral(
+                "import FreeCAD as App, FreeCADGui as Gui\n"
+                "_drnas_cam_view = Gui.activeDocument().activeView() if Gui.activeDocument() else None\n"
+                "if _drnas_cam_view is None: raise RuntimeError('Prvo otvorite dokument s 3D pogledom')\n"
+                "_drnas_cam_delta = App.Rotation(App.Vector(0, 0, 1), %1)\n"
+                "_drnas_cam_view.setCameraOrientation(_drnas_cam_delta.multiply(_drnas_cam_view.getCameraOrientation()))\n"
+            ).arg(direction * 15);
+            const bool ok = runOriginalFreeCADPython(code, error);
+            DrnasDiagnostics::note(QStringLiteral("CAMERA ARROW return ok=%1 error=%2").arg(ok).arg(error));
+            if (!ok) report(QStringLiteral("Rotacija: ") + error);
+        });
+        rotate->show();
+        rotate->raise();
+    }
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });

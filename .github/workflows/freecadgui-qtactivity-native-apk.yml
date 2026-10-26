@@ -51,7 +51,7 @@ jobs:
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
     # Diagnostic branch packages only AFTER the successful native build dispatch.
     # Its push has no native ARM64 artifact yet; avoid a misleading early failure.
-    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/sketcher-icon-alpha-20261026' || github.head_ref == 'diagnostics/sketcher-native-icon-capture-20261026' || github.head_ref == 'diagnostics/sketcher-raster-20261026' || github.head_ref == 'fix/android-deferred-measure-ui-20261026' || github.head_ref == 'fix/android-sketch-plane-picker-20261026') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/sketcher-icon-alpha-20261026' || github.head_ref == 'diagnostics/sketcher-native-icon-capture-20261026' || github.head_ref == 'diagnostics/sketcher-raster-20261026' || github.head_ref == 'fix/android-deferred-measure-ui-20261026' || github.head_ref == 'fix/android-sketch-plane-picker-20261026' || github.head_ref == 'fix/android-camera-navigation-20261027') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -394,6 +394,16 @@ jobs:
               | awk '$7 != "UND" && $8 == "drnas_android_sketch_plane_picker_v1" { found=1 } END { exit !found }' || {
               echo "::error::PartDesignGui lacks Android sketch plane picker"
               exit 1
+            }
+          fi
+          if [[ "${GITHUB_HEAD_REF:-}" == fix/android-camera-navigation-20261027 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_camera_direct_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native FreeCADGui lacks camera direct-orientation experiment"; exit 1;
+            }
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/PartDesignGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_sketch_plane_picker_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native PartDesignGui lacks sketch plane picker"; exit 1;
             }
           fi
           # No silently repacking a pre-fix upstream library.
