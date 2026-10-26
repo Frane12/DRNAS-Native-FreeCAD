@@ -28,6 +28,7 @@
 #include <QSlider>
 #include <QTimer>
 #include <QTouchEvent>
+#include <QVector>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include "StartupDiagnostics.h"
@@ -102,6 +103,13 @@ class DrnasTouchInput final : public QObject {
     QPushButton* hold;
     DrnasPointerMark* mark;
     QPointer<DrnasPointerMark> dialogMark;
+    // Remember each dialog's previous cursor so nested QDialog::exec() can
+    // unwind back to its parent, then to the exact CAD workspace position.
+    struct ModalCursorState {
+        QPointer<QWidget> widget;
+        QPointF returnCursor;
+    };
+    QVector<ModalCursorState> modalCursors;
     QSlider* zoom;
     QTimer zoomTimer;
     QPointer<QWidget> mouseReceiver;
@@ -214,6 +222,51 @@ class DrnasTouchInput final : public QObject {
         if (zoom) { QSignalBlocker blocker(zoom); zoom->setValue(0); }
         mouseReceiver.clear();
     }
+    void syncModalPointer() {
+        QWidget* active=QApplication::activeModalWidget();
+        if (active && !active->isVisible()) return; // Qt has not finished Show yet.
+        // Qt may destroy the top dialog before posting its Hide/Deactivate.
+        while (!modalCursors.isEmpty() &&
+               (!modalCursors.last().widget || !modalCursors.last().widget->isVisible())) {
+            cursor=modalCursors.last().returnCursor;
+            modalCursors.removeLast();
+        }
+        if (!active) {
+            if (!modalCursors.isEmpty()) {
+                cursor=modalCursors.first().returnCursor;
+                modalCursors.clear();
+                DrnasDiagnostics::note(QStringLiteral("INPUT modal pointer: restored CAD cursor"));
+            }
+            if (dialogMark) dialogMark->hide();
+            showPointer();
+            return;
+        }
+        int existing=-1;
+        for (int i=0;i<modalCursors.size();++i) {
+            if (modalCursors[i].widget==active) { existing=i; break; }
+        }
+        if (existing>=0) {
+            // A child exec() finished: restore the parent's cursor, not the
+            // workspace cursor, until the outermost modal also closes.
+            while (modalCursors.size()>existing+1) {
+                cursor=modalCursors.last().returnCursor;
+                modalCursors.removeLast();
+            }
+        } else {
+            // Release the previous mouse grab ONCE at a modal transition.
+            // Never synthesize releases between a button's press and release.
+            relativeActive=false; relativeTouchId=-1;
+            if (buttons!=Qt::NoButton || modifiers!=Qt::NoModifier) releaseAll();
+            modalCursors.append({QPointer<QWidget>(active),cursor});
+            if (!active->rect().contains(active->mapFromGlobal(globalPoint()))) {
+                cursor=host->mapFromGlobal(active->mapToGlobal(active->rect().center()));
+            }
+            DrnasDiagnostics::note(QStringLiteral("INPUT modal pointer: attach %1 depth=%2")
+                .arg(QString::fromLatin1(active->metaObject()->className()))
+                .arg(modalCursors.size()));
+        }
+        showPointer();
+    }
     void showPointer() {
         const QRect r=host->rect();
         if (r.isEmpty()) return;
@@ -243,6 +296,18 @@ class DrnasTouchInput final : public QObject {
     }
     void movePointer(QPointF delta) {
         cursor+=delta*(double(speed)/100.0);
+        if (QWidget* modal=QApplication::activeModalWidget()) {
+            // Keep the virtual pointer in the actual modal hit-test area.
+            // A native Android dialog is a separate top-level QWindow, so
+            // painting a marker on the shell OUTSIDE its bounds is misleading.
+            const QRect inside=modal->rect().adjusted(2,2,-2,-2);
+            if (inside.isValid()) {
+                const QPoint a=host->mapFromGlobal(modal->mapToGlobal(inside.topLeft()));
+                const QPoint b=host->mapFromGlobal(modal->mapToGlobal(inside.bottomRight()));
+                cursor.setX(std::clamp(cursor.x(),double(std::min(a.x(),b.x())),double(std::max(a.x(),b.x()))));
+                cursor.setY(std::clamp(cursor.y(),double(std::min(a.y(),b.y())),double(std::max(a.y(),b.y()))));
+            }
+        }
         showPointer(); sendMouse(QEvent::MouseMove,Qt::NoButton);
     }
     void beginRelative(const QPointF& p) {
@@ -370,22 +435,24 @@ protected:
                     .arg(QString::fromLatin1(popupWidget->metaObject()->className())).arg(int(buttons)));
                 QTimer::singleShot(0,this,[this]{showPointer();});
             }
+            if (qobject_cast<QDialog*>(popupWidget) &&
+                (event->type()==QEvent::Show || event->type()==QEvent::Hide ||
+                 event->type()==QEvent::Close || event->type()==QEvent::WindowActivate)) {
+                // Show/Hide can precede Qt's activeModalWidget update.
+                QTimer::singleShot(0,this,[this]{syncModalPointer();});
+            }
         }
         auto* inputWidget=qobject_cast<QWidget*>(obj);
         QWidget* modal=QApplication::activeModalWidget();
         QWidget* popup=QApplication::activePopupWidget();
-        // Android modal dialogs must receive direct touch/click events. Relative
-        // touchpad translation can otherwise consume the only way to dismiss them.
-        if (modal && inputWidget && (inputWidget==modal || modal->isAncestorOf(inputWidget))) {
-            // Do not release on every child-widget event: that can synthesize a
-            // mouse release between the dialog button's press and release.
-            if (event->type()==QEvent::TouchBegin && (relativeActive || relativeTouchId>=0 || buttons!=Qt::NoButton)) {
-                relativeActive=false;
-                relativeTouchId=-1;
-                releaseAll();
-                DrnasDiagnostics::note(QStringLiteral("INPUT modal direct mode: released relative pointer"));
-            }
-            return false;
+        if (modal && inputWidget &&
+            (inputWidget==modal || modal->isAncestorOf(inputWidget))) {
+            // Use the SAME relative touch -> cursor -> tap as the main screen.
+            // Old "modal direct mode" prevented dragging the cursor in dialogs.
+            // Only transition once; a nested event loop can otherwise release
+            // a QDialogButtonBox button between its press and release.
+            if (event->type()==QEvent::TouchBegin ||
+                event->type()==QEvent::MouseButtonPress) syncModalPointer();
         }
         const bool inApp=inputWidget && (inputWidget==host || host->isAncestorOf(inputWidget) ||
             (modal && (inputWidget==modal || modal->isAncestorOf(inputWidget))) ||
@@ -440,6 +507,9 @@ protected:
         }
         if (event->type()==QEvent::ApplicationDeactivate || (obj==host && event->type()==QEvent::Hide)) {
             relativeActive=false; relativeTouchId=-1; releaseAll();
+            // Do not erase the modal return stack on a short-lived Android
+            // focus switch while a dialog is still open.
+            QTimer::singleShot(0,this,[this]{syncModalPointer();});
         }
         if (obj==host && event->type()==QEvent::Resize) {
             releaseAll();
@@ -564,6 +634,6 @@ public:
         qApp->installEventFilter(this);
         scheduleRepair();
         showPointer();
-        DrnasDiagnostics::note(QStringLiteral("INPUT: default full-screen relative touchpad, tap to click; mobile MDI maximize enabled"));
+        DrnasDiagnostics::note(QStringLiteral("INPUT: relative pointer on workspace and Qt modal dialogs; nested cursor restore enabled"));
     }
 };
