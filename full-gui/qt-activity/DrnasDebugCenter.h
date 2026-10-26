@@ -11,6 +11,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDir>
 #include <QEvent>
 #include <QFile>
 #include <QFileInfo>
@@ -23,6 +24,10 @@
 #include <QMainWindow>
 #include <QOpenGLContext>
 #include <QOpenGLWidget>
+#include <QImage>
+#include <QPainter>
+#include <QPixmap>
+#include <QSvgRenderer>
 #include <QPointer>
 #include <QPushButton>
 #include <QScreen>
@@ -33,6 +38,7 @@
 #include <QVBoxLayout>
 #include <QWindow>
 #include <algorithm>
+#include <utility>
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
 #endif
@@ -429,6 +435,64 @@ public:
                 .arg(fontTestResult->width());
             DrnasDiagnostics::note(QStringLiteral("DBG ") + result);
             notify(result);
+        });
+        // Isolate Android black constraint squares: test Qt SVG/alpha pixels
+        // without creating any new native window, GL surface or Coin nodes.
+        auto* iconTestButton = new QPushButton(QStringLiteral("TEST SKETCHER ICON ALPHA"));
+        layout->addWidget(iconTestButton);
+        auto* iconPreviewRow = new QHBoxLayout;
+        auto* iconHorizontal = new QLabel(QStringLiteral("H"));
+        auto* iconVertical = new QLabel(QStringLiteral("V"));
+        for (QLabel* preview : {iconHorizontal, iconVertical}) {
+            preview->setFixedSize(52, 52);
+            preview->setAlignment(Qt::AlignCenter);
+            preview->setStyleSheet(QStringLiteral(
+                "QLabel{background:#7a80a0;border:1px solid #b5d1e7;}"));
+            iconPreviewRow->addWidget(preview);
+        }
+        layout->addLayout(iconPreviewRow);
+        connect(iconTestButton, &QPushButton::clicked, this,
+                [this, iconHorizontal, iconVertical] {
+            QStringList results;
+            for (const auto& item :
+                 {std::pair<const char*, QLabel*>{"Constraint_Horizontal",iconHorizontal},
+                  std::pair<const char*, QLabel*>{"Constraint_Vertical",iconVertical}}) {
+                const QString iconName = QString::fromLatin1(item.first);
+                const QString resource = QStringLiteral("icons:") + iconName
+                    + QStringLiteral(".svg");
+                QFile source(resource);
+                const bool opened = source.open(QIODevice::ReadOnly);
+                const QByteArray sourceBytes = opened ? source.readAll() : QByteArray();
+                QSvgRenderer renderer(sourceBytes);
+                QImage image(40,40,QImage::Format_ARGB32_Premultiplied);
+                image.fill(Qt::transparent);
+                if (renderer.isValid()) {
+                    QPainter painter(&image);
+                    renderer.render(&painter, QRectF(0,0,40,40));
+                    painter.end();
+                }
+                int zeroAlpha=0, fullAlpha=0, partialAlpha=0;
+                for (int y=0;y<image.height();++y) {
+                    for (int x=0;x<image.width();++x) {
+                        const int alpha=image.pixelColor(x,y).alpha();
+                        if (alpha==0) ++zeroAlpha;
+                        else if (alpha==255) ++fullAlpha;
+                        else ++partialAlpha;
+                    }
+                }
+                item.second->setPixmap(QPixmap::fromImage(image));
+                results << QStringLiteral(
+                    "%1 file=%2 svg=%3 transparent=%4 partial=%5 opaque=%6 bytes=%7")
+                    .arg(iconName).arg(opened).arg(renderer.isValid())
+                    .arg(zeroAlpha).arg(partialAlpha).arg(fullAlpha)
+                    .arg(sourceBytes.size());
+            }
+            const QString details=QStringLiteral("SKETCHER_ICON_ALPHA Qt only: ")
+                + results.join(QStringLiteral(" | "))
+                + QStringLiteral(" paths=")
+                + QDir::searchPaths(QStringLiteral("icons")).join(QStringLiteral(";"));
+            DrnasDiagnostics::note(details);
+            notify(details);
         });
         auto* row1 = new QHBoxLayout;
         auto* snapshotButton = new QPushButton(QStringLiteral("SNAPSHOT"));
