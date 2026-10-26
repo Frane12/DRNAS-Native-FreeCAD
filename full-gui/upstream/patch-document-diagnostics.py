@@ -60,6 +60,39 @@ def patch_android_service_storage(root):
     path.write_text(source)
 
 
+
+def trace_original_open(root):
+    # Checkpoints for native FreeCAD's actual Std_Open, not a replacement
+    # command. C++ stderr+fsync journal survives Python fatal aborts.
+    path = root / "src/Gui/CommandDoc.cpp"
+    source = path.read_text()
+    begin = source.index("void StdCmdOpen::activated(int iMsg)")
+    end = source.index("// Std_Import", begin)
+    body = source[begin:end]
+    def mark(old, new):
+        nonlocal body
+        body = once(body, old, new)
+    mark('    QStringList fileList = FileDialog::getOpenFileNames(',
+         '    ::drnasDocumentPhase("FILE_OPEN 01 QFileDialog", "BEGIN");\n'
+         '    QStringList fileList = FileDialog::getOpenFileNames(')
+    mark('        &selectedFilterIndex\n    );\n    if (fileList.isEmpty()) {',
+         '        &selectedFilterIndex\n    );\n'
+         '    ::drnasDocumentPhase("FILE_OPEN 02 QFileDialog", "RETURN");\n'
+         '    if (fileList.isEmpty()) {')
+    mark('    SelectModule::Dict dict\n        = SelectModule::importHandler(fileList, formatList[selectedFilterIndex].toFilterString());',
+         '    ::drnasDocumentPhase("FILE_OPEN 03 importHandler", "BEGIN");\n'
+         '    SelectModule::Dict dict\n        = SelectModule::importHandler(fileList, formatList[selectedFilterIndex].toFilterString());\n'
+         '    ::drnasDocumentPhase("FILE_OPEN 04 importHandler", "RETURN");')
+    mark('        getGuiApplication()->open(file.toUtf8(), "FreeCAD");',
+         '        ::drnasDocumentPhase("FILE_OPEN 05 FCBak open", "BEGIN");\n'
+         '        getGuiApplication()->open(file.toUtf8(), "FreeCAD");\n'
+         '        ::drnasDocumentPhase("FILE_OPEN 06 FCBak open", "RETURN");')
+    mark('            getGuiApplication()->open(it.key().toUtf8(), it.value().toLatin1());',
+         '            ::drnasDocumentPhase("FILE_OPEN 07 GuiApp open", "BEGIN");\n'
+         '            getGuiApplication()->open(it.key().toUtf8(), it.value().toLatin1());\n'
+         '            ::drnasDocumentPhase("FILE_OPEN 08 GuiApp open", "RETURN");')
+    path.write_text(source[:begin] + body + source[end:])
+
 def patch(root):
     patch_android_service_storage(root)
     # No Python/Qt calls: durable native markers still work during a failure
@@ -108,6 +141,7 @@ private:
         ('doCommand(Command::Gui, "Gui.activeDocument().activeView().viewDefaultOrientation()");', 'D02 default orientation'),
         ('doCommand(Command::Gui, "Gui.ActiveDocument.ActiveView.setAxisCross(True)");', 'D03 axis cross'),
     ])
+    trace_original_open(root)
     annotate(root, "src/App/Application.cpp", "Document* Application::newDocument(", [
         ('auto doc = new Document(name.c_str());', 'A01 App Document constructor'),
         ('setActiveDocumentNoSignal(doc);', 'A02 set active document'),

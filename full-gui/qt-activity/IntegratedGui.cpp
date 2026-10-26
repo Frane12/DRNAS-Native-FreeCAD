@@ -1057,7 +1057,7 @@ finally:
         const QString command = QStringLiteral(
             "import FreeCAD as App\n"
             "App.ParamGet('User parameter:BaseApp/Preferences/Dialog')"
-            ".SetBool('DontUseNativeFileDialog', %1)\n"
+            ".SetBool('DontUseNativeDialog', %1)\n"
             "_drnas_mark('FILE_DIALOG_AB ACTIVE backend=%2')\n")
             .arg(widgetDialog ? QStringLiteral("True") : QStringLiteral("False"),
                  widgetDialog ? QStringLiteral("QT_WIDGET") : QStringLiteral("ANDROID_NATIVE"));
@@ -1075,7 +1075,7 @@ finally:
         const bool ok = runOriginalFreeCADPython(QStringLiteral(
             "import FreeCAD as App\n"
             "App.ParamGet('User parameter:BaseApp/Preferences/Dialog')"
-            ".SetBool('DontUseNativeFileDialog', True)\n"), error);
+            ".SetBool('DontUseNativeDialog', True)\n"), error);
         DrnasDiagnostics::note(QStringLiteral(
             "FILE_DIALOG_AB RESTORE QT_WIDGET ok=%1 error=%2").arg(ok).arg(error));
     }
