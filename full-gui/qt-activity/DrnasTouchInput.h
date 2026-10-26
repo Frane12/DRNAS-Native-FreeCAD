@@ -261,6 +261,23 @@ class DrnasTouchInput final : public QObject {
             if (!active->rect().contains(active->mapFromGlobal(globalPoint()))) {
                 cursor=host->mapFromGlobal(active->mapToGlobal(active->rect().center()));
             }
+            // Distinguish a real QWidget mouse grab from Qt's ordinary modal
+            // window input blocking. Never ungrab a QMenu/Qt::Popup here.
+            QPointer<QWidget> grab=QWidget::mouseGrabber();
+            DrnasDiagnostics::note(QStringLiteral("INPUT_MODAL_CAPTURE enter modal=%1 grabber=%2 popup=%3 physicalButtons=%4 virtualButtons=%5")
+                .arg(QString::fromLatin1(active->metaObject()->className()))
+                .arg(grab ? QString::fromLatin1(grab->metaObject()->className()) : QStringLiteral("none"))
+                .arg(QApplication::activePopupWidget() ? QStringLiteral("yes") : QStringLiteral("no"))
+                .arg(int(QApplication::mouseButtons())).arg(int(buttons)));
+            // A stale explicit grab owned by the main viewport must not trap
+            // a subsequent dialog. Only release if no real/virtual button is
+            // down, there is no popup, and the grabber is outside the dialog.
+            if (grab && grab!=active && !active->isAncestorOf(grab.data()) &&
+                !QApplication::activePopupWidget() &&
+                QApplication::mouseButtons()==Qt::NoButton && buttons==Qt::NoButton) {
+                grab->releaseMouse();
+                DrnasDiagnostics::note(QStringLiteral("INPUT_MODAL_CAPTURE released stale foreign QWidget grab"));
+            }
             DrnasDiagnostics::note(QStringLiteral("INPUT modal pointer: attach %1 depth=%2")
                 .arg(QString::fromLatin1(active->metaObject()->className()))
                 .arg(modalCursors.size()));
@@ -295,19 +312,10 @@ class DrnasTouchInput final : public QObject {
         }
     }
     void movePointer(QPointF delta) {
+        // Never clamp the software cursor to a modal window's rectangle.
+        // That was perceived as mouse capture even when Qt held no mouse grab.
+        // Modal hit testing still prevents clicks leaking into blocked CAD UI.
         cursor+=delta*(double(speed)/100.0);
-        if (QWidget* modal=QApplication::activeModalWidget()) {
-            // Keep the virtual pointer in the actual modal hit-test area.
-            // A native Android dialog is a separate top-level QWindow, so
-            // painting a marker on the shell OUTSIDE its bounds is misleading.
-            const QRect inside=modal->rect().adjusted(2,2,-2,-2);
-            if (inside.isValid()) {
-                const QPoint a=host->mapFromGlobal(modal->mapToGlobal(inside.topLeft()));
-                const QPoint b=host->mapFromGlobal(modal->mapToGlobal(inside.bottomRight()));
-                cursor.setX(std::clamp(cursor.x(),double(std::min(a.x(),b.x())),double(std::max(a.x(),b.x()))));
-                cursor.setY(std::clamp(cursor.y(),double(std::min(a.y(),b.y())),double(std::max(a.y(),b.y()))));
-            }
-        }
         showPointer(); sendMouse(QEvent::MouseMove,Qt::NoButton);
     }
     void beginRelative(const QPointF& p) {
@@ -419,6 +427,15 @@ class DrnasTouchInput final : public QObject {
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
         if (injectedEvents.contains(event)) return false;
+        if ((event->type()==QEvent::WindowBlocked || event->type()==QEvent::WindowUnblocked) &&
+            (obj==host || obj==cad.data())) {
+            QWidget* grab=QWidget::mouseGrabber();
+            QWidget* modal=QApplication::activeModalWidget();
+            DrnasDiagnostics::note(QStringLiteral("INPUT_MODAL_CAPTURE Qt window %1 modal=%2 mouseGrabber=%3")
+                .arg(event->type()==QEvent::WindowBlocked ? QStringLiteral("blocked") : QStringLiteral("unblocked"))
+                .arg(modal ? QString::fromLatin1(modal->metaObject()->className()) : QStringLiteral("none"))
+                .arg(grab ? QString::fromLatin1(grab->metaObject()->className()) : QStringLiteral("none")));
+        }
         if (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove ||
             event->type()==QEvent::MouseButtonRelease || event->type()==QEvent::MouseButtonDblClick) {
             auto* mouse=static_cast<QMouseEvent*>(event);
@@ -634,6 +651,6 @@ public:
         qApp->installEventFilter(this);
         scheduleRepair();
         showPointer();
-        DrnasDiagnostics::note(QStringLiteral("INPUT: relative pointer on workspace and Qt modal dialogs; nested cursor restore enabled"));
+        DrnasDiagnostics::note(QStringLiteral("INPUT: modal capture guard v2; relative pointer can leave dialog rectangle; nested cursor restore enabled"));
     }
 };
