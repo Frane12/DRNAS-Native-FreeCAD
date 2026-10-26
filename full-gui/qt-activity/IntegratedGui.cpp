@@ -1113,6 +1113,49 @@ finally:
         typeProbe->setEnabled(true);
     });
 
+    // Opt-in test of the exact native Qt pointer -> PySide/Shiboken boundary.
+    // A real QWidget is created and wrapped back to Python; the pointer is
+    // never dereferenced manually or truncated to signed 64-bit.
+    auto* shibokenProbe = toolbar->addAction(QStringLiteral("TEST SHIBOKEN"));
+    shibokenProbe->setObjectName(QStringLiteral("drnasShibokenUnsignedPointerProbe"));
+    shibokenProbe->setToolTip(QStringLiteral(
+        "Inspect Android tagged Qt pointers through shiboken6; no Coin viewport changes"));
+    QObject::connect(shibokenProbe, &QAction::triggered, shell, [shibokenProbe, report] {
+        shibokenProbe->setEnabled(false);
+        DrnasDiagnostics::note(QStringLiteral(
+            "SHIBOKEN_AB BEGIN: tagged QWidget address and wrapInstance"));
+        QString error;
+        const bool ok = runOriginalFreeCADPython(QStringLiteral(R"DRNAS(
+import traceback
+try:
+    import shiboken6
+    from PySide6.QtWidgets import QWidget
+    _sb_widget = QWidget()
+    try:
+        _sb_pointer = int(shiboken6.getCppPointer(_sb_widget)[0])
+        _drnas_mark('SHIBOKEN_AB ADDRESS unsigned=' + str(_sb_pointer) +
+                    ' signBit=' + str(int(_sb_pointer >= (1 << 63))) +
+                    ' signed=' + str(_sb_pointer - (1 << 64) if _sb_pointer >= (1 << 63) else _sb_pointer))
+        _sb_wrap = shiboken6.wrapInstance(_sb_pointer, QWidget)
+        _sb_verify = int(shiboken6.getCppPointer(_sb_wrap)[0])
+        _drnas_mark('SHIBOKEN_AB WRAP_OK valid=' + str(shiboken6.isValid(_sb_wrap)) +
+                    ' pointerPreserved=' + str(_sb_verify == _sb_pointer))
+        if not shiboken6.isValid(_sb_wrap) or _sb_verify != _sb_pointer:
+            raise RuntimeError('Shiboken changed the C++ pointer while wrapping')
+    finally:
+        _sb_widget.close()
+        _sb_widget.deleteLater()
+except BaseException:
+    _drnas_mark('SHIBOKEN_AB WRAP_FAIL ' + traceback.format_exc())
+    raise
+)DRNAS"), error);
+        DrnasDiagnostics::note(QStringLiteral("SHIBOKEN_AB END ok=%1 error=%2")
+            .arg(ok).arg(error));
+        report(ok ? QStringLiteral("TEST SHIBOKEN PASS — DBG")
+                  : QStringLiteral("TEST SHIBOKEN FAIL — DBG: ") + error);
+        shibokenProbe->setEnabled(true);
+    });
+
     // A deterministic real FreeCAD/Part smoke object for Android Coin3D.
     // No mock triangles or direct GL calls: this exercises document creation,
     // ViewProvider, Coin scene traversal and Qt presentation together.

@@ -159,6 +159,13 @@ test -s "$numpy_stage/numpy/__init__.py"
 test -d "$numpy_stage/numpy/_core"
 cp -a "$numpy_stage/." "$work/bundle/assets/drnas/freecad/Mod/"
 echo 'PASS: NumPy staged as extractable ARM64 package in APK.'
+# Diagnostic-branch-only ELF ABI intervention. Match 2336 native libc++
+# exported signatures before remapping both NumPy modules to QtActivity's
+# libc++_shared.so. Never patchelf: PT_LOAD/FBO layout must remain unchanged.
+python3 "$ROOT/full-gui/integrated-apk/consolidate-numpy-cxx.py" \
+  "$work/bundle/lib/arm64-v8a/libc++_shared.so" \
+  "$work/bundle/assets/drnas/freecad/Mod" \
+  "$OUT/integrated-freecad-qtapk/numpy-cxx-consolidation.json"
 # zipimport cannot load extension modules directly from APK assets.
 python3 "$ROOT/full-gui/upstream/audit-python-bindings.py" \
   "$work/bundle/assets/drnas/freecad/Mod" --require-all
