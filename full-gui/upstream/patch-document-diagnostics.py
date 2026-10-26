@@ -93,8 +93,75 @@ def trace_original_open(root):
          '            ::drnasDocumentPhase("FILE_OPEN 08 GuiApp open", "RETURN");')
     path.write_text(source[:begin] + body + source[end:])
 
+def trace_zip_archive_restore(root):
+    # Last phone log: Document::restore reached reader.readFiles(zipstream)
+    # then aborted. Trace the ORIGINAL zipios/getNextEntry and RestoreDocFile
+    # calls without modifying behavior or bypassing any serialized CAD data.
+    path = root / "src/Base/Reader.cpp"
+    source = path.read_text()
+    start = source.index("void Base::XMLReader::readFiles(zipios::ZipInputStream& zipstream) const")
+    end = source.index("const char* Base::XMLReader::addFile(", start)
+    body = source[start:end]
+    body = once(body,
+        '    zipios::ConstEntryPointer entry;\n    try {\n        entry = zipstream.getNextEntry();',
+        '    zipios::ConstEntryPointer entry;\n    try {\n'
+        '        ::drnasDocumentPhase("FCSTD_ZIP 30 first getNextEntry", "BEGIN");\n'
+        '        entry = zipstream.getNextEntry();\n'
+        '        ::drnasDocumentPhase("FCSTD_ZIP 30 first getNextEntry", "END");\n'
+        '        if (entry) ::drnasDocumentPhase("FCSTD_ZIP entry", entry->getName().c_str());')
+    body = once(body,
+        '    while (entry->isValid() && it != FileList.end()) {',
+        '    while (entry->isValid() && it != FileList.end()) {\n'
+        '        ::drnasDocumentPhase("FCSTD_ZIP 31 loop", entry->getName().c_str());')
+    body = once(body,
+        '        if (jt != FileList.end()) {\n            try {',
+        '        if (jt != FileList.end()) {\n'
+        '            ::drnasDocumentPhase("FCSTD_ZIP 32 registered", jt->FileName.c_str());\n'
+        '            try {')
+    body = once(body,
+        '                Base::Reader reader(zipstream, jt->FileName, FileVersion);',
+        '                ::drnasDocumentPhase("FCSTD_ZIP 33 BaseReader", "BEGIN");\n'
+        '                Base::Reader reader(zipstream, jt->FileName, FileVersion);\n'
+        '                ::drnasDocumentPhase("FCSTD_ZIP 33 BaseReader", "END");')
+    body = once(body,
+        '                jt->Object->RestoreDocFile(reader);',
+        '                ::drnasDocumentPhase("FCSTD_ZIP 34 RestoreDocFile", "BEGIN");\n'
+        '                jt->Object->RestoreDocFile(reader);\n'
+        '                ::drnasDocumentPhase("FCSTD_ZIP 34 RestoreDocFile", "END");')
+    body = once(body,
+        '                if (reader.getLocalReader()) {\n'
+        '                    reader.getLocalReader()->readFiles(zipstream);\n'
+        '                }',
+        '                if (reader.getLocalReader()) {\n'
+        '                    ::drnasDocumentPhase("FCSTD_ZIP 35 nested readFiles", "BEGIN");\n'
+        '                    reader.getLocalReader()->readFiles(zipstream);\n'
+        '                    ::drnasDocumentPhase("FCSTD_ZIP 35 nested readFiles", "END");\n'
+        '                }')
+    body = once(body,
+        '            catch (...) {\n                // For any exception',
+        '            catch (...) {\n'
+        '                ::drnasDocumentPhase("FCSTD_ZIP 36 embedded file exception", "CAUGHT");\n'
+        '                // For any exception')
+    body = once(body,
+        '        try {\n            entry = zipstream.getNextEntry();\n'
+        '        }\n        catch (const std::exception&) {',
+        '        try {\n'
+        '            ::drnasDocumentPhase("FCSTD_ZIP 37 next getNextEntry", "BEGIN");\n'
+        '            entry = zipstream.getNextEntry();\n'
+        '            ::drnasDocumentPhase("FCSTD_ZIP 37 next getNextEntry", "END");\n'
+        '            if (entry) ::drnasDocumentPhase("FCSTD_ZIP entry", entry->getName().c_str());\n'
+        '        }\n        catch (const std::exception&) {')
+    include = '#include <Base/AndroidDocumentDiagnostics.h>\n'
+    if include not in source:
+        source = include + source
+        start += len(include)
+        end += len(include)
+    path.write_text(source[:start] + body + source[end:])
+
+
 def patch(root):
     patch_android_service_storage(root)
+    trace_zip_archive_restore(root)
     # No Python/Qt calls: durable native markers still work during a failure
     # below Python. This is ordinary execution logging, not a signal handler.
     (root / "src/Base/AndroidDocumentDiagnostics.h").write_text(r'''#pragma once

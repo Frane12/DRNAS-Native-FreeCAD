@@ -294,6 +294,9 @@ jobs:
           grep -aFq 'FCSTD_RESTORE 25 document objects' out/upstream-freecad-gui/native/libFreeCADApp.so || {
             echo "::error::FreeCADApp library lacks FCStd restore checkpoint"; exit 1;
           }
+          grep -aFq 'FCSTD_ZIP 30 first getNextEntry' out/upstream-freecad-gui/native/libFreeCADBase.so || {
+            echo "::error::FreeCADBase library lacks ZIP embedded-entry diagnostic checkpoints"; exit 1;
+          }
           if ! grep -aFq 'AndroidDocumentBridge' out/upstream-freecad-gui/native/libFreeCADGui.so; then
             echo "::error::Native FreeCADGui is older than the Android SAF file-open fix. Run upstream-freecadgui-full-android.yml first."
             exit 1
