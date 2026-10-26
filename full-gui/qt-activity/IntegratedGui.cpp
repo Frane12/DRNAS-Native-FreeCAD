@@ -1729,7 +1729,8 @@ except BaseException:
             : QStringLiteral(
                 "import sys\n"
                 "_drnas_mark('MEASURE_AB PRE_GUI core_loaded=' + str('Measure' in sys.modules))\n"
-                "import MeasureGui\n");
+                "import MeasureGui\n"
+                "_drnas_runtime._drnas_refresh_measure_commands()\n");
         QString error;
         const bool ok = runOriginalFreeCADPython(script, error);
         DrnasDiagnostics::note(QStringLiteral(

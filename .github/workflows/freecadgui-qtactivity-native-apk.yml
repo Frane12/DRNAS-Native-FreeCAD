@@ -51,7 +51,7 @@ jobs:
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
     # Diagnostic branch packages only AFTER the successful native build dispatch.
     # Its push has no native ARM64 artifact yet; avoid a misleading early failure.
-    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/sketcher-icon-alpha-20261026' || github.head_ref == 'diagnostics/sketcher-native-icon-capture-20261026' || github.head_ref == 'diagnostics/sketcher-raster-20261026') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/sketcher-icon-alpha-20261026' || github.head_ref == 'diagnostics/sketcher-native-icon-capture-20261026' || github.head_ref == 'diagnostics/sketcher-raster-20261026' || github.head_ref == 'fix/android-deferred-measure-ui-20261026') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -226,7 +226,9 @@ jobs:
           persist-credentials: false
 
       - name: Regression-test Measure InitGui boot guard
-        run: python3 -m unittest discover -s tests -p 'test_measure_initgui_guard.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_measure_initgui_guard.py' -v
+          python3 -m unittest discover -s tests -p 'test_deferred_measure_ui.py' -v
 
       - name: Download real GUI, App, Base, Coin3D, GL4ES artifact
         uses: actions/download-artifact@v4
@@ -377,6 +379,13 @@ jobs:
             readelf --dyn-syms --wide out/upstream-freecad-gui/opengl-compat/lib/libGL.so \
               | awk '$7 != "UND" && $8 == "drnas_gl4es_drawpixels_blend_v1" { found=1 } END { exit !found }' || {
               echo "::error::GL4ES lacks the isolated DrawPixels sampler/blend fix"
+              exit 1
+            }
+          fi
+          if [[ "${GITHUB_HEAD_REF:-}" == fix/android-deferred-measure-ui-20261026 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_deferred_measure_ui_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native FreeCADGui lacks deferred Measure menu composition"
               exit 1
             }
           fi

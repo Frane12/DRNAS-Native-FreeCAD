@@ -49,7 +49,9 @@ jobs:
           # The PR event still grants read-only access to the base branch's caches.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify read-only native registration diagnostics
-        run: python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
+          python3 -m unittest discover -s tests -p 'test_deferred_measure_ui.py' -v
 
       - name: Python host tools matching FreeCAD embedded ABI
         uses: actions/setup-python@v5
