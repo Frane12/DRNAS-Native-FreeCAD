@@ -10,6 +10,8 @@ REQUIRED = {
     "Mod/Part/InitGui.py", "Mod/Sketcher/InitGui.py",
     "Mod/PartDesign/InitGui.py", "Mod/Measure/InitGui.py",
     "data/Gui/Stylesheets/overlay/icons/taskshow.svg",
+    "Mod/Sketcher/Gui/Resources/icons/constraints/Constraint_Horizontal.svg",
+    "Mod/Sketcher/Gui/Resources/icons/constraints/Constraint_Vertical.svg",
     "share/Mod/Material/Resources/Materials/Appearance/Default.FCMat",
     "share/Mod/Material/Resources/Materials/Standard/Default.FCMat",
     "share/Mod/Material/Resources/Models/Rendering/BasicRendering.yml",
