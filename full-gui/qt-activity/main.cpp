@@ -17,9 +17,22 @@ int main(int argc, char** argv)
 {
     QCoreApplication::setOrganizationName(QStringLiteral("DRNAS"));
     QCoreApplication::setApplicationName(QStringLiteral("FreeCADNativeProbe"));
+#ifdef Q_OS_ANDROID
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    // FreeCAD's QMenu/Qt::Popup must not force a second Android native window.
+    // Qt 6.8 can draw menus in the existing QtActivity window when supported.
+    // Keep this before QApplication construction, without touching Coin3D.
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeMenuWindows, true);
+#endif
+#endif
     QApplication app(argc, argv);
     // Begin private, persistent startup logging before any FreeCAD dlopen.
     DrnasDiagnostics::start();
+#ifdef Q_OS_ANDROID
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    DrnasDiagnostics::note(QStringLiteral("MENU_POPUP: Qt 6.8 native menu windows opt-out requested"));
+#endif
+#endif
     DrnasDiagnostics::note(QStringLiteral("Creating Android GUI bootstrap shell"));
     // Do not clear QSettings "nativeProbe/pending" from a previous crash.
     // The next launch can display the exact native library being tested.
