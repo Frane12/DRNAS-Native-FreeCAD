@@ -159,9 +159,45 @@ def trace_zip_archive_restore(root):
     path.write_text(source[:start] + body + source[end:])
 
 
+def trace_part_brep_restore(root):
+    # Actual Android SIGABRT follows FCSTD_ZIP 34 BEGIN for PartShape.brp.
+    # Pinpoint the original BRep direct-stream or temporary-file restore.
+    # All markers are observational, without changing CAD serialization.
+    part = "src/Mod/Part/App/PropertyTopoShape.cpp"
+    annotate(root, part, "void PropertyPartShape::RestoreDocFile(", [
+        ('auto elementMap = _Shape.resetElementMap();', 'BREP_PROP 40 reset element map'),
+        ('Base::FileInfo brep(reader.getFileName());', 'BREP_PROP 41 source name'),
+        ('shape.importBinary(reader);', 'BREP_PROP 42 binary import'),
+        ('loadFromFile(reader);', 'BREP_PROP 43 file restore'),
+        ('loadFromStream(reader);', 'BREP_PROP 44 direct stream restore'),
+        ('shape.resetElementMap(elementMap);', 'BREP_PROP 45 apply element map'),
+        ('setValue(shape);', 'BREP_PROP 46 set final shape'),
+    ], max_calls=32)
+    annotate(root, part, "void PropertyPartShape::loadFromStream(", [
+        ('auto savedLocale = reader.getloc();', 'BREP_STREAM 50 get locale'),
+        ('reader.exceptions(std::istream::failbit | std::istream::badbit);',
+         'BREP_STREAM 51 set exception mask'),
+        ('BRep_Builder builder;', 'BREP_STREAM 52 construct builder'),
+        ('TopoDS_Shape shape;', 'BREP_STREAM 53 construct shape'),
+        ('BRepTools::Read(shape, reader, builder);',
+         'BREP_STREAM 54 OCCT BRepTools Read'),
+        ('setValue(shape);', 'BREP_STREAM 55 set parsed shape'),
+    ], max_calls=32)
+    annotate(root, part, "void PropertyPartShape::loadFromFile(", [
+        ('Base::FileInfo fi(App::Application::getTempFileName());',
+         'BREP_FILE 60 temp file path'),
+        ('Base::ofstream file(fi, std::ios::out | std::ios::binary);',
+         'BREP_FILE 61 create temporary BRep'),
+        ('reader >> buf;', 'BREP_FILE 62 copy ZIP shape stream'),
+        ('file.close();', 'BREP_FILE 63 close temporary BRep'),
+        ('setValue(shape);', 'BREP_FILE 64 apply parsed shape'),
+    ], max_calls=32)
+
+
 def patch(root):
     patch_android_service_storage(root)
     trace_zip_archive_restore(root)
+    trace_part_brep_restore(root)
     # No Python/Qt calls: durable native markers still work during a failure
     # below Python. This is ordinary execution logging, not a signal handler.
     (root / "src/Base/AndroidDocumentDiagnostics.h").write_text(r'''#pragma once

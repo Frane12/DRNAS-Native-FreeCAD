@@ -1197,6 +1197,9 @@ finally:
             "import FreeCAD as App, base64\n"
             "_drnas_saf_path = base64.b64decode('%1').decode('utf-8')\n"
             "_drnas_mark('ANDROID_SAF_OPEN 06 PYTHON_BEGIN')\n"
+            "_drnas_part_pref = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')\n"
+            "_drnas_part_pref.SetBool('DirectAccess', True)\n"
+            "_drnas_mark('BREP_AB DIRECT_MODE DirectAccess=True')\n"
             "_drnas_saf_document = App.openDocument(_drnas_saf_path)\n"
             "_drnas_mark('ANDROID_SAF_OPEN 07 PYTHON_RETURN document=' + str(_drnas_saf_document.Name))\n")
             .arg(encodedPath);
@@ -1205,6 +1208,55 @@ finally:
                                .arg(ok).arg(error.left(200)));
         report(ok ? QStringLiteral("FCStd otvoren iz Android kopije")
                   : QStringLiteral("FreeCAD open failed: ") + error);
+    });
+
+    // Explicit A/B for Android BRep crash: retain original direct mode and add
+    // a file-backed path using FreeCAD's built-in DirectAccess=False preference.
+    // No changes to Coin3D, render stage, OpenGL, or input handling.
+    auto* androidBrepTemp = toolbar->addAction(QStringLiteral("OTVORI BREP TEMP"));
+    androidBrepTemp->setObjectName(QStringLiteral("drnasAndroidSafBrepTemp"));
+    androidBrepTemp->setToolTip(QStringLiteral(
+        "A/B: otvori istu FCStd kopiju preko privremene BRep datoteke, umjesto izravnog ZIP toka."));
+    QObject::connect(androidBrepTemp, &QAction::triggered, shell, [report] {
+        const QString path = QSettings().value(QStringLiteral("nativeProbe/lastSafFile")).toString();
+        const QFileInfo info(path);
+        if (path.isEmpty() || !info.isFile() || info.size() <= 0) {
+            report(QStringLiteral("Prvo pritisni ANDROID DATOTEKA"));
+            return;
+        }
+        const QString suffix = info.suffix().toLower();
+        if (suffix != QStringLiteral("fcstd") && suffix != QStringLiteral("fcbak")) {
+            report(QStringLiteral("Test podrzava FCStd/FCBak datoteke"));
+            return;
+        }
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || !file.peek(4).startsWith("PK")) {
+            report(QStringLiteral("Kopija nije ispravna FCStd ZIP arhiva"));
+            return;
+        }
+        const QString encodedPath = QString::fromLatin1(path.toUtf8().toBase64());
+        DrnasDiagnostics::note(QStringLiteral(
+            "BREP_AB TEMP_REQUEST suffix=%1 bytes=%2").arg(suffix).arg(info.size()));
+        QString error;
+        const QString python = QStringLiteral(
+            "import FreeCAD as App, base64\n"
+            "_drnas_saf_path = base64.b64decode('%1').decode('utf-8')\n"
+            "_drnas_brep_param = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')\n"
+            "_drnas_brep_previous = _drnas_brep_param.GetBool('DirectAccess', True)\n"
+            "_drnas_brep_param.SetBool('DirectAccess', False)\n"
+            "_drnas_mark('BREP_AB TEMP_BEGIN DirectAccess=False')\n"
+            "try:\n"
+            "    _drnas_saf_document = App.openDocument(_drnas_saf_path)\n"
+            "    _drnas_mark('BREP_AB TEMP_OPEN_RETURN ' + str(_drnas_saf_document.Name))\n"
+            "finally:\n"
+            "    _drnas_brep_param.SetBool('DirectAccess', _drnas_brep_previous)\n"
+            "    _drnas_mark('BREP_AB TEMP_PREF_RESTORED')\n")
+            .arg(encodedPath);
+        const bool ok = runOriginalFreeCADPython(python, error);
+        DrnasDiagnostics::note(QStringLiteral(
+            "BREP_AB TEMP_BRIDGE_RETURN ok=%1 error=%2").arg(ok).arg(error.left(200)));
+        report(ok ? QStringLiteral("FCStd otvoren kroz privremeni BRep")
+                  : QStringLiteral("BRep TEMP test failed: ") + error);
     });
 
     // Isolated type-registration diagnostic for documents with Body/Pad/Sketch
