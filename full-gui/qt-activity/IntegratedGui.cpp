@@ -419,6 +419,46 @@ bool disableAndroidFreeCADOverlays()
     return true;
 }
 
+// Compact the genuine FreeCAD side docks on a phone. Original desktop
+// defaults leave little room for Coin3D. Apply widths ONCE per dock in each
+// FreeCAD window; resizing a splitter later must remain under user control.
+// Upstream minimum widths are Model=150 and Tasks=210 logical Qt pixels.
+void sizeAndroidFreeCADSideDocks(QMainWindow* freecad)
+{
+    if (!freecad || freecad->width() < 480) return;
+    auto* model = freecad->findChild<QDockWidget*>(QStringLiteral("Model"));
+    if (model && !model->property("drnasAndroidCompactWatch").toBool()) {
+        model->setProperty("drnasAndroidCompactWatch", true);
+        QPointer<QMainWindow> safeCad(freecad);
+        QObject::connect(model, &QDockWidget::visibilityChanged, freecad,
+                         [safeCad](bool visible) {
+            if (!visible || !safeCad) return;
+            QTimer::singleShot(0, safeCad.data(), [safeCad] {
+                if (safeCad) sizeAndroidFreeCADSideDocks(safeCad.data());
+            });
+        });
+    }
+    if (model && model->isVisible() && !model->isFloating() &&
+        freecad->dockWidgetArea(model) == Qt::LeftDockWidgetArea &&
+        !model->property("drnasAndroidCompactSized").toBool()) {
+        const int desired = std::clamp(freecad->width() * 18 / 100, 150, 180);
+        freecad->resizeDocks({model}, {desired}, Qt::Horizontal);
+        model->setProperty("drnasAndroidCompactSized", true);
+        DrnasDiagnostics::note(QStringLiteral(
+            "SIDE_DOCK compact Model target=%1 actual=%2").arg(desired).arg(model->width()));
+    }
+    auto* tasks = freecad->findChild<QDockWidget*>(QStringLiteral("Tasks"));
+    if (tasks && tasks->isVisible() && !tasks->isFloating() &&
+        freecad->dockWidgetArea(tasks) == Qt::RightDockWidgetArea &&
+        !tasks->property("drnasAndroidCompactSized").toBool()) {
+        const int desired = std::clamp(freecad->width() * 24 / 100, 210, 230);
+        freecad->resizeDocks({tasks}, {desired}, Qt::Horizontal);
+        tasks->setProperty("drnasAndroidCompactSized", true);
+        DrnasDiagnostics::note(QStringLiteral(
+            "SIDE_DOCK compact Tasks target=%1 actual=%2").arg(desired).arg(tasks->width()));
+    }
+}
+
 // Preserve the genuine TaskView/commands and its original lifetime. Reposition
 // only its existing QDockWidget in the real FreeCAD MainWindow. This gives the
 // operation parameters their own right-hand width, instead of a transparent
@@ -426,6 +466,7 @@ bool disableAndroidFreeCADOverlays()
 void pinAndroidPartDesignTasks(QMainWindow* freecad, QMainWindow* shell)
 {
     if (!freecad || !shell) return;
+    sizeAndroidFreeCADSideDocks(freecad);
     auto* tasks = freecad->findChild<QDockWidget*>(QStringLiteral("Tasks"));
     if (!tasks) {
         DrnasDiagnostics::note(QStringLiteral(
@@ -458,10 +499,9 @@ void pinAndroidPartDesignTasks(QMainWindow* freecad, QMainWindow* shell)
     if (visible && !tasks->isVisible()) tasks->show();
     if (!tasks->isVisible()) return;
 
-    // Width in Qt logical pixels, dynamically bounded for a phone. Qt's own
-    // splitter can shrink it if the viewport needs more room.
-    const int desired = std::clamp(freecad->width() * 32 / 100, 210, 310);
-    freecad->resizeDocks({tasks}, {desired}, Qt::Horizontal);
+    // Size both docks once, without fighting later manual splitter resizing.
+    // Original Qt Tasks minimum is 210: keep its parameter buttons operable.
+    sizeAndroidFreeCADSideDocks(freecad);
 
     // Only relocate DRNAS launchers that are actually covering Tasks.
     // They stay draggable; do not overwrite user-saved positions or reroute
@@ -481,8 +521,8 @@ void pinAndroidPartDesignTasks(QMainWindow* freecad, QMainWindow* shell)
         }
     }
     DrnasDiagnostics::note(QStringLiteral(
-        "TASKS_DOCK pinned right, visible=%1 width=%2 target=%3 viewportPreserved=1")
-        .arg(tasks->isVisible()).arg(tasks->width()).arg(desired));
+        "TASKS_DOCK pinned right, visible=%1 width=%2 viewportPreserved=1")
+        .arg(tasks->isVisible()).arg(tasks->width()));
 }
 
 // An embedded FreeCAD menu bar uses a second row on small Android screens.
