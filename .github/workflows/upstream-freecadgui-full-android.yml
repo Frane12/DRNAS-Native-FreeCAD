@@ -189,7 +189,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py', 'full-gui/upstream/patch-gl4es-drawpixels.py') }}
       - name: Build patched GL4ES and GLU on cache miss
         if: steps.gl.outputs.cache-hit != 'true'
         run: bash full-gui/upstream/build-android-gl4es-glu.sh
@@ -198,7 +198,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py', 'full-gui/upstream/patch-gl4es-drawpixels.py') }}
       - name: Demand real Bionic GL4ES and GLU before FreeCADGui configure
         run: |
           set -euo pipefail
