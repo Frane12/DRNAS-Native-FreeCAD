@@ -52,6 +52,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
           python3 -m unittest discover -s tests -p 'test_deferred_measure_ui.py' -v
+          python3 -m unittest discover -s tests -p 'test_android_sketch_plane_picker.py' -v
 
       - name: Python host tools matching FreeCAD embedded ABI
         uses: actions/setup-python@v5
