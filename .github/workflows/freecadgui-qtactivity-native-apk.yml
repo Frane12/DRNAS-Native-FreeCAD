@@ -10,6 +10,11 @@ on:
       - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
       - 'full-gui/integrated-apk/**'
       - 'full-gui/qt-activity/**'
+  # The diagnostic PR inherits trusted feature-branch Qt/OCCT/Python caches.
+  pull_request:
+    branches: [feature/full-freecad-android]
+    paths:
+      - '.github/workflows/freecadgui-qtactivity-native-apk.yml'
   workflow_dispatch:
     inputs:
       upstream_run_id:
@@ -44,7 +49,7 @@ jobs:
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
     # Diagnostic branch packages only AFTER the successful native build dispatch.
     # Its push has no native ARM64 artifact yet; avoid a misleading early failure.
-    if: (github.ref == 'refs/heads/feature/full-freecad-android' || github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026') && (github.event_name != 'push' || github.ref != 'refs/heads/diagnostics/partdesign-shiboken-20261026') && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))
+    if: (github.event_name == 'pull_request' && github.head_ref == 'diagnostics/partdesign-shiboken-20261026' && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -77,27 +82,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_RUN_ID: ${{ inputs.upstream_run_id }}
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
+          DIAG_PR_COMMIT: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          if [[ -n "$INPUT_RUN_ID" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            # Pin successful diagnostic native #94, never the old production DSO.
+            run_id="40248988009"
+          elif [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
             # Always package the most recent verified native compile. The old
             # fixed run predates Android SAF and silently rejected new fixes.
-            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${GITHUB_REF_NAME}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
+            run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build")][0].id // empty')"
           fi
           [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid upstream run"; exit 1; }
           info="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
           test "$(jq -r '.conclusion' <<<"$info")" = success
           test "$(jq -r '.name' <<<"$info")" = 'DRNAS REAL upstream FreeCADGui Full ARM64 Build'
-          test "$(jq -r '.head_branch' <<<"$info")" = "$GITHUB_REF_NAME"
+          test "$(jq -r '.head_branch' <<<"$info")" = "$TARGET_BRANCH"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            test "$(jq -r '.event' <<<"$info")" = pull_request
+          fi
           test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"
           commit="$(jq -r '.head_sha' <<<"$info")"
           attempt="$(jq -r '.run_attempt' <<<"$info")"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
           # Package the latest integration glue on our trusted feature branch.
           # Native binary provenance remains pinned to the successful source SHA.
-          package_sha="$GITHUB_SHA"
+          package_sha="${DIAG_PR_COMMIT:-$GITHUB_SHA}"
           [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
