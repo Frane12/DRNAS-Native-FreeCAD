@@ -91,7 +91,7 @@ jobs:
           attempt="$(jq -r '.run_attempt' <<<"$info")"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
           # Preserve original APK #264 render/UI plus delayed import patch.
-          package_sha="f7771e94bc5cbfe1668f3bac85d336387ed7dfb7"
+          package_sha="75922d19aa4a3dbca475083670e2da49d7c255c9"
           [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
