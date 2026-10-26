@@ -51,7 +51,7 @@ jobs:
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
     # Diagnostic branch packages only AFTER the successful native build dispatch.
     # Its push has no native ARM64 artifact yet; avoid a misleading early failure.
-    if: (github.event_name == 'pull_request' && github.head_ref == 'diagnostics/partdesign-shiboken-20261026' && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/partdesign-newsketch-20261026') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -90,7 +90,27 @@ jobs:
           set -euo pipefail
           reuse_native=0
           native_branch="$TARGET_BRANCH"
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && ( "$TARGET_BRANCH" == diagnostics/sketcher-rectangle-ovp-20261026 || "$TARGET_BRANCH" == diagnostics/partdesign-newsketch-20261026 ) ]]; then
+            # Reuse precisely the phone-confirmed native 119 build: the only
+            # source changes since that SHA are Android Qt glue and docs.
+            baseline_sha=8a5b799fc5081fcd322448cc06962c8aaca783ed
+            run_id=40329326848
+            native_branch=feature/full-freecad-android
+            reuse_native=1
+            comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$baseline_sha...$DIAG_PR_COMMIT")"
+            jq -e '(.status == "ahead" or .status == "identical") and
+                (.total_commits <= 250) and ((.files | length) < 300) and
+                ([.files[] | (.filename, (.previous_filename // "")) | select(length > 0) |
+                  select((startswith("full-gui/qt-activity/") or
+                          startswith("tests/") or . == "AGENTS.md" or
+                          . == "README.md" or . == "WORKING_BASELINE.md" or
+                          . == ".github/workflows/freecadgui-qtactivity-native-apk.yml") | not)]
+                 | length == 0)' <<< "$comparison" >/dev/null || {
+              echo "::error::Native inputs changed since verified 119; refusing stale artifact"
+              exit 1
+            }
+            echo "SKETCHER OVP: verified Android-only change; using native run $run_id"
+          elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # Packaging-only changes can reuse a successful native compile when
             # GitHub confirms that none of its native build inputs changed.
             latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request")][0].id // empty')"
@@ -170,7 +190,7 @@ jobs:
           test "$(jq -r '.conclusion' <<<"$info")" = success
           test "$(jq -r '.name' <<<"$info")" = 'DRNAS REAL upstream FreeCADGui Full ARM64 Build'
           test "$(jq -r '.head_branch' <<<"$info")" = "$native_branch"
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && "$reuse_native" != 1 ]]; then
             test "$(jq -r '.event' <<<"$info")" = pull_request
           fi
           test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"

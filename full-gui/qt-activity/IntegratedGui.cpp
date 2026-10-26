@@ -2035,6 +2035,50 @@ finally:
     }
     toolbar->addSeparator();
 
+    // Diagnostic A/B for the real PartDesign_NewSketch action: this uses the
+    // same genuine Sketcher::SketchObject and FreeCAD edit mode, but skips the
+    // original SketchWorkflow / TaskAttacher plane-picker UI on Android.
+    // Opt-in and intended ONLY for a fresh document containing one empty Body.
+    // No native module, Coin, OpenGL or desktop FreeCAD code is changed.
+    auto* bodySketchProbe = toolbar->addAction(QStringLiteral("TEST Body XY"));
+    bodySketchProbe->setObjectName(QStringLiteral("drnasPartDesignSketchXYDiagnostic"));
+    bodySketchProbe->setToolTip(QStringLiteral(
+        "A/B only: one empty Body -> genuine XY sketch WITHOUT plane selection dialog; "
+        "crash checkpoint in DBG"));
+    QObject::connect(bodySketchProbe, &QAction::triggered, shell,
+                     [bodySketchProbe, report] {
+        bodySketchProbe->setEnabled(false);
+        DrnasDiagnostics::note(QStringLiteral(
+            "PD_SKETCH_XY_AB BEGIN original PartDesign_NewSketch / Attachment Editor bypassed"));
+        QString error;
+        const bool ok = runOriginalFreeCADPython(QStringLiteral(R"DRNAS(
+import FreeCAD as App
+import FreeCADGui as Gui
+_drnas_mark('PD_SKETCH_XY_AB 01 Python imports OK')
+_doc = App.ActiveDocument
+if _doc is None:
+    raise RuntimeError('TEST Body XY requires a new document')
+_bodies = [o for o in _doc.Objects if o.TypeId == 'PartDesign::Body']
+if len(_bodies) != 1:
+    raise RuntimeError('TEST Body XY requires exactly one existing Body')
+_body = _bodies[0]
+if any(o.TypeId == 'Sketcher::SketchObject' for o in _doc.Objects):
+    raise RuntimeError('TEST Body XY: use a fresh Body without an existing sketch')
+_drnas_mark('PD_SKETCH_XY_AB 02 Body present=' + _body.Name)
+_sketch = _body.newObject('Sketcher::SketchObject', 'DRNAS_XY_Probe')
+_drnas_mark('PD_SKETCH_XY_AB 03 Sketch created=' + _sketch.Name)
+_doc.recompute()
+_drnas_mark('PD_SKETCH_XY_AB 04 recompute returned')
+Gui.activeDocument().setEdit(_sketch.Name)
+_drnas_mark('PD_SKETCH_XY_AB 05 setEdit returned (no plane dialog)')
+)DRNAS"), error);
+        DrnasDiagnostics::note(QStringLiteral(
+            "PD_SKETCH_XY_AB END ok=%1 error=%2").arg(ok).arg(error));
+        report(ok ? QStringLiteral("TEST Body XY PASS - inspect sketch, copy DBG log")
+                  : QStringLiteral("TEST Body XY FAIL - DBG: ") + error);
+        bodySketchProbe->setEnabled(true);
+    });
+
     // One compact menu button replaces six oversized desktop menu buttons.
     // Reuse the *live upstream QMenus* (including translated titles and all
     // native FreeCAD actions), rebuilt every time the button opens because
@@ -2205,6 +2249,12 @@ void recordOriginalGuiStage(const char* stageName)
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"
+                "# Diagnostic isolation: Sketcher rectangle displays live QuantitySpinBox labels after its first corner.\n"
+                "# Hide on-view parameters for this APK experiment; leave geometry, solver and Coin3D unchanged.\n"
+                "_drnas_sketcher_tools = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Sketcher/Tools')\n"
+                "_drnas_sketcher_visibility_before = _drnas_sketcher_tools.GetInt('OnViewParameterVisibility', 1)\n"
+                "_drnas_sketcher_tools.SetInt('OnViewParameterVisibility', 0)\n"
+                "_drnas_mark('SKETCHER_OVP_TEST hidden=1 previous=%s: rectangle dimension overlays disabled; no native engine edits' % _drnas_sketcher_visibility_before)\n"
                 "_drnas_mark('RA11 ISOLATION: ShowNaviCube=False before viewer construction; main scene renderer unchanged')\n"), runtimeError)) {
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }
