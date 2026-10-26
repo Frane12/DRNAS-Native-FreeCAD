@@ -18,12 +18,14 @@ REQUIRED = {
 
 
 def defer_measure_init_gui(path: Path):
-    """Suppress upstream Measure/InitGui.py's eager native imports on Android.
+    """Gate upstream Measure/InitGui.py's eager native imports on Android.
 
     The original C++ extensions remain packaged unmodified. GUI/Qt may import
     this resource before the first valid Coin3D frame; the Android AUTO MEASURE
-    timer is the only intentional *DRNAS* import path after startup. Fail the
-    build if upstream changes the exact import contract.
+    timer imports Measure and MeasureGui separately after the first Coin frame.
+    A deliberately explicit environment override can restore original eager
+    imports for a controlled A/B test; by default the imports are gated.
+    Fail the build if upstream changes the exact import contract.
     """
     original = path.read_text(encoding="utf-8")
     lines = original.splitlines(keepends=True)
@@ -34,7 +36,19 @@ def defer_measure_init_gui(path: Path):
         if statement in targets:
             found[statement] += 1
             newline = "\r\n" if line.endswith("\r\n") else "\n"
-            lines[i] = "# DRNAS Android: native " + statement[7:] + " deferred until AUTO MEASURE" + newline
+            if statement == "import Measure":
+                lines[i] = (
+                    "# DRNAS Android: gate eager native imports until the Coin3D timer\n"
+                    "import os as _drnas_measure_os\n"
+                    "if _drnas_measure_os.environ.get('DRNAS_MEASURE_INITGUI_EAGER') == '1':\n"
+                    "    import Measure\n"
+                    "    import MeasureGui\n"
+                    "else:\n"
+                    "    print('DRNAS_MEASURE_INITGUI DEFERRED: native extensions waiting for Android timer', flush=True)\n"
+                    "del _drnas_measure_os\n"
+                ).replace("\n", newline)
+            else:
+                lines[i] = "# DRNAS Android: import MeasureGui moved under guard above" + newline
     if any(count != 1 for count in found.values()):
         raise SystemExit(
             f"Unsafe Measure InitGui change: expected one import each, got {found} in {path}"
@@ -42,8 +56,8 @@ def defer_measure_init_gui(path: Path):
     updated = "".join(lines)
     compile(updated, str(path), "exec")
     path.write_text(updated, encoding="utf-8")
-    print("PASS: original Measure/InitGui.py eager Measure and MeasureGui imports "
-          "disabled in Android APK; native binaries retained")
+    print("PASS: original Measure/InitGui.py eager imports gated "
+          "until explicit timer; native binaries retained")
 
 
 
