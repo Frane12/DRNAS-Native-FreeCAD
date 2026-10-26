@@ -66,3 +66,12 @@ output stream flushes and closes. Concurrent edits remain marked modified.
 Host tests cover the handshake and transfer failures. This Save implementation
 still requires a device round-trip check; APK 316 remains the confirmed Open
 baseline until the user confirms the new build.
+
+The phone's `save.txt` report for APK 318 reaches `doc.saveCopy()` and then
+aborts before the Android provider is launched. The current candidate disables
+optional `SaveThumbnail` generation: upstream `Thumbnail::SaveDocFile()` invokes
+`renderToImage()` on a separate offscreen GL path. This is a suspected cause,
+not established by the available native stack. The FCStd still contains native
+document, geometry, parameters and GUI state; only the generated preview image
+is omitted. The Save helper enforces this for serialization and restores the
+prior setting afterward; Android startup defaults it off for native Save paths.

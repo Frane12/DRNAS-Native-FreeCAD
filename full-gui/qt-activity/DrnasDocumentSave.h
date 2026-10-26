@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DrnasDocumentOpen.h"
+#include "DrnasSaveNativeTrace.h"
 #include "StartupDiagnostics.h"
 #include <QDir>
 #include <QFile>
@@ -91,8 +92,13 @@ class DrnasDocumentSave final : public QObject {
         DrnasDiagnostics::note(QStringLiteral("ANDROID_SAVE REQUEST saveAs=%1 copyOnly=%2").arg(saveAs).arg(copyOnly));
         report_(QStringLiteral("Priprema dokumenta za spremanje…"));
         QString error;
-        if (!python_(QStringLiteral("from drnas_android_save import prepare_save\nprepare_save(%1)\n")
-                     .arg(pythonText(request)), error)) {
+        bool serialized = false;
+        {
+            DrnasSaveNativeTrace nativeTrace;
+            serialized = python_(QStringLiteral("from drnas_android_save import prepare_save\nprepare_save(%1)\n")
+                                 .arg(pythonText(request)), error);
+        }
+        if (!serialized) {
             release();
             DrnasDiagnostics::note(QStringLiteral("ANDROID_SAVE SERIALIZE_FAILED ") + error.left(250));
             report_(QStringLiteral("Priprema FCStd-a nije uspjela: ") + error.left(180));

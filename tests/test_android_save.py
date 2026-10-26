@@ -20,13 +20,17 @@ class AndroidSaveTests(unittest.TestCase):
         self.doc = types.SimpleNamespace(Name='Model', Label='../Čudni / prozor', FileName='')
         self.gui = types.SimpleNamespace(Modified=True)
         self.direct = True
+        self.thumbnail = True
         self.app = types.ModuleType('FreeCAD')
         self.app.ActiveDocument = self.doc
         self.app.getDocument = lambda name: self.doc
         self.app.addDocumentObserver = lambda observer: None
-        self.app.ParamGet = lambda path: types.SimpleNamespace(
-            GetBool=lambda name, default: self.direct,
-            SetBool=lambda name, value: setattr(self, 'direct', value))
+        def parameter(path):
+            attribute = 'thumbnail' if path.endswith('/Document') else 'direct'
+            return types.SimpleNamespace(
+                GetBool=lambda name, default: getattr(self, attribute),
+                SetBool=lambda name, value: setattr(self, attribute, value))
+        self.app.ParamGet = parameter
         self.gui_module = types.ModuleType('FreeCADGui')
         self.gui_module.getDocument = lambda name: self.gui
         self.gui_module.addDocumentObserver = lambda observer: None
@@ -35,6 +39,7 @@ class AndroidSaveTests(unittest.TestCase):
         runtime._drnas_mark = self.marks.append
         def save_copy(path):
             self.assertFalse(self.direct)
+            self.assertFalse(self.thumbnail)
             with zipfile.ZipFile(path, 'w') as archive:
                 archive.writestr('Document.xml', '<Document label="Čudni prozor"/>')
                 archive.writestr('PartShape.brp', b'representative payload')
@@ -61,6 +66,7 @@ class AndroidSaveTests(unittest.TestCase):
             self.assertIn('Document.xml', archive.namelist())
         self.assertTrue(self.gui.Modified)
         self.assertTrue(self.direct)
+        self.assertTrue(self.thumbnail)
         self.assertEqual(self.doc.FileName, '')
         self.assertTrue(self.save.finish_save(info['token'], True))
         self.assertFalse(self.gui.Modified)
@@ -100,11 +106,13 @@ class AndroidSaveTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'BRep write failed'):
             self.prepare('native-failure')
         self.assertTrue(self.direct)
+        self.assertTrue(self.thumbnail)
         self.assertTrue(self.gui.Modified)
         self.doc.saveCopy = lambda path: Path(path).write_text('not a zip')
         with self.assertRaises(zipfile.BadZipFile):
             self.prepare('invalid-zip')
         self.assertTrue(self.direct)
+        self.assertTrue(self.thumbnail)
         self.assertTrue(self.gui.Modified)
 
     def test_missing_document_does_not_start_save(self):

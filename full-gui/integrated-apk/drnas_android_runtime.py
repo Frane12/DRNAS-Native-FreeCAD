@@ -151,6 +151,10 @@ def _drnas_configure_document_open():
     parameters = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')
     parameters.SetBool('DirectAccess', False)
     _drnas_mark('ANDROID_OPEN DEFAULT DirectAccess=False')
+    # Native Save/close commands can bypass the Android Save QAction. Keep
+    # optional offscreen thumbnail rendering disabled for those paths too.
+    App.ParamGet('User parameter:BaseApp/Preferences/Document').SetBool('SaveThumbnail', False)
+    _drnas_mark('ANDROID_SAVE DEFAULT SaveThumbnail=False')
     _drnas_prepare_document_restore()
 
 

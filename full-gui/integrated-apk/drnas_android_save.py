@@ -69,9 +69,16 @@ def prepare_save(directory):
     revision = session['revision']
     parameters = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Part/General')
     previous = parameters.GetBool('DirectAccess', True)
-    _drnas_mark('ANDROID_SAVE SERIALIZE_BEGIN document=' + doc.Name + ' DirectAccess=False')
+    document_parameters = App.ParamGet('User parameter:BaseApp/Preferences/Document')
+    previous_thumbnail = document_parameters.GetBool('SaveThumbnail', True)
+    _drnas_mark('ANDROID_SAVE SERIALIZE_BEGIN document=' + doc.Name
+                + ' DirectAccess=False SaveThumbnail=False')
     try:
         parameters.SetBool('DirectAccess', False)
+        # Gui::Document::Save normally queues Thumbnail::SaveDocFile, which
+        # calls renderToImage with a separate offscreen GL path. It is optional
+        # FCStd preview data; avoid that unvalidated GPU path on Android.
+        document_parameters.SetBool('SaveThumbnail', False)
         doc.saveCopy(str(target))
         # saveCopy's Python wrapper returns None even if native saveCopy returns
         # false. Verify the actual payload before Android can truncate a target.
@@ -82,6 +89,7 @@ def prepare_save(directory):
             os.fsync(stream.fileno())
     finally:
         parameters.SetBool('DirectAccess', previous)
+        document_parameters.SetBool('SaveThumbnail', previous_thumbnail)
         # Serializing a private copy must never announce an external save.
         gui.Modified = modified or session['revision'] != revision
     metadata = {'token': token, 'key': session['key'], 'document': doc.Name,
