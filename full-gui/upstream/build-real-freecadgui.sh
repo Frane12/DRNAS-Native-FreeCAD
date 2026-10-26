@@ -431,7 +431,13 @@ PY_ANDROID_FONTS
 native_type_probe_patch = (
     'python3 "$ROOT/full-gui/upstream/patch-android-type-shiboken-diagnostics.py" "$SOURCE"\n'
 )
-s=s.replace(config_marker,validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+android_home_patch+workbench_diagnostics_patch+android_document_open_patch+android_sketcher_fonts_patch+native_type_probe_patch+config_marker)
+sketcher_icon_capture_patch = (
+    'python3 "$ROOT/full-gui/upstream/patch-sketcher-icon-capture.py" "$SOURCE"\n'
+)
+deferred_measure_ui_patch = (
+    'python3 "$ROOT/full-gui/upstream/patch-android-deferred-measure-ui.py" "$SOURCE"\n'
+)
+s=s.replace(config_marker,deferred_measure_ui_patch+validate_glu+coin_egl_patch+style_format_patch+quarter_android_patch+android_app_init_patch+android_python_patch+android_bridge_patch+android_home_patch+workbench_diagnostics_patch+android_document_open_patch+android_sketcher_fonts_patch+native_type_probe_patch+sketcher_icon_capture_patch+config_marker)
 Path(sys.argv[2]).write_text(s)
 PY
 # Uses pinned FreeCAD source, verified Android Qt/OCCT/ICU/Boost/Python/Xerces
