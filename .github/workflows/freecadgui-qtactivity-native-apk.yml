@@ -89,10 +89,32 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            # Successfully compiled native #104 includes all current upstream
-            # source probes. APK-only Java/Qt changes do not require recompiling
-            # that upstream FreeCADGui shared object.
-            run_id="40254297508"
+            # Native C++ diagnostic probes changed: never repackage old native #104.
+            # Wait for the corresponding upstream build of this exact PR commit.
+            run_id=""
+            for attempt_no in $(seq 1 150); do
+              native_list="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&per_page=100")"
+              native_row="$(jq -c --arg sha "$DIAG_PR_COMMIT" '
+                [.workflow_runs[]
+                 | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build"
+                          and .event == "pull_request"
+                          and .head_sha == $sha)]
+                | sort_by(.id) | last // null' <<< "$native_list")"
+              native_status="$(jq -r '.conclusion // .status // "pending"' <<< "$native_row")"
+              native_id="$(jq -r '.id // empty' <<< "$native_row")"
+              if [[ "$native_status" == success && "$native_id" =~ ^[0-9]+$ ]]; then
+                run_id="$native_id"
+                echo "Matching FreeCAD native build $run_id for $DIAG_PR_COMMIT is ready"
+                break
+              fi
+              if [[ "$native_status" == failure || "$native_status" == cancelled ]]; then
+                echo "::error::Matching FreeCAD native build ended $native_status"
+                exit 1
+              fi
+              echo "Native build not yet successful for $DIAG_PR_COMMIT, attempt $attempt_no: $native_status"
+              sleep 20
+            done
+            [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Matching native FreeCAD build not ready"; exit 1; }
           elif [[ -n "$INPUT_RUN_ID" ]]; then
             run_id="$INPUT_RUN_ID"
           else
@@ -117,13 +139,12 @@ jobs:
           package_sha="${DIAG_PR_COMMIT:-$GITHUB_SHA}"
           [[ "$package_sha" =~ ^[0-9a-f]{40}$ ]]
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            # Fail closed if a post-#104 commit changed native FreeCAD source.
-            upstream_delta="$(gh api "repos/$GITHUB_REPOSITORY/compare/$commit...$package_sha" --jq '[.files[] | select(.filename | startswith("full-gui/upstream/"))] | length')"
-            test "$upstream_delta" = "0" || {
-              echo "::error::Native upstream sources changed after #104; rebuild required"
+            # Native C++ and Android glue must refer to the SAME source revision.
+            test "$commit" = "$package_sha" || {
+              echo "::error::Mismatched FreeCAD source commit and APK packaging commit"
               exit 1
             }
-            echo "PASS: native #104 has exact matching FreeCAD upstream source"
+            echo "PASS: native and APK use identical PR source commit"
           fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "attempt=$attempt" >> "$GITHUB_OUTPUT"
@@ -266,6 +287,13 @@ jobs:
           test -f out/upstream-freecad-gui/native/libCoin.so
           # No silently repacking a pre-fix upstream library.
           test -f full-gui/qt-activity/android/src/org/drnas/freecad/bootstrap/AndroidDocumentBridge.java
+          # Do not publish an APK with stale FreeCADApp/document restore objects.
+          grep -aFq 'FCSTD_PRIVATE 11 set FileName' out/upstream-freecad-gui/native/libFreeCADApp.so || {
+            echo "::error::FreeCADApp library lacks FCStd filename checkpoint"; exit 1;
+          }
+          grep -aFq 'FCSTD_RESTORE 25 document objects' out/upstream-freecad-gui/native/libFreeCADApp.so || {
+            echo "::error::FreeCADApp library lacks FCStd restore checkpoint"; exit 1;
+          }
           if ! grep -aFq 'AndroidDocumentBridge' out/upstream-freecad-gui/native/libFreeCADGui.so; then
             echo "::error::Native FreeCADGui is older than the Android SAF file-open fix. Run upstream-freecadgui-full-android.yml first."
             exit 1

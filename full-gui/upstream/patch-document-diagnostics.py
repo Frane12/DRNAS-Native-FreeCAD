@@ -142,6 +142,34 @@ private:
         ('doCommand(Command::Gui, "Gui.ActiveDocument.ActiveView.setAxisCross(True)");', 'D03 axis cross'),
     ])
     trace_original_open(root)
+    # An actual phone trace reaches Application::newDocument EXIT, then SIGABRT
+    # before Python App.openDocument returns. Precisely isolate filename update,
+    # original ZIP/XML restore, and native GUI restore. No CAD behavior change.
+    annotate(root, "src/App/Application.cpp", "Document* Application::openDocumentPrivate(", [
+        ('Document* newDoc = newDocument(name.c_str(), label, initFlags);',
+         'FCSTD_PRIVATE 10 newDocument'),
+        ('newDoc->FileName.setValue(propFileName==FileName?File.filePath():propFileName);',
+         'FCSTD_PRIVATE 11 set FileName'),
+        ('newDoc->restore(File.filePath().c_str(),true,objNames);',
+         'FCSTD_PRIVATE 12 restore archive'),
+    ])
+    annotate(root, "src/App/Document.cpp", "void Document::restore(", [
+        ('clearUndos();', 'FCSTD_RESTORE 20 clear undo'),
+        ('Base::ifstream file(fi, std::ios::in | std::ios::binary);',
+         'FCSTD_RESTORE 21 open stream'),
+        ('zipios::ZipInputStream zipstream(file);',
+         'FCSTD_RESTORE 22 ZIP stream'),
+        ('Base::XMLReader reader(filename, zipstream);',
+         'FCSTD_RESTORE 23 XML reader'),
+        ('GetApplication().signalStartRestoreDocument(*this);',
+         'FCSTD_RESTORE 24 signal start'),
+        ('Document::Restore(reader);',
+         'FCSTD_RESTORE 25 document objects'),
+        ('signalRestoreDocument(reader);',
+         'FCSTD_RESTORE 26 GUI restore'),
+        ('reader.readFiles(zipstream);',
+         'FCSTD_RESTORE 27 archive payload'),
+    ])
     annotate(root, "src/App/Application.cpp", "Document* Application::newDocument(", [
         ('auto doc = new Document(name.c_str());', 'A01 App Document constructor'),
         ('setActiveDocumentNoSignal(doc);', 'A02 set active document'),
