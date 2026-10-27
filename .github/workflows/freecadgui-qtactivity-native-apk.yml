@@ -397,6 +397,9 @@ jobs:
             }
           fi
           if [[ "${GITHUB_HEAD_REF:-}" == fix/android-camera-navigation-20261027 ]]; then
+            grep -aFq 'VIEW_CMD 04 wrap main window' out/upstream-freecad-gui/native/libFreeCADGui.so || {
+              echo "::error::Native FreeCADGui lacks view command diagnostics"; exit 1;
+            }
             readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
               | awk '$7 != "UND" && $8 == "drnas_android_camera_direct_v1" { found=1 } END { exit !found }' || {
               echo "::error::Native FreeCADGui lacks camera direct-orientation experiment"; exit 1;
