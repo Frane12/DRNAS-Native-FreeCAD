@@ -45,6 +45,39 @@ def patch(root):
     path.write_text(source)
     viewer_path.write_text(viewer)
 
+    # Trace the real NaviCube event path only; preserve selection and camera behavior.
+    cube_path = root / 'src/Gui/NaviCube.cpp'
+    cube = cube_path.read_text()
+    include = '#include <Base/AndroidDocumentDiagnostics.h>\n'
+    if include not in cube:
+        cube = '#ifdef __ANDROID__\n' + include + '#endif\n' + cube
+
+    def trace_section(signature, end_signature, replacements):
+        nonlocal cube
+        start = cube.index(signature)
+        end = cube.index(end_signature, start)
+        section = cube[start:end]
+        for statement, label in replacements:
+            before = '#ifdef __ANDROID__\n    drnasDocumentPhase("NAVI_CUBE ' + label + '", "BEGIN");\n#endif\n'
+            after = '\n#ifdef __ANDROID__\n    drnasDocumentPhase("NAVI_CUBE ' + label + '", "END");\n#endif'
+            section = once(section, statement, before + statement + after)
+        cube = cube[:start] + section + cube[end:]
+
+    trace_section('bool NaviCubeImplementation::mousePressed(short x, short y)',
+                  '\nvoid NaviCubeImplementation::handleMenu()', [
+        ('    PickId pick = pickFace(x, y);', '01 press pick'),
+        ('    setHilite(pick);', '02 press highlight'),
+    ])
+    trace_section('bool NaviCubeImplementation::mouseReleased(short x, short y)',
+                  '\nbool NaviCubeImplementation::mouseMoved(', [
+        ('    static const float pi = boost::math::constants::pi<float>();\n\n    setHilite(PickId::None);', '03 release highlight'),
+        ('        PickId pickId = pickFace(x, y);', '04 release pick'),
+        ('                orientation = getNearestOrientation(pickId);', '05 nearest orientation'),
+        ('                orientation = getFaceRotation(pickId);', '06 face orientation'),
+        ('            viewer->setCameraOrientation(orientation, moveToCenter);', '07 camera orientation'),
+    ])
+    cube_path.write_text(cube)
+
 if __name__ == '__main__':
     patch(Path(sys.argv[1]))
     print('CAMERA_DIRECT_V1: Android native orientation without transition animation')
