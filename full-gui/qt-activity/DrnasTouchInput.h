@@ -528,6 +528,10 @@ protected:
             return false;
         };
         const bool directControl = isDirectOverlay(inputWidget);
+        if (inputWidget && inputWidget->objectName()==QStringLiteral("drnasModeProbe") &&
+            event->type()==QEvent::MouseButtonPress)
+            DrnasDiagnostics::note(QStringLiteral("TEST mode=%1 inApp=%2 direct=%3")
+                .arg(int(relativeMode)).arg(int(inApp)).arg(int(directControl)));
         if (relativeMode && inApp && !directControl) {
             if (event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate || event->type()==QEvent::TouchEnd) {
                 auto* touch=static_cast<QTouchEvent*>(event);

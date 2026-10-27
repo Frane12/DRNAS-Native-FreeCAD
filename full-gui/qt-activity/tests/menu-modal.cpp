@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
     auto* mode = host.findChild<QCheckBox*>("drnasRelativeMouseMode");
     check(mode && !mode->isChecked(), "direct touch is default");
     QPushButton touchButton("touch", cad);
+    touchButton.setObjectName("drnasModeProbe");
     touchButton.setGeometry(150, 10, 90, 30);
     touchButton.show();
     const QPointF touchLocal(20, 15);
@@ -58,6 +59,7 @@ int main(int argc, char** argv) {
     mode->setChecked(true);
     check(seen("INPUT mode relative mouse"), "relative mode enabled");
     sendSynthetic(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+    for (const auto& line : trace) if (line.startsWith("TEST")) qInfo("%s", qPrintable(line));
     check(!touchButton.isDown(), "relative mode captures synthetic input");
     sendSynthetic(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
     mode->setChecked(false);
