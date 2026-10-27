@@ -28,6 +28,7 @@ fetch ptitSeb/GLU "$PIN_GLU" "$SRC/glu-freecad"
 
 python3 "$ROOT/full-gui/upstream/patch-qt-gl-state.py" "$SRC/gl4es-freecad/src/gl/framebuffers.c"
 python3 "$ROOT/full-gui/upstream/patch-gl4es-drawpixels.py" "$SRC/gl4es-freecad/src/gl"
+python3 "$ROOT/full-gui/upstream/patch-gl4es-error-diagnostics.py" "$SRC/gl4es-freecad/src/gl"
 cmake -S "$SRC/gl4es-freecad" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$ANDROID_API" \
