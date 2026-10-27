@@ -51,6 +51,7 @@ jobs:
       - name: Verify read-only native registration diagnostics
         run: |
           python3 -m unittest discover -s tests -p 'test_native_gles_multisample.py' -v
+          python3 -m unittest discover -s tests -p 'test_android_coin_gles.py' -v
           python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
           python3 -m unittest discover -s tests -p 'test_deferred_measure_ui.py' -v
           python3 -m unittest discover -s tests -p 'test_android_sketch_plane_picker.py' -v
