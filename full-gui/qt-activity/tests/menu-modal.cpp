@@ -1,5 +1,8 @@
 #include "../DrnasTouchInput.h"
 #include <QApplication>
+#include <QCheckBox>
+#include <QMouseEvent>
+#include <QSettings>
 #include <QDialog>
 #include <QHelpEvent>
 #include <QMenu>
@@ -18,6 +21,9 @@ static bool seen(const char* label) {
 }
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    QCoreApplication::setOrganizationName("DRNAS-Test");
+    QCoreApplication::setApplicationName("touch-mode");
+    QSettings().remove("touch/relativeMode");
     QMainWindow host;
     host.resize(800, 500);
     auto* cad = new QMainWindow(&host);
@@ -28,6 +34,31 @@ int main(int argc, char** argv) {
     host.show(); cad->show();
     new DrnasTouchInput(&host, cad, [](const QString&) {});
     QTest::qWait(40);
+
+    auto* mode = host.findChild<QCheckBox*>("drnasRelativeMouseMode");
+    check(mode && !mode->isChecked(), "direct touch is default");
+    QPushButton touchButton("touch", cad);
+    touchButton.setGeometry(150, 10, 90, 30);
+    touchButton.show();
+    const QPointF local(20, 15);
+    const QPointF global = touchButton.mapToGlobal(local.toPoint());
+    const QPointF window = touchButton.window()->mapFromGlobal(global.toPoint());
+    auto sendSynthetic = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, local, window, global, button, buttons,
+                          Qt::NoModifier, Qt::MouseEventSynthesizedBySystem);
+        QApplication::sendEvent(&touchButton, &event);
+    };
+    sendSynthetic(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+    check(touchButton.isDown(), "direct touch reaches target control");
+    sendSynthetic(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+    mode->setChecked(true);
+    sendSynthetic(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+    check(!touchButton.isDown(), "relative mode captures synthetic input");
+    sendSynthetic(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+    mode->setChecked(false);
+    QTest::qWait(30);
+    QSettings().remove("touch/relativeMode");
+    touchButton.hide();
 
     QDialog modal(&host);
     modal.setWindowModality(Qt::ApplicationModal);
