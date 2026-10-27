@@ -21,24 +21,34 @@ int main(int argc, char** argv) {
     shell.show();
     auto* cad = new QMainWindow(&shell);
     shell.setCentralWidget(cad);
-    int result = 0;
-    new DrnasCameraControls(&shell, cad, [&](int delta) { result += delta; });
+    int yaw = 0, pitch = 0;
+    new DrnasCameraControls(&shell, cad, [&](int axis, int delta) {
+        if (axis == 0) yaw += delta; else pitch += delta;
+    });
     auto* left = shell.findChild<QPushButton*>("drnasRotateLeft");
     auto* right = shell.findChild<QPushButton*>("drnasRotateRight");
-    check(left && right, "both camera buttons must exist");
+    auto* up = shell.findChild<QPushButton*>("drnasRotateUp");
+    auto* down = shell.findChild<QPushButton*>("drnasRotateDown");
+    check(left && right && up && down, "all four camera buttons must exist");
 
     // In the Android bootstrap, the embedded FreeCAD main window is shown
     // after the controls were constructed and can cover sibling widgets.
     cad->show();
     cad->raise();
     QTest::qWait(500);
-    check(left->isVisible() && right->isVisible(), "camera buttons must remain visible");
+    check(left->isVisible() && right->isVisible() && up->isVisible() && down->isVisible(), "camera buttons must remain visible");
     check(shell.childAt(left->geometry().center()) == left, "left button must be above CAD window");
     check(shell.childAt(right->geometry().center()) == right, "right button must be above CAD window");
+    check(shell.childAt(up->geometry().center()) == up, "up button must be above CAD window");
+    check(shell.childAt(down->geometry().center()) == down, "down button must be above CAD window");
     QTest::mouseClick(left, Qt::LeftButton);
-    check(result == -1, "left button invokes negative rotation");
+    check(yaw == -1 && pitch == 0, "left button invokes negative yaw");
     QTest::mouseClick(right, Qt::LeftButton);
-    check(result == 0, "right button invokes positive rotation");
+    check(yaw == 0 && pitch == 0, "right button invokes positive yaw");
+    QTest::mouseClick(up, Qt::LeftButton);
+    check(yaw == 0 && pitch == -1, "up button invokes negative pitch");
+    QTest::mouseClick(down, Qt::LeftButton);
+    check(yaw == 0 && pitch == 0, "down button invokes positive pitch");
 
     cad->hide();
     cad->show();

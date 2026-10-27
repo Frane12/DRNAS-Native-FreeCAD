@@ -2096,16 +2096,21 @@ finally:
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, freecad, toolbar);
     // Rotate the real active Coin camera without creating a new GL surface.
-    new DrnasCameraControls(shell, freecad, [report](int direction) {
-        DrnasDiagnostics::note(QStringLiteral("CAMERA ARROW begin direction=%1").arg(direction));
+    new DrnasCameraControls(shell, freecad, [report](int axis, int direction) {
+        DrnasDiagnostics::note(QStringLiteral("CAMERA ARROW begin axis=%1 direction=%2").arg(axis).arg(direction));
         QString error;
         const QString code = QStringLiteral(
             "import FreeCAD as App, FreeCADGui as Gui\n"
             "_drnas_cam_view = Gui.activeDocument().activeView() if Gui.activeDocument() else None\n"
             "if _drnas_cam_view is None: raise RuntimeError('Prvo otvorite dokument s 3D pogledom')\n"
-            "_drnas_cam_delta = App.Rotation(App.Vector(0, 0, 1), %1)\n"
-            "_drnas_cam_view.setCameraOrientation(_drnas_cam_delta.multiply(_drnas_cam_view.getCameraOrientation()))\n"
-        ).arg(direction * 15);
+            "_drnas_cam_current = _drnas_cam_view.getCameraOrientation()\n"
+            "_drnas_cam_delta = App.Rotation(App.Vector(%1), %2)\n"
+            "_drnas_cam_target = %3\n"
+            "_drnas_cam_view.setCameraOrientation(_drnas_cam_target)\n"
+        ).arg(axis == 0 ? QStringLiteral("0, 0, 1") : QStringLiteral("1, 0, 0"))
+         .arg(direction * 15)
+         .arg(axis == 0 ? QStringLiteral("_drnas_cam_delta.multiply(_drnas_cam_current)")
+                        : QStringLiteral("_drnas_cam_current.multiply(_drnas_cam_delta)"));
         const bool ok = runOriginalFreeCADPython(code, error);
         DrnasDiagnostics::note(QStringLiteral("CAMERA ARROW return ok=%1 error=%2").arg(ok).arg(error));
         if (!ok) report(QStringLiteral("Rotacija: ") + error);
