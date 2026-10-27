@@ -31,7 +31,6 @@
 #include <QVector>
 #include <QVBoxLayout>
 #include <QWheelEvent>
-#include <QWindow>
 #include <QToolTip>
 #include <QMenu>
 #include "StartupDiagnostics.h"
@@ -123,13 +122,7 @@ class DrnasTouchInput final : public QObject {
     QElapsedTimer relativeClock;
     bool relativeActive=false, relativeMoved=false;
     int relativeTouchId=-1;
-    int windowTouchId=-1;
-    bool windowMouseActive=false;
-    QPointer<QWindow> modalInputWindow;
-    QPointer<QWidget> modalInputOwner;
     unsigned menuHoverSamples=0;
-    unsigned modalWindowSamples=0;
-    bool modalMoveLogged=false;
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
@@ -447,93 +440,9 @@ class DrnasTouchInput final : public QObject {
         repairQueued=true;
         QTimer::singleShot(0,this,[this]{repairQueued=false; repairWindows(); constrain();});
     }
-    // Route an outside finger gesture only when Qt actually delivers it to
-    // the host/dialog QWindow. Modal hit-testing below still blocks CAD clicks.
-    bool routeModalWindowInput(QObject* obj, QEvent* event) {
-        auto* window = qobject_cast<QWindow*>(obj);
-        QWidget* modal = QApplication::activeModalWidget();
-        if (!window) return false;
-        if (!modal || QApplication::activePopupWidget()) {
-            if (windowTouchId >= 0 || windowMouseActive) {
-                windowTouchId = -1; windowMouseActive = false; relativeActive = false;
-                relativeTouchId = -1; modalInputWindow.clear(); modalInputOwner.clear();
-            }
-            return false;
-        }
-        if (modal != host && !host->isAncestorOf(modal)) return false;
-        if (window != host->windowHandle() && window != modal->windowHandle()) return false;
-        if (modalInputOwner && modalInputOwner.data() != modal) {
-            windowTouchId = -1; windowMouseActive = false; relativeActive = false;
-            relativeTouchId = -1; modalInputWindow.clear(); modalInputOwner.clear();
-        }
-        const auto outside = [modal](const QPointF& global) {
-            return !modal->rect().contains(modal->mapFromGlobal(global.toPoint()));
-        };
-        const auto t = event->type();
-        if (t == QEvent::TouchCancel && windowTouchId >= 0 && modalInputWindow == window) {
-            windowTouchId = -1; relativeTouchId = -1; relativeActive = false;
-            modalInputWindow.clear(); modalInputOwner.clear();
-            DrnasDiagnostics::note(QStringLiteral("MODAL_WINDOW touch cancel"));
-            event->accept(); return true;
-        }
-        if (t == QEvent::TouchBegin || t == QEvent::TouchUpdate || t == QEvent::TouchEnd) {
-            auto* touch = static_cast<QTouchEvent*>(event);
-            for (const auto& point : touch->points()) {
-                const QPointF global = point.globalPosition();
-                if (point.state() == QEventPoint::State::Pressed && modalWindowSamples < 20) {
-                    DrnasDiagnostics::note(QStringLiteral("MODAL_WINDOW touch observed outside=%1 active=%2")
-                        .arg(outside(global)).arg(relativeActive));
-                    ++modalWindowSamples;
-                }
-                if (windowTouchId < 0 && !relativeActive &&
-                    point.state() == QEventPoint::State::Pressed && outside(global)) {
-                    windowTouchId = point.id(); relativeTouchId = point.id();
-                    modalInputWindow = window; modalInputOwner = modal;
-                    beginRelative(global); modalMoveLogged=false;
-                    DrnasDiagnostics::note(QStringLiteral("MODAL_WINDOW outside touch begin"));
-                }
-                if (point.id() != windowTouchId || modalInputWindow != window) continue;
-                if (point.state() == QEventPoint::State::Released) {
-                    endRelative(global);
-                    windowTouchId = -1; relativeTouchId = -1;
-                    modalInputWindow.clear(); modalInputOwner.clear();
-                    DrnasDiagnostics::note(QStringLiteral("MODAL_WINDOW outside touch end"));
-                } else {
-                    updateRelative(global);
-                    if (point.state() == QEventPoint::State::Updated && !modalMoveLogged) {
-                        DrnasDiagnostics::note(QStringLiteral("MODAL_WINDOW outside touch move"));
-                        modalMoveLogged=true;
-                    }
-                }
-                event->accept(); return true;
-            }
-        }
-        if (t == QEvent::MouseButtonPress || t == QEvent::MouseMove || t == QEvent::MouseButtonRelease) {
-            auto* mouse = static_cast<QMouseEvent*>(event);
-            if (mouse->source() == Qt::MouseEventNotSynthesized) return false;
-            const QPointF global = mouse->globalPosition();
-            if (t == QEvent::MouseButtonPress && !relativeActive && outside(global)) {
-                windowMouseActive = true; modalInputWindow = window; modalInputOwner = modal;
-                beginRelative(global);
-                DrnasDiagnostics::note(QStringLiteral("MODAL_WINDOW outside mouse begin"));
-            }
-            if (windowMouseActive && modalInputWindow == window) {
-                if (t == QEvent::MouseMove) updateRelative(global);
-                else if (t == QEvent::MouseButtonRelease) {
-                    endRelative(global); windowMouseActive = false;
-                    modalInputWindow.clear(); modalInputOwner.clear();
-                    DrnasDiagnostics::note(QStringLiteral("MODAL_WINDOW outside mouse end"));
-                }
-                event->accept(); return true;
-            }
-        }
-        return false;
-    }
-
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
         if (injectedEvents.contains(event)) return false;
-        if (routeModalWindowInput(obj, event)) return true;
         if (event->type() == QEvent::ToolTip) {
             QWidget* widget = qobject_cast<QWidget*>(obj);
             auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
@@ -644,8 +553,7 @@ protected:
             }
         }
         if (event->type()==QEvent::ApplicationDeactivate || (obj==host && event->type()==QEvent::Hide)) {
-            relativeActive=false; relativeTouchId=-1; windowTouchId=-1; windowMouseActive=false;
-            modalInputWindow.clear(); modalInputOwner.clear(); releaseAll();
+            relativeActive=false; relativeTouchId=-1; releaseAll();
             // Do not erase the modal return stack on a short-lived Android
             // focus switch while a dialog is still open.
             QTimer::singleShot(0,this,[this]{syncModalPointer();});
