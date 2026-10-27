@@ -290,8 +290,8 @@ jobs:
       - name: Install Android tools and ELF relinker
         run: |
           set -euo pipefail
-          timeout 240s sudo apt-get update
-          timeout 240s sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
+          timeout 600s sudo apt-get update
+          timeout 600s sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
           timeout 300s "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
           mkdir -p out/integrated-freecad-qtapk
