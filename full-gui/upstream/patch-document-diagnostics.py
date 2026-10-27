@@ -11,6 +11,17 @@ def once(source, old, new):
     return source.replace(old, new, 1)
 
 
+def patch_native_multisample(source):
+    # This pointer is used only for the native Qt GL_MULTISAMPLE query/restore
+    # around QGraphicsView painting. GLES has no such enable capability; its
+    # multisampling is controlled by the framebuffer. Keep desktop behavior.
+    return once(source,
+        '    QOpenGLFunctions* functions = w->context() ? w->context()->functions() : nullptr;',
+        '''    QOpenGLContext* multisampleContext = w->context();
+    QOpenGLFunctions* functions = multisampleContext && !multisampleContext->isOpenGLES()
+        ? multisampleContext->functions() : nullptr;''')
+
+
 def annotate(root, path, signature, phases, max_calls=None):
     target = root / path
     source = target.read_text()
@@ -649,6 +660,7 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
         ::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");
     }''')
     quarter_source = '#include <dlfcn.h>\nextern "C" __attribute__((visibility("default"))) int drnas_gpu_color_version() { return 1; }\n' + quarter_source
+    quarter_source = patch_native_multisample(quarter_source)
     quarter_path.write_text(quarter_source)
 
     # Independent, session-only Coin stages for comparison with the GLES
