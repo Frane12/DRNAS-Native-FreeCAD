@@ -46,12 +46,17 @@ int main(int argc, char** argv) {
     auto sendSynthetic = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons) {
         QMouseEvent event(type, touchLocal, window, global, button, buttons,
                           Qt::NoModifier, Qt::MouseEventSynthesizedBySystem);
+        qInfo("touch test type=%d source=%d mode=%d down_before=%d",
+              int(type), int(event.source()), int(mode->isChecked()), int(touchButton.isDown()));
         QApplication::sendEvent(&touchButton, &event);
+        qInfo("touch test down_after=%d", int(touchButton.isDown()));
     };
     sendSynthetic(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
     check(touchButton.isDown(), "direct touch reaches target control");
     sendSynthetic(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+    check(!touchButton.isDown(), "direct touch release completed");
     mode->setChecked(true);
+    check(seen("INPUT mode relative mouse"), "relative mode enabled");
     sendSynthetic(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
     check(!touchButton.isDown(), "relative mode captures synthetic input");
     sendSynthetic(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
