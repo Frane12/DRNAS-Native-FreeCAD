@@ -435,6 +435,7 @@ private:
 static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
 {
     ::DrnasDocumentTraceScope scope("GPU00 render context snapshot");
+    drnasCoinProvenanceProbe();
     QOpenGLContext* context = QOpenGLContext::currentContext();
     char line[1536];
     std::snprintf(line, sizeof(line),

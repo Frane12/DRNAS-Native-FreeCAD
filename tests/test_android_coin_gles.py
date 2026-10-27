@@ -22,6 +22,11 @@ GLUE = '''void applyOffset(int m, bool enable) {
   }
 }
 '''
+LINEWIDTH = '''void applyWidth() {
+    GLfloat vals[2];
+    glGetFloatv(GL_LINE_WIDTH_RANGE, vals);
+}
+'''
 LAZY = '''struct FakeLazy {
   struct { int stipplenum = 0; } mutable glstate;
   mutable int cachebitmask = 0;
@@ -54,9 +59,11 @@ LAZY = '''struct FakeLazy {
 PREFIX = r'''
 #include <cassert>
 using GLboolean = unsigned char;
+using GLfloat = float;
 constexpr int GL_TRUE = 1, TRUE = 1, FALSE = 0;
 constexpr int GL_POLYGON_OFFSET_LINE=10754, GL_POLYGON_OFFSET_POINT=10753;
 constexpr int GL_POLYGON_STIPPLE=2882, GL_RGBA_MODE=3121;
+constexpr int GL_LINE_WIDTH_RANGE=2850, GL_ALIASED_LINE_WIDTH_RANGE=0x846E;
 constexpr int cc_glglue_LINES=1, cc_glglue_POINTS=2, TRANSPARENCY_MASK=4;
 static int bad_calls=0;
 static int valid_calls=0;
@@ -74,12 +81,18 @@ void glGetBooleanv(int cap, GLboolean* value) {
     *value=1;
 }
 void glPolygonStipple(const unsigned char*) {++bad_calls;}
+void glGetFloatv(int pname, GLfloat* vals) {
+    if (pname==GL_LINE_WIDTH_RANGE) ++bad_calls;
+    else if (pname==GL_ALIASED_LINE_WIDTH_RANGE) ++valid_calls;
+    vals[0]=1.0f; vals[1]=4.0f;
+}
 '''
 SUFFIX = r'''
 int main() {
     applyOffset(0, true);
     applyOffset(3, true);
     applyOffset(3, false);
+    applyWidth();
     FakeLazy lazy;
     lazy.init();
     lazy.sendTransparency(1);
@@ -100,18 +113,20 @@ class AndroidCoinGlesTest(unittest.TestCase):
     def stage(self, root):
         glue = root / 'src/glue/gl.cpp'
         lazy = root / 'src/elements/GL/SoGLLazyElement.cpp'
+        line = root / 'src/elements/GL/SoGLLineWidthElement.cpp'
         glue.parent.mkdir(parents=True)
         lazy.parent.mkdir(parents=True)
         glue.write_text(GLUE)
         lazy.write_text(LAZY)
-        return glue, lazy
+        line.write_text(LINEWIDTH)
+        return glue, lazy, line
 
     def test_native_and_desktop_compile_and_behavior(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            glue, lazy = self.stage(root)
+            glue, lazy, line = self.stage(root)
             patcher.patch(root)
-            code = PREFIX + glue.read_text() + lazy.read_text() + SUFFIX
+            code = PREFIX + glue.read_text() + lazy.read_text() + line.read_text() + SUFFIX
             source = root/'test.cpp'
             source.write_text(code)
             for android in (False, True):
@@ -126,11 +141,12 @@ class AndroidCoinGlesTest(unittest.TestCase):
     def test_source_drift_fails_without_partial_write(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            glue, lazy = self.stage(root)
+            glue, lazy, line = self.stage(root)
             lazy.write_text('unexpected pinned Coin revision')
             with self.assertRaises(RuntimeError):
                 patcher.patch(root)
             self.assertEqual(glue.read_text(), GLUE)
+            self.assertEqual(line.read_text(), LINEWIDTH)
 
 if __name__ == '__main__':
     unittest.main()

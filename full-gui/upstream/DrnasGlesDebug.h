@@ -42,6 +42,27 @@ static _Unwind_Reason_Code drnasGlesStackFrame(_Unwind_Context* frame, void* opa
     return _URC_NO_REASON;
 }
 
+// Inspect the loaded Coin DSO without loading another copy or touching GL.
+static void drnasCoinProvenanceProbe()
+{
+    static bool once = false;
+    if (once) return;
+    once = true;
+    void* coin = dlopen("libCoin.so", RTLD_NOW | RTLD_NOLOAD);
+    void* symbol = coin ? dlsym(coin, "drnas_coin_android_gles_guard_v2")
+                        : dlsym(RTLD_DEFAULT, "drnas_coin_android_gles_guard_v2");
+    Dl_info info = {};
+    if (symbol) dladdr(symbol, &info);
+    using VersionFn = const char* (*)();
+    const char* version = symbol ? reinterpret_cast<VersionFn>(symbol)() : "MISSING";
+    char line[1024];
+    std::snprintf(line, sizeof(line), "COIN_NATIVE_PROVENANCE marker=%s loaded=%d path=%s",
+                  version, int(coin != nullptr),
+                  info.dli_fname ? info.dli_fname : "unknown");
+    ::drnasDocumentPhase(line, symbol ? "PROVENANCE_PASS" : "PROVENANCE_MISSING");
+    if (coin) dlclose(coin);
+}
+
 static void drnasInstallGlesDebug(QOpenGLWidget* widget)
 {
     auto* context = QOpenGLContext::currentContext();

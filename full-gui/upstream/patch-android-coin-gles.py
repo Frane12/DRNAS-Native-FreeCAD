@@ -18,8 +18,10 @@ def replace_once(source: str, old: str, new: str, location: str) -> str:
 def patch(coin: Path) -> None:
     glue_path = coin / "src/glue/gl.cpp"
     lazy_path = coin / "src/elements/GL/SoGLLazyElement.cpp"
+    line_path = coin / "src/elements/GL/SoGLLineWidthElement.cpp"
     glue = glue_path.read_text()
     lazy = lazy_path.read_text()
+    line = line_path.read_text()
 
     # GLES only allows GL_POLYGON_OFFSET_FILL. The original Coin code also
     # toggles desktop-only LINE/POINT (both invalid on Adreno GLES 3.2).
@@ -69,13 +71,35 @@ def patch(coin: Path) -> None:
 """ + init + "\n#endif"
     lazy = replace_once(lazy, init, gles, str(lazy_path))
 
-    # No partial writes if either pinned source changed unexpectedly.
+    # GLES requires GL_ALIASED_LINE_WIDTH_RANGE instead of desktop enum 2850.
+    width_query = '    glGetFloatv(GL_LINE_WIDTH_RANGE, vals);'
+    line = replace_once(line, width_query,
+        '#ifdef __ANDROID__\n'
+        '    glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, vals);\n'
+        '#else\n' + width_query + '\n#endif',
+        str(line_path))
+
+    # Runtime provenance exported from the native binary actually loaded.
+    if 'drnas_coin_android_gles_guard_v2' in glue:
+        raise RuntimeError('Coin provenance marker already exists')
+    glue += (
+        '\n#ifdef __ANDROID__\n'
+        'extern "C" __attribute__((visibility("default")))\n'
+        'const char* drnas_coin_android_gles_guard_v2()\n'
+        '{\n'
+        '  return "COIN_GLES_GUARD_V2";\n'
+        '}\n'
+        '#endif\n'
+    )
+
+    # No partial writes if any pinned source changed unexpectedly.
     glue_path.write_text(glue)
     lazy_path.write_text(lazy)
+    line_path.write_text(line)
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         raise SystemExit("Usage: patch-android-coin-gles.py <FreeCAD/src/3rdParty/coin>")
     patch(Path(sys.argv[1]))
-    print("Android-only Coin GLES enum guards installed (polygon offset, stipple, RGBA mode)")
+    print("Android Coin GLES v2 guards installed (polygon offset, stipple, RGBA, line width, provenance)")

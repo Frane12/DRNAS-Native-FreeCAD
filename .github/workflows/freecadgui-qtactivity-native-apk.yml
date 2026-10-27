@@ -609,6 +609,12 @@ jobs:
           readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
             | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
           rm out/integrated-freecad-qtapk/apk-libGL.so
+          # Verify signed APK's Coin DSO, rather than trusting upstream build status.
+          unzip -p "$apk" lib/arm64-v8a/libCoin.so > out/integrated-freecad-qtapk/apk-libCoin.so
+          readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libCoin.so \
+            | awk '$7 != "UND" && $8 == "drnas_coin_android_gles_guard_v2" { found=1 } END { exit !found }'
+          rm out/integrated-freecad-qtapk/apk-libCoin.so
+          echo 'PASS: final signed APK carries Coin GLES guard v2 ABI marker'
           # Verify transitive dependencies for EVERY arm64 library, not only
           # FreeCADGui/Base/App. Prior signed APK crashed instantly because
           # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.
