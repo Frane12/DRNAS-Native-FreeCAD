@@ -55,6 +55,7 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_android_sketch_plane_picker.py' -v
           python3 -m unittest discover -s tests -p 'test_android_camera_orientation.py' -v
           python3 -m unittest discover -s tests -p 'test_android_view_command_trace.py' -v
+          python3 -m unittest discover -s tests -p 'test_android_direct_standard_views.py' -v
 
       - name: Python host tools matching FreeCAD embedded ABI
         uses: actions/setup-python@v5

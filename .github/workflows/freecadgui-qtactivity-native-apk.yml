@@ -397,6 +397,10 @@ jobs:
             }
           fi
           if [[ "${GITHUB_HEAD_REF:-}" == fix/android-camera-navigation-20261027 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_direct_standard_views_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native FreeCADGui lacks Android direct standard views"; exit 1;
+            }
             grep -aFq 'VIEW_CMD 04 wrap main window' out/upstream-freecad-gui/native/libFreeCADGui.so || {
               echo "::error::Native FreeCADGui lacks view command diagnostics"; exit 1;
             }
