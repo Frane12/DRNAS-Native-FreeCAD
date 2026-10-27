@@ -418,6 +418,7 @@ private:
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <dlfcn.h>
+#include "DrnasGlesDebug.h"
 
 // Queries only: preserve the selected rendering mode and all GL state.
 static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
@@ -494,6 +495,7 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
         surfaceFormat.setVersion(2, 0);
         surfaceFormat.setProfile(QSurfaceFormat::NoProfile);
         surfaceFormat.setOption(QSurfaceFormat::DeprecatedFunctions, false);
+        surfaceFormat.setOption(QSurfaceFormat::DebugContext, true);
         surfaceFormat.setStereo(false);
         surfaceFormat.setSamples(0);
         surfaceFormat.setDepthBufferSize(24);
@@ -1020,6 +1022,7 @@ static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cac
     static unsigned int abFrames = 0;
     const bool traceViewport = abFrames++ < 32;
     auto* abWidget = qobject_cast<QOpenGLWidget*>(this->viewport());
+    drnasInstallGlesDebug(abWidget);
     if (traceViewport) drnasViewportAbSnapshot("BEFORE_GL_VIEWPORT", abWidget, size[0], size[1]);
     drnasSyncQtCoinFbo(abWidget);
     if (drnasRenderStage()>=9 && drnasRenderStage()<=12) {
@@ -1036,6 +1039,9 @@ static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cac
     if (traceViewport) drnasViewportAbSnapshot("AFTER_GL_VIEWPORT", abWidget, size[0], size[1]);
 #endif''')
     viewer_path.write_text(viewer_source)
+
+    (root / 'src/Gui/DrnasGlesDebug.h').write_text(
+        Path(__file__).with_name('DrnasGlesDebug.h').read_text())
 
 
 if __name__ == "__main__":
