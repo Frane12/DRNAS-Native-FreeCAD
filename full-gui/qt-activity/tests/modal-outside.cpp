@@ -57,11 +57,19 @@ int main(int argc, char** argv) {
     QEventPoint pressed(7, QEventPoint::State::Pressed, outside, outside);
     QTouchEvent begin(QEvent::TouchBegin, &touchDevice, Qt::NoModifier, {pressed});
     QApplication::sendEvent(host.windowHandle(), &begin);
+    if (!seen("MODAL_WINDOW outside touch begin")) {
+        qWarning() << "Touch begin trace:" << trace;
+        qFatal("outside touch began");
+    }
     const QPointF moved = outside + QPointF(25, 12);
     QEventPoint updated(7, QEventPoint::State::Updated, moved, moved);
     QTouchEvent move(QEvent::TouchUpdate, &touchDevice, Qt::NoModifier, {updated});
     QApplication::sendEvent(host.windowHandle(), &move);
-    check(pointerGlobal() - before == QPoint(25, 12), "pointer follows outside gesture delta");
+    const QPoint after = pointerGlobal();
+    if (!seen("MODAL_WINDOW outside touch move") || after - before != QPoint(25, 12)) {
+        qWarning() << "Pointer before/after:" << before << after << "trace:" << trace;
+        qFatal("pointer follows outside gesture delta");
+    }
     QEventPoint released(7, QEventPoint::State::Released, moved, moved);
     QTouchEvent end(QEvent::TouchEnd, &touchDevice, Qt::NoModifier, {released});
     QApplication::sendEvent(host.windowHandle(), &end);
