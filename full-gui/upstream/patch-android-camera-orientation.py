@@ -42,8 +42,6 @@ def patch(root):
     include = '#include <Base/AndroidDocumentDiagnostics.h>\n'
     if include not in viewer:
         viewer = '#ifdef __ANDROID__\n' + include + '#endif\n' + viewer
-    path.write_text(source)
-    viewer_path.write_text(viewer)
 
     # Trace the real NaviCube event path only; preserve selection and camera behavior.
     cube_path = root / 'src/Gui/NaviCube.cpp'
@@ -76,6 +74,8 @@ def patch(root):
         ('                orientation = getFaceRotation(pickId);', '06 face orientation'),
         ('            viewer->setCameraOrientation(orientation, moveToCenter);', '07 camera orientation'),
     ])
+    path.write_text(source)
+    viewer_path.write_text(viewer)
     cube_path.write_text(cube)
 
 if __name__ == '__main__':
