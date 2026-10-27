@@ -27,6 +27,7 @@ fetch ptitSeb/gl4es "$PIN_GL4ES" "$SRC/gl4es-freecad"
 fetch ptitSeb/GLU "$PIN_GLU" "$SRC/glu-freecad"
 
 python3 "$ROOT/full-gui/upstream/patch-qt-gl-state.py" "$SRC/gl4es-freecad/src/gl/framebuffers.c"
+python3 "$ROOT/full-gui/upstream/patch-gl4es-drawpixels.py" "$SRC/gl4es-freecad/src/gl"
 cmake -S "$SRC/gl4es-freecad" -B "$BUILD" -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$ANDROID_API" \
@@ -39,6 +40,9 @@ test -f "$gl" || { echo 'Upstream GL4ES libGL.so not built' >&2; exit 1; }
 cp -L "$gl" "$OUT/lib/libGL.so"
 readelf --dyn-syms --wide "$OUT/lib/libGL.so" \
   | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
+
+readelf --dyn-syms --wide "$OUT/lib/libGL.so" \
+  | awk '$7 != "UND" && $8 == "drnas_gl4es_drawpixels_blend_v1" { found=1 } END { exit !found }'
 
 test -f "$SRC/gl4es-freecad/include/GL/gl.h"
 cp -a "$SRC/gl4es-freecad/include/." "$OUT/include/"

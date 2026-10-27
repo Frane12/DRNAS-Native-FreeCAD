@@ -117,6 +117,27 @@ def _drnas_part_commands():
     _drnas_mark('ACTIVE WORKBENCH ' + Gui.activeWorkbench().name())
 
 
+def _drnas_refresh_measure_commands():
+    """Rebuild existing UI once, after the real MeasureGui import succeeded."""
+    import FreeCADGui as Gui
+    required = {'Std_Measure', 'Std_MassProperties'}
+    missing = sorted(required.difference(Gui.listCommands()))
+    if missing:
+        _drnas_mark('MEASURE_UI NOT_READY missing=' + repr(missing))
+        raise RuntimeError('MeasureGui did not register commands: ' + ', '.join(missing))
+    if globals().get('_drnas_measure_ui_ready', False):
+        return True
+    workbench = Gui.activeWorkbench()
+    if workbench is None:
+        # The next workbench activation composes menus from the real registry.
+        _drnas_mark('MEASURE_UI READY no active workbench; next activation will compose UI')
+        return False
+    workbench.reloadActive()
+    globals()['_drnas_measure_ui_ready'] = True
+    _drnas_mark('MEASURE_UI READY genuine commands; active workbench UI refreshed')
+    return True
+
+
 def _drnas_prepare_document_restore():
     """Expose only bundled workbenches to the original FreeCAD restore guard.
 
