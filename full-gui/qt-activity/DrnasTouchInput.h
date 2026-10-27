@@ -33,6 +33,7 @@
 #include <QWheelEvent>
 #include "StartupDiagnostics.h"
 #include "DrnasDraggableLauncher.h"
+#include "DrnasMenuPointer.h"
 
 class DrnasPointerMark final : public QWidget {
 public:
@@ -171,6 +172,12 @@ class DrnasTouchInput final : public QObject {
         const QPointF global=globalPoint();
         const QPointF local=target->mapFromGlobal(global.toPoint());
         const QPointF window=target->window()->mapFromGlobal(global.toPoint());
+        // A QMenu hover must follow the virtual pointer in the same event turn.
+        // Keep the queued press/release path and all non-menu input unchanged.
+        if (type == QEvent::MouseMove && buttons == Qt::NoButton && !mouseReceiver) {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (DrnasMenuPointer::sendHover(menu, global, modifiers)) return;
+        }
         // Posting lets both press and release be queued BEFORE a tool button
         // enters QMenu::exec(). A synchronous press could otherwise suspend
         // mouseButton(false) and leave our relative pointer holding LMB.

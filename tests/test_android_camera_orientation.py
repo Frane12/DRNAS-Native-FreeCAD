@@ -66,7 +66,10 @@ class CameraPatchTest(unittest.TestCase):
             view.write_text(VIEW)
             camera_patch.patch(root)
             patched = nav.read_text()
-            self.assertIn('#ifndef __ANDROID__\n    if (isAnimationEnabled())', patched)
+            self.assertIn('if (isAnimationEnabled())', patched)
+            self.assertIn('return viewer->startAnimation(orientation, focalPoint, translation);', patched)
+            self.assertIn('CAMERA 03 animation', patched)
+            self.assertIn('drnas_android_camera_animation_v1', patched)
             self.assertIn('camera->position = focalPoint + newRotationCenterDistance + translation;', patched)
             for label in ('CAMERA 01', 'CAMERA 02', 'CAMERA 04', 'CAMERA 05'):
                 self.assertIn(label, patched)
