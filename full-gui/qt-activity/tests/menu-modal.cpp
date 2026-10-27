@@ -40,11 +40,11 @@ int main(int argc, char** argv) {
     QPushButton touchButton("touch", cad);
     touchButton.setGeometry(150, 10, 90, 30);
     touchButton.show();
-    const QPointF local(20, 15);
-    const QPointF global = touchButton.mapToGlobal(local.toPoint());
+    const QPointF touchLocal(20, 15);
+    const QPointF global = touchButton.mapToGlobal(touchLocal.toPoint());
     const QPointF window = touchButton.window()->mapFromGlobal(global.toPoint());
     auto sendSynthetic = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons) {
-        QMouseEvent event(type, local, window, global, button, buttons,
+        QMouseEvent event(type, touchLocal, window, global, button, buttons,
                           Qt::NoModifier, Qt::MouseEventSynthesizedBySystem);
         QApplication::sendEvent(&touchButton, &event);
     };
