@@ -114,7 +114,15 @@ jobs:
           elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # Packaging-only changes can reuse a successful native compile when
             # GitHub confirms that none of its native build inputs changed.
-            latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request")][0].id // empty')"
+            # The GLES diagnostic requires an exact-source native build WITH
+            # the post-staging Coin marker gate; older apparently successful
+            # native artifacts demonstrably contained a stale Coin DSO.
+            latest=""
+            if [[ "$TARGET_BRANCH" != diagnostics/gl-invalid-enum-20261027 ]]; then
+              latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request")][0].id // empty')"
+            else
+              echo "COIN_PROVENANCE: require exact-commit native run; refusing cached/prior GLES artifacts"
+            fi
             run_id=""
             if [[ "$latest" =~ ^[0-9]+$ ]]; then
               native_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$latest" --jq .head_sha)"

@@ -362,6 +362,33 @@ jobs:
               }
             done
           fi
+          # Final native artifact provenance: the ELF linked by Coin must be
+          # IDENTICAL to the one delivered by upload-artifact. The old build
+          # proved only the linker output; APK 366/367/368 proved the staged
+          # artifact was different, despite a matching Git source SHA.
+          if [[ "${{ steps.build.outcome }}" == success ]]; then
+            coin_source="$libdir/libCoin.so"
+            coin_staged="$stage/libCoin.so"
+            test -s "$coin_source" && test -s "$coin_staged"
+            echo "COIN_NATIVE_SOURCE_SHA256 $(sha256sum "$coin_source")"
+            echo "COIN_NATIVE_STAGED_SHA256 $(sha256sum "$coin_staged")"
+            if ! cmp -s "$coin_source" "$coin_staged"; then
+              echo "::error::Coin DSO changed between linker output and staged upstream artifact"
+              echo "Source ELF Build ID:"; readelf -n "$coin_source" | grep -A2 'Build ID' || true
+              echo "Staged ELF Build ID:"; readelf -n "$coin_staged" | grep -A2 'Build ID' || true
+              exit 1
+            fi
+            if ! readelf --dyn-syms --wide "$coin_staged" |
+                awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { found=1 } END { exit !found }'; then
+              echo "::error::Coin GLES v2 symbol missing from upstream STAGED artifact; link-only success is insufficient"
+              exit 1
+            fi
+            grep -aFq 'COIN_GLES_GUARD_V2' "$coin_staged" || {
+              echo "::error::Coin GLES v2 string missing from staged artifact"
+              exit 1
+            }
+            echo 'PASS: Coin DSO unchanged from native link through upstream artifact staging'
+          fi
           echo "Saved $(find "$stage" -maxdepth 1 -type f -name '*.so' | wc -l) upstream ARM64 libraries and workbenches"
 
       - name: Compiler cache reuse diagnostic
