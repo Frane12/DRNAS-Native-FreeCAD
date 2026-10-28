@@ -1,3 +1,28 @@
+# Device-confirmed Coin3D GLES working baseline: APK 370 (28 October 2026)
+
+**Status: user-confirmed working on Android; preserve as a rollback snapshot.**
+
+- **Immutable code snapshot branch:** `baseline/android-working-370-coin-gles-20261028`.
+- **Exact tested source SHA:** `4761661a9248786d8e55a243dbcf53d4828ad58b`.
+- **APK integration:** [run #370 / 40761171437](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40761171437), completed **success**.
+- **APK artifact:** [DRNAS-FreeCADGui-Real-Native-APK-40761171437-1](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40761171437/artifacts/12848404350); artifact ID `12848404350`; ZIP SHA-256 `702c1af627c46039860fe5f6cadf48d9d67559b8bf127b6e0caf5680f390a100`.
+- **Native compile:** [run #154 / 40761171429](https://github.com/Frane12/DRNAS-Native-FreeCAD/actions/runs/40761171429), completed **success**; native artifact ID `12847973455`; ZIP SHA-256 `5f028aae6a9834a61a5421694b8c5fa7723b5975694f6d82633b5515888739e0`.
+- **Native Coin SHA-256 before relocation:** `1d0cd16c27521efe7c6c1aa98e9ba73c2255f7b36b99e20ae978077bb0e2d42a`.
+- **Coin SHA-256 in staged and signed APK after safe relocation:** `11712cc1e4ff46b4cfc709568a21efe02b58b43d49b5ddfc8da7202e879b4a3f`.
+- **Artifact retention:** GitHub Actions APK artifact expires **2026-11-27 20:25:44 UTC**. An artifact link is **not a permanent APK backup**; preserve a separate downloaded copy before expiration.
+
+## What is confirmed
+
+During the 28 October 2026 phone test the user supplied `tt.txt` (last 256 KiB of a DRNAS FreeCAD session): `EngineBlock` FCStd restored; Coin scene traversals had `afterGL=0x0`; FBO bridge reported `status=0x8cd5`, `error=0x0`; camera arrow Python commands returned `ok=1`. No `0x500` / `GL_INVALID_ENUM` or fatal signal was observed in that captured section. The user explicitly confirmed **"je radi super"** when asked whether the model displayed correctly, including surfaces/colors.
+
+Native Coin guard `drnas_coin_android_gles_guard_v2` was verified in **the signed APK** by the packaging CI. Python/Pivy ABI check verified 6431 old Coin references against the retained newer Coin. Earlier missing guard was traced to `integrate-bindings.py` overwriting the native `libCoin.so` with an outdated bindings bundle copy; this commit preserves the native build.
+
+## Scope and follow-ups
+
+This baseline is confirmed for **the tested FCStd model display, document open, camera arrow actions, and GLES/FBO logs**. It is not a blanket validation of Part Design, Sketcher, all UI pop-ups, other models, or every Save/Save Copy path. The capture is the *last* 256 KiB, not a full startup log. The previous separate save/open, sketch icon and sketch plane picker baselines listed below remain valid for their independent test scopes. Resume Part Design, Sketcher and Qt/touch work from an experiment branch; **do not change the snapshot branch**. Require new phone confirmation before promoting another build.
+
+---
+
 # Device-confirmed Android baseline: APK 326
 
 On 26 October 2026 Frane explicitly confirmed both Save and reopening the
