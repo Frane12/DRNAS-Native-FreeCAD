@@ -69,6 +69,18 @@ copy_sos() {
 }
 # Qt libraries are provided by androiddeployqt, not duplicated as extras.
 copy_sos "$NATIVE"
+# Preserve binary provenance before any ELF relocation. Source and stage must
+# be byte-for-byte identical, not merely built from the same Git commit.
+cmp "$NATIVE/libCoin.so" "$STAGE/libCoin.so" || {
+    echo "::error::Coin source and first-stage DSO differ before ELF relocation"
+    exit 1
+}
+if ! readelf --dyn-syms --wide "$STAGE/libCoin.so" |
+    awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { ok=1 } END { exit !ok }'; then
+    echo "::error::Native Coin guard missing BEFORE ELF relocation"
+    exit 1
+fi
+echo "COIN_PROVENANCE copied_SHA256=$(sha256sum "$STAGE/libCoin.so" | cut -d' ' -f1) marker=PASS stage=pre-relocate"
 for module in Measure MeasureGui; do
     test -s "$STAGE/$module.so" || { echo "::error::Updated native build lacks $module.so"; exit 1; }
 done
@@ -90,6 +102,20 @@ fi
 # previously caused invalid PT_LOAD alignment (see device's libCoin TIPx
 # crash). This intentionally does not relocate any ELF dynamic string table.
 python3 "$ROOT/full-gui/integrated-apk/relocate-android-sonames.py" "$STAGE"
+
+# Relocation may rewrite only dynamic dependency names, NEVER discard the
+# Coin3D code, exported GLES guard or .rodata build marker.
+if ! readelf --dyn-syms --wide "$STAGE/libCoin.so" |
+    awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { ok=1 } END { exit !ok }'; then
+    echo "::error::Coin GLES guard disappeared DURING ELF relocation"
+    exit 1
+fi
+if ! grep -aFq 'COIN_GLES_GUARD_V2' "$STAGE/libCoin.so"; then
+    echo "::error::Coin GLES marker string disappeared DURING ELF relocation"
+    exit 1
+fi
+( cd "$STAGE" && sha256sum libCoin.so ) > "$REPORT/Coin-GLES-Staged.sha256"
+echo "COIN_PROVENANCE relocated_SHA256=$(sha256sum "$STAGE/libCoin.so" | cut -d' ' -f1) marker=PASS stage=post-relocate"
 
 : > "$REPORT/native-needed.txt"
 missing=0

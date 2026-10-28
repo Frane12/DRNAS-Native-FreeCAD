@@ -638,6 +638,10 @@ jobs:
             exit 1
           fi
           rm "$coin_so"
+          # SHA recorded immediately after ELF relocation must survive all
+          # Android/CMake/Gradle/ZIP/signing stages unchanged.
+          ( cd .build/freecad-integration-staging/native-libs &&
+              sha256sum -c "$GITHUB_WORKSPACE/out/integrated-freecad-qtapk/Coin-GLES-Staged.sha256" )
           # Verify transitive dependencies for EVERY arm64 library, not only
           # FreeCADGui/Base/App. Prior signed APK crashed instantly because
           # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.

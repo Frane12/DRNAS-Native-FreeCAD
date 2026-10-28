@@ -16,6 +16,16 @@ done
 for module in Measure MeasureGui; do
     test -s "$STAGE/$module.so"
 done
+# A CMake/androiddeployqt step must not silently mutate the staged Coin DSO.
+( cd "$STAGE" && sha256sum -c "$OUT/Coin-GLES-Staged.sha256" ) || {
+    echo "::error::Staged libCoin.so changed AFTER ELF relocation; refusing to package"
+    exit 1
+}
+if ! readelf --dyn-syms --wide "$STAGE/libCoin.so" |
+    awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { ok=1 } END { exit !ok }'; then
+    echo "::error::Staged libCoin.so lost Coin GLES guard BEFORE packaging"
+    exit 1
+fi
 test -x "$SDK_BUILDTOOLS/zipalign"
 test -x "$SDK_BUILDTOOLS/apksigner"
 command -v zip >/dev/null
@@ -34,8 +44,18 @@ while IFS= read -r -d '' so; do
     base="$(basename "$so")"
     member="lib/arm64-v8a/$base"
     if grep -Fxq "$member" "$OUT/qtloader-original-apk-files.txt"; then
-        skipped=$((skipped + 1))
-        continue
+        case "$base" in
+            libCoin.so|libFreeCADGui.so|libFreeCADApp.so|libFreeCADBase.so|libGL.so|libGLU.so)
+                # The original Qt APK may contain a stale copy of the full
+                # FreeCAD runtime. Replace it with the validated ARM64 DSO.
+                echo "COIN_PROVENANCE replacing original APK runtime member: $member"
+                zip -q -d "$work/unsigned.apk" "$member"
+                ;;
+            *)
+                skipped=$((skipped + 1))
+                continue
+                ;;
+        esac
     fi
     readelf -h "$so" | grep -q 'Machine:.*AArch64'
     readelf -h "$so" | grep -q 'Type:.*DYN'
@@ -207,6 +227,13 @@ echo 'PASS: real ARM64 Python bindings and legacy PySide facade staged as extrac
 # Original QtActivity APK uses compressed JNI libs (Gradle extracts them).
 # Keep the same packaging policy. Uncompressed debug DSOs ballooned to >550 MB.
 ( cd "$work/bundle" && zip -q -9 "$work/unsigned.apk" "${names[@]}" )
+# Detect duplicate/stale libraries before signing, not after upload.
+unzip -p "$work/unsigned.apk" lib/arm64-v8a/libCoin.so > "$work/packaged-Coin.so"
+cmp "$STAGE/libCoin.so" "$work/packaged-Coin.so" || {
+    echo "::error::Unsigned APK does not contain the exact staged Coin GLES DSO"
+    exit 1
+}
+echo "COIN_PROVENANCE unsigned_APK_SHA256=$(sha256sum "$work/packaged-Coin.so" | cut -d' ' -f1) marker=PASS"
 # Add embedded CPython standard library/extensions as Android assets, without
 # eager-loading anything into QtLoader before the user's GUI button click.
 ( cd "$work/bundle" && zip -q -6 -r "$work/unsigned.apk" assets/drnas )
