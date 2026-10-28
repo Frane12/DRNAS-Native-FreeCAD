@@ -30,12 +30,12 @@ def patch(coin: Path) -> None:
       if (m & cc_glglue_POINTS) glEnable(GL_POLYGON_OFFSET_POINT);
       else glDisable(GL_POLYGON_OFFSET_POINT);"""
     glue = replace_once(glue, offset_enable,
-                        "#ifndef __ANDROID__\n" + offset_enable + "\n#endif",
+                        "#if !defined(__ANDROID__) && !defined(ANDROID)\n" + offset_enable + "\n#endif",
                         str(glue_path))
     offset_disable = """      if (m & cc_glglue_LINES) glDisable(GL_POLYGON_OFFSET_LINE);
       if (m & cc_glglue_POINTS) glDisable(GL_POLYGON_OFFSET_POINT);"""
     glue = replace_once(glue, offset_disable,
-                        "#ifndef __ANDROID__\n" + offset_disable + "\n#endif",
+                        "#if !defined(__ANDROID__) && !defined(ANDROID)\n" + offset_disable + "\n#endif",
                         str(glue_path))
 
     # OpenGL ES has no fixed-function GL_POLYGON_STIPPLE. Keep Coin's tracked
@@ -50,7 +50,7 @@ def patch(coin: Path) -> None:
   }
   this->glstate.stipplenum = stipplenum;"""
     lazy = replace_once(lazy, stipple,
-                        "#ifndef __ANDROID__\n" + stipple[:-len("  this->glstate.stipplenum = stipplenum;")] +
+                        "#if !defined(__ANDROID__) && !defined(ANDROID)\n" + stipple[:-len("  this->glstate.stipplenum = stipplenum;")] +
                         "#endif\n  this->glstate.stipplenum = stipplenum;",
                         str(lazy_path))
     # GLES always has RGBA color buffers; GL_RGBA_MODE (0x0C31) is a desktop
@@ -64,7 +64,7 @@ def patch(coin: Path) -> None:
   else {
     this->sendPackedDiffuse(0xccccccff);
   }"""
-    gles = """#ifdef __ANDROID__
+    gles = """#if defined(__ANDROID__) || defined(ANDROID)
   this->colorindex = FALSE;
   this->sendPackedDiffuse(0xccccccff);
 #else
@@ -74,7 +74,7 @@ def patch(coin: Path) -> None:
     # GLES requires GL_ALIASED_LINE_WIDTH_RANGE instead of desktop enum 2850.
     width_query = '    glGetFloatv(GL_LINE_WIDTH_RANGE, vals);'
     line = replace_once(line, width_query,
-        '#ifdef __ANDROID__\n'
+        '#if defined(__ANDROID__) || defined(ANDROID)\n'
         '    glGetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, vals);\n'
         '#else\n' + width_query + '\n#endif',
         str(line_path))
@@ -83,8 +83,9 @@ def patch(coin: Path) -> None:
     if 'drnas_coin_android_gles_guard_v2' in glue:
         raise RuntimeError('Coin provenance marker already exists')
     glue += (
-        '\n#ifdef __ANDROID__\n'
-        'extern "C" __attribute__((visibility("default")))\n'
+        '\n#if defined(__ANDROID__) || defined(ANDROID)\n'
+        '// Retain the ABI marker despite linker garbage collection.\n'
+        'extern "C" __attribute__((visibility("default"), used, retain))\n'
         'const char* drnas_coin_android_gles_guard_v2()\n'
         '{\n'
         '  return "COIN_GLES_GUARD_V2";\n'

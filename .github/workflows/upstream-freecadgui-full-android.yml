@@ -262,6 +262,25 @@ jobs:
         id: build
         run: bash full-gui/upstream/build-real-freecadgui.sh
 
+      - name: Verify linked Android Coin GLES guards before artifact staging
+        if: ${{ steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          coin=".build/freecad-upstream-real-gui-arm64/lib/libCoin.so"
+          test -s "$coin"
+          echo "Coin linked DSO: $(sha256sum "$coin")"
+          readelf -n "$coin" | grep -A2 'Build ID' || true
+          if ! readelf --dyn-syms --wide "$coin" |
+              awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { found=1; print "COIN_GLES_NATIVE_EXPORT: " $0 } END { exit !found }'; then
+            echo "::error::Native libCoin.so lacks Android guard v2 export. Do not package."
+            echo 'Native Coin full symbols:'
+            readelf --syms --wide "$coin" | grep -F 'drnas_coin_android_gles_guard_v2' || true
+            echo 'Native Coin marker strings:'
+            strings "$coin" | grep -F 'COIN_GLES_GUARD_V2' || true
+            exit 1
+          fi
+          echo 'PASS: linked ARM64 libCoin.so exports Android Coin GLES guard v2'
+
       - name: Stage real native FreeCAD Part, Sketcher, PartDesign workbench UI and icons
         if: ${{ steps.build.outcome == 'success' }}
         run: |

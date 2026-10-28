@@ -101,7 +101,7 @@ int main() {
     assert(lazy.cachebitmask & TRANSPARENCY_MASK);
     assert(lazy.diffuse==1);
     assert(!lazy.colorindex);
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(ANDROID)
     assert(bad_calls==0);
 #else
     assert(bad_calls>0);
@@ -129,12 +129,12 @@ class AndroidCoinGlesTest(unittest.TestCase):
             code = PREFIX + glue.read_text() + lazy.read_text() + line.read_text() + SUFFIX
             source = root/'test.cpp'
             source.write_text(code)
-            for android in (False, True):
-                exe = root / ('gles' if android else 'desktop')
+            for definition in (None, '__ANDROID__', 'ANDROID'):
+                exe = root / (definition or 'desktop')
                 cmd = ['g++', '-std=c++17', '-Wall', '-Wextra',
                        str(source), '-o', str(exe)]
-                if android:
-                    cmd.insert(1, '-D__ANDROID__')
+                if definition:
+                    cmd.insert(1, '-D' + definition)
                 subprocess.run(cmd, check=True, capture_output=True)
                 subprocess.run([str(exe)], check=True)
 

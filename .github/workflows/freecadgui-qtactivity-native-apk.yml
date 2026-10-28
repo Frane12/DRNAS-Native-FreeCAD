@@ -612,6 +612,15 @@ jobs:
           # Verify signed APK's Coin DSO, rather than trusting upstream build status.
           unzip -p "$apk" lib/arm64-v8a/libCoin.so > out/integrated-freecad-qtapk/apk-libCoin.so
           coin_so=out/integrated-freecad-qtapk/apk-libCoin.so
+          # Verify final APK contains the SAME staged Coin DSO, not an
+          # androiddeployqt leftover or another revision with the same name.
+          staged_coin=".build/freecad-integration-staging/native-libs/libCoin.so"
+          test -s "$staged_coin"
+          sha256sum "$staged_coin" "$coin_so"
+          if ! cmp -s "$staged_coin" "$coin_so"; then
+            echo "::error::Signed APK libCoin.so differs from staged native runtime"
+            exit 1
+          fi
           # ELF symbol names may have GNU symbol-version suffixes (@ or @@).
           # Preserve the strict defined DSO symbol check; print diagnostics
           # before rejecting an absent marker instead of silently exiting 1.
