@@ -473,6 +473,17 @@ jobs:
           cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
           python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
 
+      - name: Verify binding integration preserved exact GLES Coin
+        run: |
+          set -euo pipefail
+          native=out/upstream-freecad-gui/native
+          test -s "$native/libCoin.so"
+          readelf --dyn-syms --wide "$native/libCoin.so" |
+            awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { found=1 } END { exit !found }'
+          grep -aFq 'COIN_GLES_GUARD_V2' "$native/libCoin.so"
+          ( cd "$native" && sha256sum -c SHA256SUMS )
+          echo "COIN_AFTER_BINDINGS_SHA256=$(sha256sum "$native/libCoin.so" | cut -d' ' -f1) guard=v2 PASS"
+
       # The native GUI artifact may predate the Qt default-FBO bridge.
       # Apply AFTER integrate-bindings.py, which includes its older GL pair.
       # Rebuild only GL4ES/GLU from current integration sources, retaining
