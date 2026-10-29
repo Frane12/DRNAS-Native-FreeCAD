@@ -9,6 +9,7 @@
 #include "DrnasDebugCenter.h"
 #include "DrnasTouchInput.h"
 #include "DrnasDraggableLauncher.h"
+#include "DrnasCameraControls.h"
 #include "DrnasDocumentOpen.h"
 #include "DrnasDocumentSave.h"
 #include <QFont>
@@ -339,6 +340,24 @@ void restoreOriginalFreeCADIconPaths()
     paths.removeAll(iconRoot);
     paths.prepend(iconRoot);
     QDir::setSearchPaths(QStringLiteral("qss"), paths);
+
+    // Android fallback for upstream Sketcher constraint SVGs. The original
+    // SketcherGui registration may already supply an icons: resource path;
+    // append this verified on-device directory without replacing other modules.
+    // Only 2D Qt resource lookup changes; no Coin3D, FBO or CAD operations.
+    const QString sketcherConstraints =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+        + QStringLiteral("/drnas-freecad-home/Mod/Sketcher/Gui/Resources/icons/constraints");
+    if (QFileInfo::exists(sketcherConstraints + QStringLiteral("/Constraint_Horizontal.svg"))
+        && QFileInfo::exists(sketcherConstraints + QStringLiteral("/Constraint_Vertical.svg"))) {
+        QStringList iconPaths = QDir::searchPaths(QStringLiteral("icons"));
+        if (!iconPaths.contains(sketcherConstraints)) {
+            iconPaths.append(sketcherConstraints);
+            QDir::setSearchPaths(QStringLiteral("icons"), iconPaths);
+            DrnasDiagnostics::note(QStringLiteral(
+                "SKETCHER_ICON_PATH fallback registered; original paths retained"));
+        }
+    }
 }
 
 // Qt for Android maps floating QDockWidgets to independent native platform
@@ -1711,7 +1730,8 @@ except BaseException:
             : QStringLiteral(
                 "import sys\n"
                 "_drnas_mark('MEASURE_AB PRE_GUI core_loaded=' + str('Measure' in sys.modules))\n"
-                "import MeasureGui\n");
+                "import MeasureGui\n"
+                "_drnas_runtime._drnas_refresh_measure_commands()\n");
         QString error;
         const bool ok = runOriginalFreeCADPython(script, error);
         DrnasDiagnostics::note(QStringLiteral(
@@ -2075,6 +2095,26 @@ finally:
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, freecad, toolbar);
+    // Rotate the real active Coin camera without creating a new GL surface.
+    new DrnasCameraControls(shell, freecad, [report](int axis, int direction) {
+        DrnasDiagnostics::note(QStringLiteral("CAMERA ARROW begin axis=%1 direction=%2").arg(axis).arg(direction));
+        QString error;
+        const QString code = QStringLiteral(
+            "import FreeCAD as App, FreeCADGui as Gui\n"
+            "_drnas_cam_view = Gui.activeDocument().activeView() if Gui.activeDocument() else None\n"
+            "if _drnas_cam_view is None: raise RuntimeError('Prvo otvorite dokument s 3D pogledom')\n"
+            "_drnas_cam_current = _drnas_cam_view.getCameraOrientation()\n"
+            "_drnas_cam_delta = App.Rotation(App.Vector(%1), %2)\n"
+            "_drnas_cam_target = %3\n"
+            "_drnas_cam_view.setCameraOrientation(_drnas_cam_target)\n"
+        ).arg(axis == 0 ? QStringLiteral("0, 0, 1") : QStringLiteral("1, 0, 0"))
+         .arg(direction * 15)
+         .arg(axis == 0 ? QStringLiteral("_drnas_cam_delta.multiply(_drnas_cam_current)")
+                        : QStringLiteral("_drnas_cam_current.multiply(_drnas_cam_delta)"));
+        const bool ok = runOriginalFreeCADPython(code, error);
+        DrnasDiagnostics::note(QStringLiteral("CAMERA ARROW return ok=%1 error=%2").arg(ok).arg(error));
+        if (!ok) report(QStringLiteral("Rotacija: ") + error);
+    });
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });
@@ -2157,7 +2197,7 @@ bool embedOriginalFreeCADWindow(QMainWindow* shell, bool beforeFirstShow)
         // which is visible even when Android incorrectly overlays the menus.
         if (window->statusBar() && !window->statusBar()->findChild<QLabel*>(
                 QStringLiteral("drnasAndroidBridgeMarker"))) {
-            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05.2"), window->statusBar());
+            auto* marker = new QLabel(QStringLiteral("DRNAS UI 05.3"), window->statusBar());
             marker->setObjectName(QStringLiteral("drnasAndroidBridgeMarker"));
             marker->setStyleSheet(QStringLiteral(
                 "QLabel{color:#ffffff;background:#275d86;padding:3px 7px;"
@@ -2205,6 +2245,12 @@ void recordOriginalGuiStage(const char* stageName)
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"
+                "# Diagnostic isolation: Sketcher rectangle displays live QuantitySpinBox labels after its first corner.\n"
+                "# Hide on-view parameters for this APK experiment; leave geometry, solver and Coin3D unchanged.\n"
+                "_drnas_sketcher_tools = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Sketcher/Tools')\n"
+                "_drnas_sketcher_visibility_before = _drnas_sketcher_tools.GetInt('OnViewParameterVisibility', 1)\n"
+                "_drnas_sketcher_tools.SetInt('OnViewParameterVisibility', 0)\n"
+                "_drnas_mark('SKETCHER_OVP_TEST hidden=1 previous=%s: rectangle dimension overlays disabled; no native engine edits' % _drnas_sketcher_visibility_before)\n"
                 "_drnas_mark('RA11 ISOLATION: ShowNaviCube=False before viewer construction; main scene renderer unchanged')\n"), runtimeError)) {
             DrnasDiagnostics::note(QStringLiteral("ANDROID RUNTIME SETUP FAILED: ") + runtimeError);
         }

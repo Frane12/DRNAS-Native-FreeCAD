@@ -37,7 +37,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: drnas-real-freecadgui-qtapk
+  group: drnas-real-freecadgui-qtapk-${{ github.head_ref || github.ref_name }}-${{ github.sha }}
   cancel-in-progress: false
 
 env:
@@ -51,7 +51,7 @@ jobs:
     # Qt6, ICU, OCCT and Python cannot be read from default branch jobs.
     # Diagnostic branch packages only AFTER the successful native build dispatch.
     # Its push has no native ARM64 artifact yet; avoid a misleading early failure.
-    if: (github.event_name == 'pull_request' && github.head_ref == 'diagnostics/partdesign-shiboken-20261026' && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
+    if: (github.event_name == 'pull_request' && (github.head_ref == 'diagnostics/partdesign-shiboken-20261026' || github.head_ref == 'diagnostics/sketcher-rectangle-ovp-20261026' || github.head_ref == 'diagnostics/sketcher-icon-alpha-20261026' || github.head_ref == 'diagnostics/sketcher-native-icon-capture-20261026' || github.head_ref == 'diagnostics/sketcher-raster-20261026' || github.head_ref == 'fix/android-deferred-measure-ui-20261026' || github.head_ref == 'fix/android-sketch-plane-picker-20261026' || github.head_ref == 'fix/android-camera-navigation-20261027' || github.head_ref == 'experiment/android-view-animation-menu-20261027' || github.head_ref == 'diagnostics/gl-invalid-enum-20261027') && github.base_ref == 'feature/full-freecad-android') || (github.ref == 'refs/heads/feature/full-freecad-android' && (github.event_name != 'push' || !contains(github.event.head_commit.message, '[native-probe]'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/diagnostics/partdesign-shiboken-20261026')
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -90,10 +90,39 @@ jobs:
           set -euo pipefail
           reuse_native=0
           native_branch="$TARGET_BRANCH"
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && ( "$TARGET_BRANCH" == diagnostics/sketcher-rectangle-ovp-20261026 || "$TARGET_BRANCH" == diagnostics/sketcher-icon-alpha-20261026 ) ]]; then
+            # Reuse precisely the phone-confirmed native 119 build: the only
+            # source changes since that SHA are Android Qt glue and docs.
+            baseline_sha=8a5b799fc5081fcd322448cc06962c8aaca783ed
+            run_id=40329326848
+            native_branch=feature/full-freecad-android
+            reuse_native=1
+            comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$baseline_sha...$DIAG_PR_COMMIT")"
+            jq -e '(.status == "ahead" or .status == "identical") and
+                (.total_commits <= 250) and ((.files | length) < 300) and
+                ([.files[] | (.filename, (.previous_filename // "")) | select(length > 0) |
+                  select((startswith("full-gui/qt-activity/") or
+                          startswith("full-gui/integrated-apk/") or
+                          startswith("tests/") or . == "AGENTS.md" or
+                          . == "README.md" or . == "WORKING_BASELINE.md" or
+                          . == ".github/workflows/freecadgui-qtactivity-native-apk.yml") | not)]
+                 | length == 0)' <<< "$comparison" >/dev/null || {
+              echo "::error::Native inputs changed since verified 119; refusing stale artifact"
+              exit 1
+            }
+            echo "SKETCHER OVP: verified Android-only change; using native run $run_id"
+          elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # Packaging-only changes can reuse a successful native compile when
             # GitHub confirms that none of its native build inputs changed.
-            latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request")][0].id // empty')"
+            # The GLES diagnostic requires an exact-source native build WITH
+            # the post-staging Coin marker gate; older apparently successful
+            # native artifacts demonstrably contained a stale Coin DSO.
+            latest=""
+            if [[ "$TARGET_BRANCH" != diagnostics/gl-invalid-enum-20261027 ]]; then
+              latest="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=${TARGET_BRANCH}&status=success&per_page=60" --jq '[.workflow_runs[] | select(.name == "DRNAS REAL upstream FreeCADGui Full ARM64 Build" and .event == "pull_request")][0].id // empty')"
+            else
+              echo "COIN_PROVENANCE: require exact-commit native run; refusing cached/prior GLES artifacts"
+            fi
             run_id=""
             if [[ "$latest" =~ ^[0-9]+$ ]]; then
               native_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$latest" --jq .head_sha)"
@@ -170,7 +199,7 @@ jobs:
           test "$(jq -r '.conclusion' <<<"$info")" = success
           test "$(jq -r '.name' <<<"$info")" = 'DRNAS REAL upstream FreeCADGui Full ARM64 Build'
           test "$(jq -r '.head_branch' <<<"$info")" = "$native_branch"
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == pull_request && "$reuse_native" != 1 ]]; then
             test "$(jq -r '.event' <<<"$info")" = pull_request
           fi
           test "$(jq -r '.head_repository.full_name' <<<"$info")" = "$GITHUB_REPOSITORY"
@@ -205,7 +234,9 @@ jobs:
           persist-credentials: false
 
       - name: Regression-test Measure InitGui boot guard
-        run: python3 -m unittest discover -s tests -p 'test_measure_initgui_guard.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_measure_initgui_guard.py' -v
+          python3 -m unittest discover -s tests -p 'test_deferred_measure_ui.py' -v
 
       - name: Download real GUI, App, Base, Coin3D, GL4ES artifact
         uses: actions/download-artifact@v4
@@ -267,9 +298,9 @@ jobs:
       - name: Install Android tools and ELF relinker
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+          timeout 600s sudo apt-get update
+          timeout 600s sudo apt-get install -y --no-install-recommends cmake ninja-build patchelf binutils unzip file qt6-base-dev libegl1-mesa-dev libgles2-mesa-dev
+          timeout 300s "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             'platforms;android-35' 'build-tools;35.0.0' "ndk;$NDK_VERSION"
           mkdir -p out/integrated-freecad-qtapk
 
@@ -345,6 +376,57 @@ jobs:
           test -f out/full-gui/host-icu73/lib/libicui18n.so.73
           test -f out/upstream-freecad-gui/native/libFreeCADGui.so
           test -f out/upstream-freecad-gui/native/libCoin.so
+          if [[ "${GITHUB_HEAD_REF:-}" == diagnostics/sketcher-native-icon-capture-20261026 ]]; then
+            test -s out/upstream-freecad-gui/native/SketcherGui.so
+            grep -aFq "SKETCHER_NATIVE_ICON" out/upstream-freecad-gui/native/SketcherGui.so || {
+              echo "::error::SketcherGui.so lacks genuine image capture hook; refusing stale native artifact"
+              exit 1
+            }
+          fi
+          if [[ "${GITHUB_HEAD_REF:-}" == diagnostics/sketcher-raster-20261026 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/opengl-compat/lib/libGL.so \
+              | awk '$7 != "UND" && $8 == "drnas_gl4es_drawpixels_blend_v1" { found=1 } END { exit !found }' || {
+              echo "::error::GL4ES lacks the isolated DrawPixels sampler/blend fix"
+              exit 1
+            }
+          fi
+          if [[ "${GITHUB_HEAD_REF:-}" == fix/android-deferred-measure-ui-20261026 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_deferred_measure_ui_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native FreeCADGui lacks deferred Measure menu composition"
+              exit 1
+            }
+          fi
+          if [[ "${GITHUB_HEAD_REF:-}" == fix/android-sketch-plane-picker-20261026 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/PartDesignGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_sketch_plane_picker_v1" { found=1 } END { exit !found }' || {
+              echo "::error::PartDesignGui lacks Android sketch plane picker"
+              exit 1
+            }
+          fi
+          if [[ "${GITHUB_HEAD_REF:-}" == fix/android-camera-navigation-20261027 || "${GITHUB_HEAD_REF:-}" == experiment/android-view-animation-menu-20261027 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_direct_standard_views_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native FreeCADGui lacks Android direct standard views"; exit 1;
+            }
+            grep -aFq 'VIEW_CMD 04 wrap main window' out/upstream-freecad-gui/native/libFreeCADGui.so || {
+              echo "::error::Native FreeCADGui lacks view command diagnostics"; exit 1;
+            }
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_camera_direct_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native FreeCADGui lacks camera direct-orientation experiment"; exit 1;
+            }
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/PartDesignGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_sketch_plane_picker_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native PartDesignGui lacks sketch plane picker"; exit 1;
+            }
+          fi
+          if [[ "${GITHUB_HEAD_REF:-}" == experiment/android-view-animation-menu-20261027 ]]; then
+            readelf --dyn-syms --wide out/upstream-freecad-gui/native/libFreeCADGui.so \
+              | awk '$7 != "UND" && $8 == "drnas_android_camera_animation_v1" { found=1 } END { exit !found }' || {
+              echo "::error::Native FreeCADGui lacks camera animation experiment"; exit 1;
+            }
+          fi
           # No silently repacking a pre-fix upstream library.
           test -f full-gui/qt-activity/android/src/org/drnas/freecad/bootstrap/AndroidDocumentBridge.java
           # Do not publish an APK with stale FreeCADApp/document restore objects.
@@ -390,6 +472,17 @@ jobs:
           python3 full-gui/integrated-apk/integrate-bindings.py
           cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
           python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
+
+      - name: Verify binding integration preserved exact GLES Coin
+        run: |
+          set -euo pipefail
+          native=out/upstream-freecad-gui/native
+          test -s "$native/libCoin.so"
+          readelf --dyn-syms --wide "$native/libCoin.so" |
+            awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { found=1 } END { exit !found }'
+          grep -aFq 'COIN_GLES_GUARD_V2' "$native/libCoin.so"
+          ( cd "$native" && sha256sum -c SHA256SUMS )
+          echo "COIN_AFTER_BINDINGS_SHA256=$(sha256sum "$native/libCoin.so" | cut -d' ' -f1) guard=v2 PASS"
 
       # The native GUI artifact may predate the Qt default-FBO bridge.
       # Apply AFTER integrate-bindings.py, which includes its older GL pair.
@@ -535,6 +628,39 @@ jobs:
           readelf --dyn-syms --wide out/integrated-freecad-qtapk/apk-libGL.so \
             | awk '$7 != "UND" && $8 == "drnas_gl4es_qt_raster_state_v3" { found=1 } END { exit !found }'
           rm out/integrated-freecad-qtapk/apk-libGL.so
+          # Verify signed APK's Coin DSO, rather than trusting upstream build status.
+          unzip -p "$apk" lib/arm64-v8a/libCoin.so > out/integrated-freecad-qtapk/apk-libCoin.so
+          coin_so=out/integrated-freecad-qtapk/apk-libCoin.so
+          # Verify final APK contains the SAME staged Coin DSO, not an
+          # androiddeployqt leftover or another revision with the same name.
+          staged_coin=".build/freecad-integration-staging/native-libs/libCoin.so"
+          test -s "$staged_coin"
+          sha256sum "$staged_coin" "$coin_so"
+          if ! cmp -s "$staged_coin" "$coin_so"; then
+            echo "::error::Signed APK libCoin.so differs from staged native runtime"
+            exit 1
+          fi
+          # ELF symbol names may have GNU symbol-version suffixes (@ or @@).
+          # Preserve the strict defined DSO symbol check; print diagnostics
+          # before rejecting an absent marker instead of silently exiting 1.
+          if readelf --dyn-syms --wide "$coin_so" \
+            | awk '$7 != "UND" && $8 ~ /^drnas_coin_android_gles_guard_v2(@.*)?$/ { found=1; print "COIN_GLES_EXPORT: " $0 } END { exit !found }'; then
+            echo 'PASS: final signed APK exports Coin GLES guard v2'
+          else
+            echo 'ERROR: signed APK Coin DSO does not export guard v2 marker'
+            echo 'Coin symbols present in full symbol table:'
+            readelf --syms --wide "$coin_so" | grep -F 'drnas_coin_android_gles_guard_v2' || true
+            echo 'Coin string marker in packaged DSO:'
+            strings "$coin_so" | grep -F 'COIN_GLES_GUARD_V2' || true
+            echo 'Coin ELF build ID:'
+            readelf -n "$coin_so" | grep -A3 'Build ID' || true
+            exit 1
+          fi
+          rm "$coin_so"
+          # SHA recorded immediately after ELF relocation must survive all
+          # Android/CMake/Gradle/ZIP/signing stages unchanged.
+          ( cd .build/freecad-integration-staging/native-libs &&
+              sha256sum -c "$GITHUB_WORKSPACE/out/integrated-freecad-qtapk/Coin-GLES-Staged.sha256" )
           # Verify transitive dependencies for EVERY arm64 library, not only
           # FreeCADGui/Base/App. Prior signed APK crashed instantly because
           # Qt6PrintSupport, Qt6Network and Qt6Xml were not packaged.

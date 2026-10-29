@@ -6,6 +6,7 @@
 #include <functional>
 #include <utility>
 #include <QApplication>
+#include <QCheckBox>
 #include <QDialog>
 #include <QEvent>
 #include <QElapsedTimer>
@@ -31,6 +32,8 @@
 #include <QVector>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <QToolTip>
+#include <QMenu>
 #include "StartupDiagnostics.h"
 #include "DrnasDraggableLauncher.h"
 
@@ -118,8 +121,10 @@ class DrnasTouchInput final : public QObject {
     QPoint dragOffset;
     QPointF relativeLast, relativeStart;
     QElapsedTimer relativeClock;
+    bool relativeMode=false; // Direct touch is the first-run default.
     bool relativeActive=false, relativeMoved=false;
     int relativeTouchId=-1;
+    unsigned menuHoverSamples=0;
     Qt::MouseButtons buttons = Qt::NoButton;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QList<QPushButton*> mouseKeys, modifierKeys;
@@ -171,6 +176,19 @@ class DrnasTouchInput final : public QObject {
         const QPointF global=globalPoint();
         const QPointF local=target->mapFromGlobal(global.toPoint());
         const QPointF window=target->window()->mapFromGlobal(global.toPoint());
+        // Bounded probe: compare virtual cursor and QAction while QMenu is open.
+        if (type == QEvent::MouseMove && menuHoverSamples < 24) {
+            if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                const QPoint p = menu->mapFromGlobal(global.toPoint());
+                QAction* under = menu->actionAt(p);
+                QAction* active = menu->activeAction();
+                DrnasDiagnostics::note(QStringLiteral("MENU_HOVER global=%1,%2 local=%3,%4 hit=%5 activeBefore=%6")
+                    .arg(int(global.x())).arg(int(global.y())).arg(p.x()).arg(p.y())
+                    .arg(under ? under->objectName() : QStringLiteral("none"))
+                    .arg(active ? active->objectName() : QStringLiteral("none")));
+                ++menuHoverSamples;
+            }
+        }
         // Posting lets both press and release be queued BEFORE a tool button
         // enters QMenu::exec(). A synchronous press could otherwise suspend
         // mouseButton(false) and leave our relative pointer holding LMB.
@@ -285,6 +303,11 @@ class DrnasTouchInput final : public QObject {
         showPointer();
     }
     void showPointer() {
+        if (!relativeMode) {
+            mark->hide();
+            if (dialogMark) dialogMark->hide();
+            return;
+        }
         const QRect r=host->rect();
         if (r.isEmpty()) return;
         cursor.setX(std::clamp(cursor.x(),double(r.left()),double(r.right())));
@@ -427,6 +450,15 @@ class DrnasTouchInput final : public QObject {
 protected:
     bool eventFilter(QObject* obj,QEvent* event) override {
         if (injectedEvents.contains(event)) return false;
+        if (event->type() == QEvent::ToolTip) {
+            QWidget* widget = qobject_cast<QWidget*>(obj);
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (menu && widget && (widget == menu || menu->isAncestorOf(widget))) {
+                QToolTip::hideText();
+                DrnasDiagnostics::note(QStringLiteral("MENU_TOOLTIP suppressed"));
+                event->accept(); return true;
+            }
+        }
         if ((event->type()==QEvent::WindowBlocked || event->type()==QEvent::WindowUnblocked) &&
             (obj==host || obj==cad.data())) {
             QWidget* grab=QWidget::mouseGrabber();
@@ -447,6 +479,7 @@ protected:
         if (auto* popupWidget=qobject_cast<QWidget*>(obj)) {
             if ((popupWidget->windowType()==Qt::Popup) &&
                 (event->type()==QEvent::Show || event->type()==QEvent::Hide)) {
+                if (event->type()==QEvent::Show) menuHoverSamples=0;
                 DrnasDiagnostics::note(QStringLiteral("INPUT popup %1 class=%2 buttons=%3")
                     .arg(event->type()==QEvent::Show ? QStringLiteral("show") : QStringLiteral("hide"))
                     .arg(QString::fromLatin1(popupWidget->metaObject()->className())).arg(int(buttons)));
@@ -462,7 +495,7 @@ protected:
         auto* inputWidget=qobject_cast<QWidget*>(obj);
         QWidget* modal=QApplication::activeModalWidget();
         QWidget* popup=QApplication::activePopupWidget();
-        if (modal && inputWidget &&
+        if (relativeMode && modal && inputWidget &&
             (inputWidget==modal || modal->isAncestorOf(inputWidget))) {
             // Use the SAME relative touch -> cursor -> tap as the main screen.
             // Old "modal direct mode" prevented dragging the cursor in dialogs.
@@ -481,6 +514,10 @@ protected:
                 if (p == panel || p == launcher) return true;
                 const QString name = p->objectName();
                 if (name == QStringLiteral("drnasFloatingCommandsLauncher") ||
+                    name == QStringLiteral("drnasRotateLeft") ||
+                    name == QStringLiteral("drnasRotateRight") ||
+                    name == QStringLiteral("drnasRotateUp") ||
+                    name == QStringLiteral("drnasRotateDown") ||
                     name == QStringLiteral("drnasDebugLauncher") ||
                     name == QStringLiteral("drnasLiveLabButton") ||
                     name == QStringLiteral("drnasViewportSoloToggle") ||
@@ -491,7 +528,7 @@ protected:
             return false;
         };
         const bool directControl = isDirectOverlay(inputWidget);
-        if (inApp && !directControl) {
+        if (relativeMode && inApp && !directControl) {
             if (event->type()==QEvent::TouchBegin || event->type()==QEvent::TouchUpdate || event->type()==QEvent::TouchEnd) {
                 auto* touch=static_cast<QTouchEvent*>(event);
                 for (const auto& point:touch->points()) {
@@ -628,9 +665,32 @@ public:
         connect(recover,&QPushButton::clicked,this,[this]{releaseAll();repairWindows();constrain();savePosition();DrnasDiagnostics::note(QStringLiteral("INPUT: visible windows recovered"));});
         auto* gear=button(QStringLiteral("⚙")); gear->setFixedWidth(34); footer->addWidget(gear); body->addLayout(footer);
         auto* options=new QWidget(content); auto* optionLayout=new QVBoxLayout(options); optionLayout->setContentsMargins(0,0,0,0);
+        QSettings settings;
+        relativeMode=settings.value(QStringLiteral("touch/relativeMode"),false).toBool();
+        auto* mouseMode=new QCheckBox(QStringLiteral("Uključi relativni miš"),options);
+        mouseMode->setObjectName(QStringLiteral("drnasRelativeMouseMode"));
+        mouseMode->setChecked(relativeMode);
+        optionLayout->addWidget(mouseMode);
+        pad->setEnabled(relativeMode);
+        for (auto* b : mouseKeys) b->setEnabled(relativeMode);
+        hold->setEnabled(relativeMode);
+        reset->setEnabled(relativeMode);
+        connect(mouseMode,&QCheckBox::toggled,this,[this,pad,reset](bool enabled) {
+            releaseAll();
+            if (hold->isChecked()) hold->setChecked(false);
+            relativeActive=false; relativeTouchId=-1;
+            relativeMode=enabled;
+            QSettings s; s.setValue(QStringLiteral("touch/relativeMode"),enabled);
+            pad->setEnabled(enabled);
+            for (auto* b : mouseKeys) b->setEnabled(enabled);
+            hold->setEnabled(enabled); reset->setEnabled(enabled);
+            if (enabled) syncModalPointer(); else { modalCursors.clear(); showPointer(); }
+            DrnasDiagnostics::note(enabled ? QStringLiteral("INPUT mode relative mouse")
+                                           : QStringLiteral("INPUT mode direct touch"));
+        });
         optionLayout->addWidget(new QLabel(QStringLiteral("Brzina pokazivača"),options));
         auto* sensitivity=new QSlider(Qt::Horizontal,options); sensitivity->setRange(25,300);
-        QSettings settings; speed=std::clamp(settings.value(QStringLiteral("touch/speed"),100).toInt(),25,300); sensitivity->setValue(speed); optionLayout->addWidget(sensitivity);
+        speed=std::clamp(settings.value(QStringLiteral("touch/speed"),100).toInt(),25,300); sensitivity->setValue(speed); optionLayout->addWidget(sensitivity);
         connect(sensitivity,&QSlider::valueChanged,this,[this](int value){speed=value;QSettings s;s.setValue(QStringLiteral("touch/speed"),value);});
         body->addWidget(options); options->hide();
         connect(gear,&QPushButton::clicked,this,[this,options]{options->setVisible(!options->isVisible());constrain();});
