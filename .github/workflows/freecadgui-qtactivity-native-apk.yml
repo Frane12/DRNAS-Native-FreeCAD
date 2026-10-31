@@ -528,6 +528,7 @@ jobs:
             grep -Fx "assets/drnas/freecad/lib/$module.so" out/integrated-freecad-qtapk/apk-files.txt
           done
           grep -Fx 'assets/drnas/freecad/Mod/Measure/InitGui.py' out/integrated-freecad-qtapk/apk-files.txt
+          grep -Fx 'assets/drnas/freecad/lib/typing_extensions.py' out/integrated-freecad-qtapk/apk-files.txt
           for required in FreeCADBase FreeCADApp Coin GL GLU TKBO TKBRep; do
             grep -Fx "lib/arm64-v8a/lib${required}.so" out/integrated-freecad-qtapk/apk-files.txt
           done
