@@ -65,6 +65,31 @@ def defer_measure_init_gui(path: Path):
 
 
 
+def instrument_draft_initgui(path: Path):
+    """Log the complete Draft import exception suppressed by upstream InitGui.
+
+    This is diagnostic-only: original exception handling and workbench logic stay intact.
+    """
+    original = path.read_text(encoding="utf-8")
+    needle = (
+        "        except Exception as exc:\n"
+        "            FreeCAD.Console.PrintError(exc)\n"
+    )
+    if original.count(needle) != 1:
+        raise SystemExit("Draft upstream exception handler changed; refusing unsafe patch")
+    replacement = (
+        "        except Exception as exc:\n"
+        "            import traceback as _drnas_draft_tb\n"
+        "            FreeCAD.Console.PrintError("
+        "'[DRNAS_DRAFT_IMPORT_TRACEBACK]\\n' + _drnas_draft_tb.format_exc())\n"
+        "            FreeCAD.Console.PrintError(exc)\n"
+    )
+    updated = original.replace(needle, replacement, 1)
+    compile(updated, str(path), "exec")
+    path.write_text(updated, encoding="utf-8")
+    print("PASS: Draft InitGui traceback instrumentation; original logic preserved")
+
+
 def main():
     if len(sys.argv) != 4:
         raise SystemExit("Usage: stage-freecad-assets.py upstream-resources asset-dir relocated-ELFs")
@@ -86,6 +111,7 @@ def main():
     # MeasureGui during GUI startup. In QtActivity this can run BEFORE Coin
     # ever presents a frame, bypassing Android's delayed Measure controls.
     defer_measure_init_gui(bundle / "freecad" / "Mod" / "Measure" / "InitGui.py")
+    instrument_draft_initgui(bundle / "freecad" / "Mod" / "Draft" / "InitGui.py")
     # Android's native library extractor can ignore Python extension ELF names
     # such as Part.so (no "lib" prefix). Ship the exact relocated binaries in
     # app-private FreeCAD/lib as a reliable CPython and module-loader fallback.
