@@ -28,6 +28,16 @@ class AndroidPackagingTests(unittest.TestCase):
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text('# original\n')
             (source / 'Mod/Measure/InitGui.py').write_text('import Measure\nimport MeasureGui\n')
+            # Packaging instrumentation requires a real Draft InitGui handler.
+            # Mirror the upstream exception structure; never bypass the guard.
+            (source / 'Mod/Draft/InitGui.py').write_text(
+                'def Initialize():\n'
+                '    if True:\n'
+                '        try:\n'
+                '            pass\n'
+                '        except Exception as exc:\n'
+                '            FreeCAD.Console.PrintError(exc)\n'
+            )
             for module in ('Part', 'PartGui', 'Sketcher', 'SketcherGui', 'Materials', 'MatGui', '_PartDesign', 'PartDesignGui', 'Measure', 'MeasureGui'):
                 (native / (module + '.so')).write_bytes(b'x' * 8192)
             with patch.object(sys, 'argv', [str(SCRIPT), str(source), str(bundle), str(native)]):
@@ -39,6 +49,9 @@ class AndroidPackagingTests(unittest.TestCase):
             self.assertNotEqual(before, after)
             self.assertIn('lib/drnas_android_runtime.py', after)
             self.assertIn('lib/drnas_android_save.py', after)
+            self.assertIn('Mod/Draft/InitGui.py', after)
+            self.assertIn('[DRNAS_DRAFT_IMPORT_TRACEBACK]',
+                          (bundle / 'freecad/Mod/Draft/InitGui.py').read_text())
 
     def test_storage_probe_and_missing_dependency_are_journaled(self):
         with tempfile.TemporaryDirectory() as td:
