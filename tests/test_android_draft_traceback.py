@@ -12,13 +12,6 @@ class DraftTracebackTest(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("drnas_stage_assets", script)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        original = (
-            "def test_import():\n"
-            "    try:\n"
-            "        1 / 0\n"
-            "        except Exception as exc:\n"
-            "            FreeCAD.Console.PrintError(exc)\n"
-        )
         # Use the exact upstream handler's indentation inside an initializer.
         original = (
             "def test_import():\n"
@@ -41,8 +34,7 @@ class DraftTracebackTest(unittest.TestCase):
                 def PrintError(message):
                     entries.append(str(message))
 
-            class FreeCAD:
-                Console = Console  # Python class locals resolve the outer Console
+            FreeCAD = type("FakeFreeCAD", (), {"Console": Console})
 
             namespace = {"FreeCAD": FreeCAD}
             exec(compile(patched, str(source), "exec"), namespace)
