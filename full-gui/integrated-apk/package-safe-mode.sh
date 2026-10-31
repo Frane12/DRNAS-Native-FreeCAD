@@ -132,6 +132,32 @@ test "${#names[@]}" -gt 0
 python3 "$ROOT/full-gui/integrated-apk/stage-freecad-assets.py" \
   "$ARTIFACT/resources" "$work/bundle/assets/drnas" "$STAGE"
 
+# Draft's Python GUI imports typing_extensions (also used by BIM through Draft).
+# Ship the genuine platform-independent wheel, pinned to the PyPI SHA-256.
+# Do not replace FreeCAD, Pivy, Qt, or any native renderer/ELF library.
+pure_wheels="$work/pure-python-deps"
+mkdir -p "$pure_wheels"
+python3 -m pip download --disable-pip-version-check --no-deps \
+  --only-binary=:all: --require-hashes --dest "$pure_wheels" \
+  -r /dev/stdin <<'PY_DRAFT_PURE_REQUIREMENTS'
+typing_extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
+PY_DRAFT_PURE_REQUIREMENTS
+python3 - "$pure_wheels" "$work/bundle/assets/drnas/freecad/lib" <<'PY_DRAFT_PURE_STAGE'
+from pathlib import Path
+from zipfile import ZipFile
+import sys
+wheel_dir, destination = map(Path, sys.argv[1:])
+wheel = list(wheel_dir.glob("typing_extensions-4.16.0-py3-none-any.whl"))
+if len(wheel) != 1:
+    raise SystemExit("Missing or ambiguous pinned typing_extensions wheel")
+with ZipFile(wheel[0]) as archive:
+    contents = archive.read("typing_extensions.py")
+compile(contents, "typing_extensions.py", "exec")
+destination.mkdir(parents=True, exist_ok=True)
+(destination / "typing_extensions.py").write_bytes(contents)
+print("PASS: staged original typing_extensions 4.16.0 for extracted FreeCAD/lib")
+PY_DRAFT_PURE_STAGE
+
 # Native Qt/Python/Coin bindings are mandatory for a functional FreeCAD UI.
 # The upstream artifact must provide genuine Android-built extensions.
 # Never substitute host wheels, dummy modules or a pure-Python Pivy stub.
@@ -189,6 +215,13 @@ root = Path(sys.argv[1])
 base = root / "freecad"
 manifest = root / "freecad-manifest.txt"
 previous = [line for line in manifest.read_text().splitlines() if line]
+# The pure-Python Draft/BIM dependency must be tracked by the same extraction
+# manifest as FreeCAD's original modules, otherwise it stays absent on-device.
+typing_extensions_file = base / "lib" / "typing_extensions.py"
+if not typing_extensions_file.is_file():
+    raise SystemExit("Missing pinned Draft/BIM typing_extensions payload")
+compile(typing_extensions_file.read_bytes(), str(typing_extensions_file), "exec")
+previous.append("lib/typing_extensions.py")
 # Remove stale identity: native extraction keys off bundle-<sha>.sha256.
 previous = [name for name in previous if not (name.startswith("bundle-") and name.endswith(".sha256"))]
 for package in ("PySide", "PySide6", "shiboken6", "pivy", "numpy", "numpy.libs"):
