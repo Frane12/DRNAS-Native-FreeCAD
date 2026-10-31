@@ -65,6 +65,36 @@ def defer_measure_init_gui(path: Path):
 
 
 
+def instrument_draft_initgui(path: Path):
+    """Keep upstream Draft logic intact, but preserve its suppressed traceback.
+
+    Draft/InitGui.py catches import exceptions and prints only str(exc).
+    On Android that hid which nested module attempted None & int.
+    Diagnostic-only change: keep exception handling/return behavior identical.
+    """
+    original = path.read_text(encoding="utf-8")
+    needle = (
+        "        except Exception as exc:\\n"
+        "            FreeCAD.Console.PrintError(exc)\\n"
+    )
+    # Python source literals above resolve to a real linefeed on execution.
+    needle = needle.replace("\\\\n", "\\n")
+    if original.count(needle) != 1:
+        raise SystemExit("Draft upstream exception handler changed; refusing unsafe patch")
+    replacement = (
+        "        except Exception as exc:\\n"
+        "            import traceback as _drnas_draft_traceback\\n"
+        "            FreeCAD.Console.PrintError(\\\"[DRNAS_DRAFT_IMPORT_TRACEBACK]\\\\n\\\""
+        " + _drnas_draft_traceback.format_exc())\\n"
+        "            FreeCAD.Console.PrintError(exc)\\n"
+    )
+    replacement = replacement.replace("\\\\n", "\\n")
+    updated = original.replace(needle, replacement, 1)
+    compile(updated, str(path), "exec")
+    path.write_text(updated, encoding="utf-8")
+    print("PASS: Draft InitGui now prints traceback for import failure; no logic changed")
+
+
 def main():
     if len(sys.argv) != 4:
         raise SystemExit("Usage: stage-freecad-assets.py upstream-resources asset-dir relocated-ELFs")
@@ -86,6 +116,7 @@ def main():
     # MeasureGui during GUI startup. In QtActivity this can run BEFORE Coin
     # ever presents a frame, bypassing Android's delayed Measure controls.
     defer_measure_init_gui(bundle / "freecad" / "Mod" / "Measure" / "InitGui.py")
+    instrument_draft_initgui(bundle / "freecad" / "Mod" / "Draft" / "InitGui.py")
     # Android's native library extractor can ignore Python extension ELF names
     # such as Part.so (no "lib" prefix). Ship the exact relocated binaries in
     # app-private FreeCAD/lib as a reliable CPython and module-loader fallback.
