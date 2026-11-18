@@ -43,7 +43,7 @@ concurrency:
 env:
   QT_VERSION: '6.8.3'
   NDK_VERSION: '27.2.12479018'
-  ANDROID_API: '26'
+  ANDROID_API: '28'
 
 jobs:
   package-real-gui:
@@ -230,6 +230,9 @@ jobs:
             src/Mod/Measure
             src/Mod/BIM
             src/Mod/Draft
+            src/Mod/Help
+            src/Mod/Show
+            src/Mod/Tux
             src/3rdParty/lazy_loader
 
       - name: Stage and verify default material libraries before APK packaging
@@ -388,6 +391,15 @@ jobs:
           mkdir -p out/bindings/runtime
           tar xzf out/bindings/android-python-bindings-arm64.tar.gz -C out/bindings/runtime
           python3 full-gui/integrated-apk/integrate-bindings.py
+          python3 -m venv "$RUNNER_TEMP/wrapper-tools"
+          "$RUNNER_TEMP/wrapper-tools/bin/pip" install --only-binary=:all: 'shiboken6-generator==6.8.3'
+          generator=$("$RUNNER_TEMP/wrapper-tools/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/shiboken6_generator")')
+          git clone --quiet --depth=1 --branch v6.8.3 https://github.com/pyside/pyside-setup.git "$RUNNER_TEMP/pyside-source"
+          bash full-gui/integrated-apk/build-shiboken-pointer-wrapper.sh \
+            "$RUNNER_TEMP/pyside-source" "$generator" \
+            "$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin" \
+            out/full-deps/python out/upstream-freecad-gui/native \
+            out/upstream-freecad-gui/python-bindings/shiboken6/Shiboken.abi3.so
           cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
           python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
 
@@ -455,11 +467,14 @@ jobs:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
         run: bash full-gui/integrated-apk/stage-runtime.sh
 
-      - name: Stage pinned BIM and Draft restore modules and original Qt resources
+      - name: Stage and read back pinned FreeCAD workbench modules and Qt resources
         run: |
           python3 full-gui/integrated-apk/stage-bim-resources.py \
             .deps/freecad-runtime-resources out/upstream-freecad-gui/resources \
             "$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64/libexec/rcc"
+          python3 -m venv "$RUNNER_TEMP/workbench-qt"
+          "$RUNNER_TEMP/workbench-qt/bin/python" -m pip install --only-binary=:all: "PySide6-Essentials==$QT_VERSION"
+          "$RUNNER_TEMP/workbench-qt/bin/python" full-gui/integrated-apk/verify-workbench-resources.py out/upstream-freecad-gui/resources
           python3 -m unittest discover -s tests -p 'test_android_*.py' -v
 
       - name: Configure Android QtActivity and real FreeCAD native GUI integration

@@ -115,8 +115,8 @@ class DrnasRenderLab final : public QObject {
                 return;
             }
         }
-        if (phase==QStringLiteral("foreground"))
-            DrnasDiagnostics::note(QStringLiteral("COIN_WINDOW WARNING: no original Coin GL document subwindow; create/open a document first"));
+        if (phase==QStringLiteral("foreground") && !windows.isEmpty())
+            DrnasDiagnostics::note(QStringLiteral("COIN_WINDOW WARNING: open MDI windows have no Coin GL viewport"));
     }
     void auditWarnings() {
         DrnasDiagnostics::note(QStringLiteral("WARN_AUDIT BEGIN Std_Measure Std_MassProperties"));

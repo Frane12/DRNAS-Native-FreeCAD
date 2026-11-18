@@ -8,6 +8,7 @@
 #include "StartupDiagnostics.h"
 #include "DrnasDebugCenter.h"
 #include "DrnasTouchInput.h"
+#include "DrnasCameraControls.h"
 #include "DrnasDraggableLauncher.h"
 #include "DrnasDocumentOpen.h"
 #include "DrnasDocumentSave.h"
@@ -885,6 +886,8 @@ class DrnasViewportSolo final : public QObject {
         if (auto* status = cad_->statusBar())
             hideOne(status);
         constexpr const char* floatingNames[] = {
+            "drnasQuickToolbar",
+            "drnasRotateLeft", "drnasRotateRight", "drnasRotateUp", "drnasRotateDown",
             "drnasFloatingCommands",
             "drnasFloatingCommandsLauncher",
             "drnasTouchInputPanel",
@@ -899,7 +902,8 @@ class DrnasViewportSolo final : public QObject {
     }
     void snapshot(const QString& state) {
         if (!cad_) return;
-        int bars = 0;
+        auto* quick = shell_->findChild<QToolBar*>(QStringLiteral("drnasQuickToolbar"));
+        int bars = quick && quick->isVisible() ? 1 : 0;
         for (auto* bar : cad_->findChildren<QToolBar*>())
             if (bar->isVisible()) ++bars;
         int docks = 0;
@@ -1739,6 +1743,7 @@ except BaseException:
         QString auditError;
         const bool auditOk = runOriginalFreeCADPython(QStringLiteral(
             "import sys\n"
+            "from drnas_android_runtime import _drnas_mark\n"
             "_drnas_mark('MEASURE_BOOT STARTUP_AUDIT core=' + str('Measure' in sys.modules) + "
             "' gui=' + str('MeasureGui' in sys.modules))\n"), auditError);
         DrnasDiagnostics::note(QStringLiteral(
@@ -1944,6 +1949,14 @@ finally:
     }
     toolbar->addSeparator();
     toolbar->addSeparator();
+    auto* quick = new QToolBar(QStringLiteral("FreeCAD"), shell);
+    quick->setObjectName(QStringLiteral("drnasQuickToolbar"));
+    quick->setMovable(false);
+    quick->setFloatable(false);
+    quick->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    shell->addToolBar(Qt::TopToolBarArea, quick);
+    auto* toolsAction = quick->addAction(QStringLiteral("Alati"));
+    quick->addAction(newDoc);
     for (const auto& workbench : {
              std::pair<const char*, const char*>{"Part", "PartWorkbench"},
              {"Sketcher", "SketcherWorkbench"},
@@ -1951,6 +1964,7 @@ finally:
         const QString label = QString::fromLatin1(workbench.first);
         const QString name = QString::fromLatin1(workbench.second);
         QAction* action = toolbar->addAction(label);
+        quick->addAction(action);
         QObject::connect(action, &QAction::triggered, shell,
                          [invoke, label, name] {
             DrnasDiagnostics::note(QStringLiteral("TOUCH workbench ") + label);
@@ -2045,8 +2059,15 @@ finally:
     menuButton->setToolTip(QStringLiteral("Original FreeCAD menus"));
     menuButton->setPopupMode(QToolButton::InstantPopup);
     auto* touchMenu = new QMenu(menuButton);
+    auto* smoothRotation = new QAction(QStringLiteral("Smooth rotation"), menuButton);
+    smoothRotation->setCheckable(true);
+    const QString smoothKey = QStringLiteral("drnasOverlay/smoothRotation");
+    smoothRotation->setChecked(QSettings().value(smoothKey, true).toBool());
+    QObject::connect(smoothRotation, &QAction::toggled, shell, [smoothKey](bool enabled) {
+        QSettings().setValue(smoothKey, enabled);
+    });
     QObject::connect(touchMenu, &QMenu::aboutToShow, shell,
-                     [upstream, touchMenu] {
+                     [upstream, touchMenu, smoothRotation] {
         DrnasDiagnostics::note(QStringLiteral("TOUCH original FreeCAD Menu"));
         touchMenu->clear();
         if (upstream && upstream->menuBar()) {
@@ -2061,6 +2082,8 @@ finally:
                 QStringLiteral("FreeCAD menus not ready"));
             unavailable->setEnabled(false);
         }
+        touchMenu->addSeparator();
+        touchMenu->addAction(smoothRotation);
     });
     menuButton->setMenu(touchMenu);
     toolbar->addWidget(menuButton);
@@ -2075,6 +2098,32 @@ finally:
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, freecad, toolbar);
+    auto* launcher = shell->findChild<QPushButton*>(QStringLiteral("drnasFloatingCommandsLauncher"));
+    QObject::connect(toolsAction, &QAction::triggered, launcher, &QPushButton::click);
+    quick->addAction(smoothRotation);
+    new DrnasCameraControls(shell, freecad, [report, smoothRotation](int axis, int direction) {
+        const QString code = QStringLiteral(
+            "import FreeCAD as App, FreeCADGui as Gui\n"
+            "_drnas_cam_doc = Gui.activeDocument()\n"
+            "_drnas_cam_view = _drnas_cam_doc.activeView() if _drnas_cam_doc else None\n"
+            "if hasattr(_drnas_cam_view, 'getCameraOrientation'):\n"
+            "    _drnas_cam_current = _drnas_cam_view.getCameraOrientation()\n"
+            "    _drnas_cam_delta = App.Rotation(App.Vector(%1), %2)\n"
+            "    _drnas_cam_view.setAnimationEnabled(%3)\n"
+            "    _drnas_cam_view.setCameraOrientation(%4)\n")
+            .arg(axis == 0 ? QStringLiteral("0, 0, 1") : QStringLiteral("1, 0, 0"))
+            .arg(direction * 15)
+            .arg(smoothRotation->isChecked() ? QStringLiteral("True") : QStringLiteral("False"))
+            .arg(axis == 0 ? QStringLiteral("_drnas_cam_delta.multiply(_drnas_cam_current)")
+                           : QStringLiteral("_drnas_cam_current.multiply(_drnas_cam_delta)"));
+        QString error;
+        if (!runOriginalFreeCADPython(code, error)) report(QStringLiteral("Rotacija: ") + error);
+    });
+    for (const char* id : {"drnasRotateLeft", "drnasRotateRight", "drnasRotateUp", "drnasRotateDown"}) {
+        auto* arrow = shell->findChild<QPushButton*>(QString::fromLatin1(id));
+        new DrnasRotationToolButton(quick, arrow);
+    }
+    quick->show();
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });
@@ -2202,6 +2251,10 @@ void recordOriginalGuiStage(const char* stageName)
                 "_drnas_fault_file = _drnas_runtime._drnas_fault_file\n"
                 "import FreeCAD as App\n"
                 "_drnas_runtime._drnas_configure_document_open()\n"
+                "_sketch_tools = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Sketcher/Tools')\n"
+                "if _sketch_tools.GetInt('OnViewParameterVisibility', -1) == -1:\n"
+                "    _sketch_tools.SetInt('OnViewParameterVisibility', 0)\n"
+                "_drnas_mark('SKETCH on-view parameters=' + str(_sketch_tools.GetInt('OnViewParameterVisibility')))\n"
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"
@@ -2479,6 +2532,7 @@ public:
                 const QString failure=QStringLiteral(
                     "ORIGINAL GUI initialization failed (code %1): %2. "
                     "Restart app before retrying.").arg(result).arg(reason);
+                DrnasDiagnostics::note(failure);
                 nativeStatus->setText(failure);
                 settings.setValue(QStringLiteral("nativeProbe/result"), failure);
             } else {

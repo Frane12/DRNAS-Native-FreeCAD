@@ -42,6 +42,8 @@ def symbols(path):
 
 
 def require_arm64(path):
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing ARM64 shared library: {path}")
     header = readelf(path, "-h")
     if "AArch64" not in header or "ELF64" not in header:
         raise RuntimeError(f"Not Android ARM64 ELF: {path}")
