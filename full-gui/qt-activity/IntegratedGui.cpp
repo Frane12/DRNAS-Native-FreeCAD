@@ -886,6 +886,8 @@ class DrnasViewportSolo final : public QObject {
         if (auto* status = cad_->statusBar())
             hideOne(status);
         constexpr const char* floatingNames[] = {
+            "drnasQuickToolbar",
+            "drnasRotateLeft", "drnasRotateRight", "drnasRotateUp", "drnasRotateDown",
             "drnasFloatingCommands",
             "drnasFloatingCommandsLauncher",
             "drnasTouchInputPanel",
@@ -900,7 +902,8 @@ class DrnasViewportSolo final : public QObject {
     }
     void snapshot(const QString& state) {
         if (!cad_) return;
-        int bars = 0;
+        auto* quick = shell_->findChild<QToolBar*>(QStringLiteral("drnasQuickToolbar"));
+        int bars = quick && quick->isVisible() ? 1 : 0;
         for (auto* bar : cad_->findChildren<QToolBar*>())
             if (bar->isVisible()) ++bars;
         int docks = 0;
@@ -1740,6 +1743,7 @@ except BaseException:
         QString auditError;
         const bool auditOk = runOriginalFreeCADPython(QStringLiteral(
             "import sys\n"
+            "from drnas_android_runtime import _drnas_mark\n"
             "_drnas_mark('MEASURE_BOOT STARTUP_AUDIT core=' + str('Measure' in sys.modules) + "
             "' gui=' + str('MeasureGui' in sys.modules))\n"), auditError);
         DrnasDiagnostics::note(QStringLiteral(
@@ -1945,6 +1949,14 @@ finally:
     }
     toolbar->addSeparator();
     toolbar->addSeparator();
+    auto* quick = new QToolBar(QStringLiteral("FreeCAD"), shell);
+    quick->setObjectName(QStringLiteral("drnasQuickToolbar"));
+    quick->setMovable(false);
+    quick->setFloatable(false);
+    quick->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    shell->addToolBar(Qt::TopToolBarArea, quick);
+    auto* toolsAction = quick->addAction(QStringLiteral("Alati"));
+    quick->addAction(newDoc);
     for (const auto& workbench : {
              std::pair<const char*, const char*>{"Part", "PartWorkbench"},
              {"Sketcher", "SketcherWorkbench"},
@@ -1952,6 +1964,7 @@ finally:
         const QString label = QString::fromLatin1(workbench.first);
         const QString name = QString::fromLatin1(workbench.second);
         QAction* action = toolbar->addAction(label);
+        quick->addAction(action);
         QObject::connect(action, &QAction::triggered, shell,
                          [invoke, label, name] {
             DrnasDiagnostics::note(QStringLiteral("TOUCH workbench ") + label);
@@ -2085,6 +2098,9 @@ finally:
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, freecad, toolbar);
+    auto* launcher = shell->findChild<QPushButton*>(QStringLiteral("drnasFloatingCommandsLauncher"));
+    QObject::connect(toolsAction, &QAction::triggered, launcher, &QPushButton::click);
+    quick->addAction(smoothRotation);
     new DrnasCameraControls(shell, freecad, [report, smoothRotation](int axis, int direction) {
         const QString code = QStringLiteral(
             "import FreeCAD as App, FreeCADGui as Gui\n"
@@ -2103,6 +2119,13 @@ finally:
         QString error;
         if (!runOriginalFreeCADPython(code, error)) report(QStringLiteral("Rotacija: ") + error);
     });
+    for (const char* id : {"drnasRotateLeft", "drnasRotateRight", "drnasRotateUp", "drnasRotateDown"}) {
+        auto* arrow = shell->findChild<QPushButton*>(QString::fromLatin1(id));
+        auto* action = quick->addAction(arrow->text());
+        action->setToolTip(arrow->toolTip());
+        QObject::connect(action, &QAction::triggered, arrow, &QPushButton::click);
+    }
+    quick->show();
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });
@@ -2507,6 +2530,7 @@ public:
                 const QString failure=QStringLiteral(
                     "ORIGINAL GUI initialization failed (code %1): %2. "
                     "Restart app before retrying.").arg(result).arg(reason);
+                DrnasDiagnostics::note(failure);
                 nativeStatus->setText(failure);
                 settings.setValue(QStringLiteral("nativeProbe/result"), failure);
             } else {

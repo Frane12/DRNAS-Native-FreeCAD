@@ -83,8 +83,8 @@ if(DRNAS_FREECAD_RUNTIME_DIR)
         QT_ANDROID_PACKAGE_NAME "org.drnas.freecad.integrated"
         QT_ANDROID_APP_NAME "DRNAS FreeCAD Native GUI Integration"
         QT_ANDROID_MIN_SDK_VERSION 28
-        QT_ANDROID_VERSION_CODE 4
-        QT_ANDROID_VERSION_NAME "0.3.1-alpha"
+        QT_ANDROID_VERSION_CODE 5
+        QT_ANDROID_VERSION_NAME "0.3.2-alpha"
     )
 endif()
 

@@ -391,6 +391,15 @@ jobs:
           mkdir -p out/bindings/runtime
           tar xzf out/bindings/android-python-bindings-arm64.tar.gz -C out/bindings/runtime
           python3 full-gui/integrated-apk/integrate-bindings.py
+          python3 -m venv "$RUNNER_TEMP/wrapper-tools"
+          "$RUNNER_TEMP/wrapper-tools/bin/pip" install --only-binary=:all: 'shiboken6-generator==6.8.3'
+          generator=$("$RUNNER_TEMP/wrapper-tools/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/shiboken6_generator")')
+          git clone --quiet --depth=1 --branch v6.8.3 https://github.com/pyside/pyside-setup.git "$RUNNER_TEMP/pyside-source"
+          bash full-gui/integrated-apk/build-shiboken-pointer-wrapper.sh \
+            "$RUNNER_TEMP/pyside-source" "$generator" \
+            "$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin" \
+            out/full-deps/python out/upstream-freecad-gui/native \
+            out/upstream-freecad-gui/python-bindings/shiboken6/Shiboken.abi3.so
           cp -a full-gui/upstream/python-compat out/upstream-freecad-gui/
           python3 full-gui/upstream/verify-native-python-bindings.py out/upstream-freecad-gui --strict
 
