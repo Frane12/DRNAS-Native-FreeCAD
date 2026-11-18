@@ -49,7 +49,9 @@ jobs:
           # The PR event still grants read-only access to the base branch's caches.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify read-only native registration diagnostics
-        run: python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
+        run: |
+          python3 -m unittest discover -s tests -p 'test_native_type_shiboken_diagnostics.py' -v
+          python3 -m unittest discover -s tests -p 'test_deferred_measure_ui.py' -v
 
       - name: Python host tools matching FreeCAD embedded ABI
         uses: actions/setup-python@v5
@@ -189,7 +191,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py', 'full-gui/upstream/patch-gl4es-drawpixels.py') }}
       - name: Build patched GL4ES and GLU on cache miss
         if: steps.gl.outputs.cache-hit != 'true'
         run: bash full-gui/upstream/build-android-gl4es-glu.sh
@@ -198,7 +200,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: out/upstream-freecad-gui/opengl-compat
-          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh') }}
+          key: freecadgui-gl4es-glu-arm64-a025615-2fed2bd-v1-${{ hashFiles('full-gui/upstream/build-android-gl4es-glu.sh', 'full-gui/upstream/patch-qt-gl-state.py', 'full-gui/upstream/patch-gl4es-drawpixels.py') }}
       - name: Demand real Bionic GL4ES and GLU before FreeCADGui configure
         run: |
           set -euo pipefail

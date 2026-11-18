@@ -80,3 +80,14 @@ confirms the replacement path works for the user's test.
 `idemo.txt` confirmed standard Open -> SAF -> BREP_TEMP -> actual document
 restore and framebuffer PASS on the phone. It established Open/rendering;
 Save was not working in that earlier baseline.
+
+## Phone-confirmed Sketcher glyph rendering: 26 October 2026
+
+- Snapshot: `baseline/android-sketcher-icons-working-20261026` at
+  `28ffadd82d08f4c22aa9e20d8c0012b45c681a9a`.
+- Native run `40405045805`; APK run `40405045867`, artifact `12691412828`.
+- User screenshot `222099.jpg` shows red horizontal/vertical and other Sketcher
+  constraint glyphs with transparent backgrounds in the actual Coin viewport.
+  User asked “to je to druže meštre?” after installing this test build.
+- This confirms the raster sampler/blending fix on the phone. It is a separate
+  rendering milestone; the earlier 326 Open/Save evidence remains scoped to 326.
