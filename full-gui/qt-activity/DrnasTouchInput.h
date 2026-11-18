@@ -481,6 +481,10 @@ protected:
                 if (p == panel || p == launcher) return true;
                 const QString name = p->objectName();
                 if (name == QStringLiteral("drnasFloatingCommandsLauncher") ||
+                    name == QStringLiteral("drnasRotateLeft") ||
+                    name == QStringLiteral("drnasRotateRight") ||
+                    name == QStringLiteral("drnasRotateUp") ||
+                    name == QStringLiteral("drnasRotateDown") ||
                     name == QStringLiteral("drnasDebugLauncher") ||
                     name == QStringLiteral("drnasLiveLabButton") ||
                     name == QStringLiteral("drnasViewportSoloToggle") ||
