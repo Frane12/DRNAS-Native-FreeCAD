@@ -84,6 +84,31 @@ class AndroidSaveTests(unittest.TestCase):
         self.assertFalse(self.save.finish_save(info['token'], True))
         self.assertTrue(self.gui.Modified)
 
+    def test_observer_does_not_dereference_invalid_native_proxy_after_save(self):
+        class DeadNativeProxy:
+            def __getattribute__(self, name):
+                raise AssertionError('Never inspect a deleted native object')
+
+        info = self.prepare()
+        self.assertTrue(self.save.finish_save(info['token'], True))
+        self.save._observer.changed(DeadNativeProxy(), 'Shape')
+        self.assertFalse(self.gui.Modified)
+
+    def test_observer_tracks_pending_saves_without_native_proxy_access(self):
+        class DeadNativeProxy:
+            def __getattribute__(self, name):
+                raise AssertionError('Never inspect a deleted native object')
+
+        first = self.prepare('first')
+        second = self.prepare('second')
+        session = self.save._sessions[self.doc.Name]
+        initial_revision = session['revision']
+        self.save._observer.slotChangedObject(DeadNativeProxy(), 'Shape')
+        self.assertEqual(session['revision'], initial_revision + 1)
+        self.assertFalse(self.save.finish_save(first['token'], True))
+        self.assertFalse(self.save.finish_save(second['token'], True))
+        self.assertTrue(self.gui.Modified)
+
     def test_closed_document_does_not_clear_another_document_with_same_name(self):
         info = self.prepare()
         self.app.getDocument = lambda name: types.SimpleNamespace(Name='Model')

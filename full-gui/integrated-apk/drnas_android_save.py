@@ -19,12 +19,27 @@ _watching = False
 
 
 class _SaveObserver:
-    def changed(self, item, *args):
-        obj = getattr(item, 'Object', item)
-        doc = getattr(obj, 'Document', obj)
-        session = _sessions.get(getattr(doc, 'Name', None))
-        if session and session['document'] is doc:
-            session['revision'] += 1
+    def changed(self, _item, *args):
+        # A FreeCAD document callback may receive a proxy for a C++ object
+        # that has already been deleted. Even getattr(item, 'Object') can
+        # SIGSEGV inside the binding (PartDesign_Hole, 2026-10-29 crash).
+        # Never dereference the native callback argument.
+        #
+        # Revision tracking matters only while Android SAF is transferring a
+        # serialized document. The provider can be slow and any document edit
+        # during that interval must prevent us from falsely marking it clean.
+        # If any signal fires, conservatively mark each pending save session
+        # changed. An unrelated edit can cause a harmless extra dirty state;
+        # clearing genuine unsaved edits would be worse.
+        if not _pending:
+            return
+        seen = set()
+        for request in tuple(_pending.values()):
+            session = request['session']
+            key = id(session)
+            if key not in seen:
+                session['revision'] += 1
+                seen.add(key)
 
     slotChangedObject = changed
     slotCreatedObject = changed

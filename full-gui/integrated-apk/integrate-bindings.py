@@ -41,15 +41,34 @@ def symbols(path, defined):
     flag = '--defined-only' if defined else '--undefined-only'
     output = subprocess.check_output(['nm','-D',flag,str(path)], text=True)
     return {line.split()[-1] for line in output.splitlines() if line.split()}
-old_coin = symbols(native/'libCoin.so', True)
-new_coin_path = bundle/'native/libCoin.so'
-new_coin = symbols(new_coin_path, True)
+# The prebuilt Python/Pivy bindings bundle contains an OLDER Coin3D DSO.
+# Never let it overwrite the freshly compiled, GLES-patched Android Coin.
+native_coin_path = native/'libCoin.so'
+binding_coin_path = bundle/'native/libCoin.so'
+native_coin = symbols(native_coin_path, True)
+binding_coin = symbols(binding_coin_path, True)
+original_coin_sha256 = hashlib.sha256(native_coin_path.read_bytes()).hexdigest()
+assert b'COIN_GLES_GUARD_V2' in native_coin_path.read_bytes(), (
+    'Selected native Coin lacks GLES guard v2 marker before binding merge')
+assert 'drnas_coin_android_gles_guard_v2' in native_coin, (
+    'Selected native Coin lacks exported GLES guard v2 symbol')
+
 used = set()
 for path in native.glob('*.so'):
     if path.name != 'libCoin.so':
-        used.update(symbols(path, False) & old_coin)
-missing = used-new_coin
-assert not missing, 'New Coin is missing FreeCAD ABI symbols: '+str(sorted(missing)[:20])
+        used.update(symbols(path, False) & native_coin)
+# Verify every Coin reference from the old prebuilt Pivy/native bindings can
+# resolve against our new GLES-patched libCoin.so, rather than downgrading it.
+binding_consumers = list((bundle/'python-bindings').rglob('*.so')) + [
+    path for path in (bundle/'native').glob('*.so') if path.name != 'libCoin.so'
+]
+binding_used = set()
+for path in binding_consumers:
+    binding_used.update(symbols(path, False) & binding_coin)
+missing = binding_used - native_coin
+assert not missing, 'Current Coin misses Pivy/bindings ABI symbols: '+str(sorted(missing)[:25])
+print(f'COIN_BINDINGS_ABI_PASS: {len(binding_used)} old Coin references present in new Coin')
+
 
 # Normalize versioned SONAMEs in copies, without relocating ELF segments.
 spec = importlib.util.spec_from_file_location('relink',root/'full-gui/integrated-apk/relocate-android-sonames.py')
@@ -102,10 +121,20 @@ for package in ('PySide6','shiboken6','pivy'):
     shutil.copytree(bundle/'python-bindings'/package,dest)
 for name in qt_needed:
     shutil.copyfile(qt/name,native/name)
+def may_replace_native_so(filename: str) -> bool:
+    # Never downgrade the current Coin with an old bindings-bundle copy.
+    return filename != 'libCoin.so'
+
 for path in (bundle/'native').glob('*.so'):
+    if not may_replace_native_so(path.name):
+        print(f'COIN_BINDINGS_PRESERVED: {path.name} kept from native GUI compile')
+        continue
     # GL/GLU are also consumed from opengl-compat by stage-runtime.sh.
     dest = artifact/'opengl-compat/lib'/path.name if path.name in ('libGL.so','libGLU.so') else native/path.name
     shutil.copyfile(path,dest)
+assert hashlib.sha256(native_coin_path.read_bytes()).hexdigest() == original_coin_sha256, (
+    'Native Coin changed unexpectedly during binding integration')
+print(f'COIN_BINDINGS_NATIVE_SHA256: {original_coin_sha256} guard=v2 preserved')
 (native/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(native.glob('*.so'))))
 (report/'BINDINGS-INFO.json').write_text(json.dumps(metadata,indent=2)+'\n')
 print(f'PASS: merged genuine Android binding packages; {len(used)} Coin ABI symbol references checked.')

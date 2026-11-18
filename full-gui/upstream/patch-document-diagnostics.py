@@ -11,6 +11,17 @@ def once(source, old, new):
     return source.replace(old, new, 1)
 
 
+def patch_native_multisample(source):
+    # This pointer is used only for the native Qt GL_MULTISAMPLE query/restore
+    # around QGraphicsView painting. GLES has no such enable capability; its
+    # multisampling is controlled by the framebuffer. Keep desktop behavior.
+    return once(source,
+        '    QOpenGLFunctions* functions = w->context() ? w->context()->functions() : nullptr;',
+        '''    QOpenGLContext* multisampleContext = w->context();
+    QOpenGLFunctions* functions = multisampleContext && !multisampleContext->isOpenGLES()
+        ? multisampleContext->functions() : nullptr;''')
+
+
 def annotate(root, path, signature, phases, max_calls=None):
     target = root / path
     source = target.read_text()
@@ -418,11 +429,13 @@ private:
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <dlfcn.h>
+#include "DrnasGlesDebug.h"
 
 // Queries only: preserve the selected rendering mode and all GL state.
 static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
 {
     ::DrnasDocumentTraceScope scope("GPU00 render context snapshot");
+    drnasCoinProvenanceProbe();
     QOpenGLContext* context = QOpenGLContext::currentContext();
     char line[1536];
     std::snprintf(line, sizeof(line),
@@ -494,6 +507,7 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
         surfaceFormat.setVersion(2, 0);
         surfaceFormat.setProfile(QSurfaceFormat::NoProfile);
         surfaceFormat.setOption(QSurfaceFormat::DeprecatedFunctions, false);
+        surfaceFormat.setOption(QSurfaceFormat::DebugContext, true);
         surfaceFormat.setStereo(false);
         surfaceFormat.setSamples(0);
         surfaceFormat.setDepthBufferSize(24);
@@ -647,6 +661,7 @@ static void drnasRenderGpuSnapshot(QOpenGLWidget* widget)
         ::drnasDocumentPhase("P03 Coin scene render", "SKIPPED_ANDROID_DIAGNOSTIC");
     }''')
     quarter_source = '#include <dlfcn.h>\nextern "C" __attribute__((visibility("default"))) int drnas_gpu_color_version() { return 1; }\n' + quarter_source
+    quarter_source = patch_native_multisample(quarter_source)
     quarter_path.write_text(quarter_source)
 
     # Independent, session-only Coin stages for comparison with the GLES
@@ -1020,6 +1035,7 @@ static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cac
     static unsigned int abFrames = 0;
     const bool traceViewport = abFrames++ < 32;
     auto* abWidget = qobject_cast<QOpenGLWidget*>(this->viewport());
+    drnasInstallGlesDebug(abWidget);
     if (traceViewport) drnasViewportAbSnapshot("BEFORE_GL_VIEWPORT", abWidget, size[0], size[1]);
     drnasSyncQtCoinFbo(abWidget);
     if (drnasRenderStage()>=9 && drnasRenderStage()<=12) {
@@ -1036,6 +1052,9 @@ static void drnasGeometryProbe(QOpenGLWidget* widget, int mode, unsigned int cac
     if (traceViewport) drnasViewportAbSnapshot("AFTER_GL_VIEWPORT", abWidget, size[0], size[1]);
 #endif''')
     viewer_path.write_text(viewer_source)
+
+    (root / 'src/Gui/DrnasGlesDebug.h').write_text(
+        Path(__file__).with_name('DrnasGlesDebug.h').read_text())
 
 
 if __name__ == "__main__":
