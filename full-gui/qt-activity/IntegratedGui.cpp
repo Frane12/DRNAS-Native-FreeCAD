@@ -2121,9 +2121,7 @@ finally:
     });
     for (const char* id : {"drnasRotateLeft", "drnasRotateRight", "drnasRotateUp", "drnasRotateDown"}) {
         auto* arrow = shell->findChild<QPushButton*>(QString::fromLatin1(id));
-        auto* action = quick->addAction(arrow->text());
-        action->setToolTip(arrow->toolTip());
-        QObject::connect(action, &QAction::triggered, arrow, &QPushButton::click);
+        new DrnasRotationToolButton(quick, arrow);
     }
     quick->show();
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
@@ -2253,6 +2251,10 @@ void recordOriginalGuiStage(const char* stageName)
                 "_drnas_fault_file = _drnas_runtime._drnas_fault_file\n"
                 "import FreeCAD as App\n"
                 "_drnas_runtime._drnas_configure_document_open()\n"
+                "_sketch_tools = App.ParamGet('User parameter:BaseApp/Preferences/Mod/Sketcher/Tools')\n"
+                "if _sketch_tools.GetInt('OnViewParameterVisibility', -1) == -1:\n"
+                "    _sketch_tools.SetInt('OnViewParameterVisibility', 0)\n"
+                "_drnas_mark('SKETCH on-view parameters=' + str(_sketch_tools.GetInt('OnViewParameterVisibility')))\n"
                 "# RA11 device crash: isolate navigation decoration, retain the real CAD scene.\n"
                 "_drnas_view_preferences = App.ParamGet('User parameter:BaseApp/Preferences/View')\n"
                 "_drnas_view_preferences.SetBool('ShowNaviCube', False)\n"

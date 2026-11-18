@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QTimeZone>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -15,6 +16,10 @@
 #include <QtGlobal>
 #ifdef Q_OS_ANDROID
 #include <android/log.h>
+#include <QJniEnvironment>
+#include <QJniObject>
+#include <QCoreApplication>
+#include "DrnasCrashFrames.h"
 #endif
 
 namespace {
@@ -137,12 +142,65 @@ void DrnasDiagnostics::note(const QString& message)
     appendLocked(QStringLiteral("[STAGE] ") + message);
 }
 
+#ifdef Q_OS_ANDROID
+// Retrieve the previous native crash from Android on explicit log export.
+static QString lastNativeCrash() {
+    if (QNativeInterface::QAndroidApplication::sdkVersion() < 31) return {};
+    const QJniObject context = QNativeInterface::QAndroidApplication::context();
+    const auto service = context.callObjectMethod("getSystemService",
+        "(Ljava/lang/String;)Ljava/lang/Object;", QJniObject::fromString("activity").object());
+    if (!service.isValid()) return {};
+    const auto package = context.callObjectMethod("getPackageName", "()Ljava/lang/String;");
+    const auto exits = service.callObjectMethod("getHistoricalProcessExitReasons",
+        "(Ljava/lang/String;II)Ljava/util/List;", package.object(), jint(0), jint(12));
+    if (!exits.isValid()) return {};
+    const int count = exits.callMethod<jint>("size");
+    for (int i = 0; i < count; ++i) {
+        const auto exit = exits.callObjectMethod("get", "(I)Ljava/lang/Object;", jint(i));
+        if (!exit.isValid() || exit.callMethod<jint>("getReason") != 5) continue; // REASON_CRASH_NATIVE
+        const auto trace = exit.callObjectMethod("getTraceInputStream", "()Ljava/io/InputStream;");
+        if (!trace.isValid()) continue;
+        QJniEnvironment env;
+        constexpr jint chunk = 32768;
+        constexpr int limit = 8 * 1024 * 1024;
+        jbyteArray buffer = env->NewByteArray(chunk);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        QByteArray data;
+        if (buffer) {
+            while (data.size() <= limit) {
+                const int n = trace.callMethod<jint>("read", "([B)I", buffer);
+                if (n <= 0 || n > chunk) break;
+                const auto offset = data.size();
+                data.resize(offset + n);
+                env->GetByteArrayRegion(buffer, 0, n, reinterpret_cast<jbyte*>(data.data() + offset));
+                if (env->ExceptionCheck()) { env->ExceptionClear(); data.clear(); break; }
+            }
+            env->DeleteLocalRef(buffer);
+        }
+        trace.callMethod<void>("close");
+        if (data.size() > limit) continue;
+        const auto frames = DrnasCrashFrames::decode(data);
+        if (frames.isEmpty()) continue;
+        const auto stamp = QDateTime::fromMSecsSinceEpoch(exit.callMethod<jlong>("getTimestamp"), QTimeZone::UTC);
+        return QStringLiteral("\nANDROID NATIVE CRASH %1\n%2\n")
+            .arg(stamp.toString(Qt::ISODateWithMs), frames.join('\n'));
+    }
+    return {};
+}
+#endif
+
 QString DrnasDiagnostics::report()
 {
+#ifdef Q_OS_ANDROID
+    // JNI can log while reading the previous exit. Keep it outside logMutex.
+    const QString crash = lastNativeCrash();
+#else
+    const QString crash;
+#endif
     QMutexLocker lock(&logMutex);
     return QStringLiteral("DRNAS FreeCAD - diagnostic report\n"
                           "PREVIOUS LAUNCH (last 256 KiB)\n")
         + tailOf(previousLog, 256 * 1024)
         + QStringLiteral("\nCURRENT LAUNCH (last 256 KiB)\n")
-        + tailOf(currentLog, 256 * 1024);
+        + tailOf(currentLog, 256 * 1024) + crash;
 }

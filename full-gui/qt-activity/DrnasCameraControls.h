@@ -2,12 +2,60 @@
 
 #include <functional>
 #include <QEvent>
+#include <QToolBar>
+#include <QToolButton>
+#include <QTouchEvent>
 #include <QMainWindow>
 #include <QPointer>
 #include <QPushButton>
 #include <QSettings>
 #include <QTimer>
 #include "DrnasDraggableLauncher.h"
+
+// A toolbar arrow is a direct touch target even when the viewport is a touchpad.
+class DrnasRotationToolButton final : public QToolButton {
+    int finger_ = -1;
+protected:
+    bool event(QEvent* event) override {
+        switch (event->type()) {
+        case QEvent::TouchBegin:
+        case QEvent::TouchUpdate:
+        case QEvent::TouchEnd: {
+            auto* touch = static_cast<QTouchEvent*>(event);
+            const auto& points = touch->points();
+            if (event->type() == QEvent::TouchBegin && points.size() == 1)
+                finger_ = points.first().id();
+            if (points.size() != 1) finger_ = -1;
+            const bool inside = finger_ >= 0 && !points.isEmpty() &&
+                points.first().id() == finger_ && rect().contains(points.first().position().toPoint());
+            const bool activate = inside && event->type() == QEvent::TouchEnd;
+            setDown(inside && event->type() != QEvent::TouchEnd);
+            if (event->type() == QEvent::TouchEnd) finger_ = -1;
+            event->accept();
+            if (activate) click();
+            return true;
+        }
+        case QEvent::TouchCancel:
+        case QEvent::Hide:
+            finger_ = -1;
+            setDown(false);
+            break;
+        default:
+            break;
+        }
+        return QToolButton::event(event);
+    }
+public:
+    DrnasRotationToolButton(QToolBar* toolbar, QPushButton* arrow) : QToolButton(toolbar) {
+        setAttribute(Qt::WA_AcceptTouchEvents);
+        setProperty("drnasDirectRotation", true);
+        setFocusPolicy(Qt::NoFocus);
+        setText(arrow->text());
+        setToolTip(arrow->toolTip());
+        connect(this, &QToolButton::clicked, arrow, &QPushButton::click);
+        toolbar->addWidget(this);
+    }
+};
 
 // Child widgets of the existing QtActivity shell; no additional GL surface.
 class DrnasCameraControls final : public QObject {
@@ -59,6 +107,7 @@ public:
         for (const auto& spec : buttons) {
             const QString key = QString::fromLatin1(spec.key);
             auto* button = new QPushButton(QString::fromUtf8(spec.text), shell);
+            button->setProperty("drnasDirectRotation", true);
             button->setObjectName(QString::fromLatin1(spec.name));
             button->setToolTip(QString::fromUtf8(spec.tip));
             button->setFixedSize(48, 42);

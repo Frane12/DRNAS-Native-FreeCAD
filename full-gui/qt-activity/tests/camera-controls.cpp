@@ -1,5 +1,6 @@
 // Reproduce the embedded FreeCAD show/raise ordering with real Qt widgets.
 #include "../DrnasCameraControls.h"
+#include "../DrnasTouchInput.h"
 #include <QApplication>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -58,4 +59,48 @@ int main(int argc, char** argv) {
     shell.resize(1000, 560);
     QTest::qWait(30);
     check(shell.childAt(right->geometry().center()) == right, "buttons remain clickable after resize");
+
+    // Run actual Qt touch delivery with the application's relative-pointer filter installed.
+    auto* quick = shell.addToolBar("Rotation");
+    QList<QWidget*> controls;
+    for (auto* arrow : {left, right, up, down}) {
+        controls.append(arrow);
+        controls.append(new DrnasRotationToolButton(quick, arrow));
+    }
+    new DrnasTouchInput(&shell, cad, [](const QString&) {});
+    QTest::qWait(60);
+    auto* device = QTest::createTouchDevice();
+    const auto panelButton = [&shell](const QString& text) {
+        for (auto* button : shell.findChildren<QPushButton*>())
+            if (button->text() == text) return button;
+        return static_cast<QPushButton*>(nullptr);
+    };
+    auto* hold = panelButton(QStringLiteral("Drži"));
+    auto* rmb = panelButton(QStringLiteral("RMB"));
+    check(hold && rmb, "relative mouse mode controls");
+    hold->click();
+    rmb->click();
+    for (int i = 0; i < controls.size(); ++i) {
+        auto* target = controls.at(i);
+        int oldYaw = yaw, oldPitch = pitch;
+        const bool horizontal = i < 4;
+        const int direction = (i / 2) % 2 ? 1 : -1;
+        auto center = target->rect().center();
+        QTest::touchEvent(&shell, device).press(0, center, target);
+        QTest::touchEvent(&shell, device).release(0, center, target);
+        QTest::qWait(20);
+        check(yaw == oldYaw + (horizontal ? direction : 0) &&
+              pitch == oldPitch + (horizontal ? 0 : direction),
+              "one physical tap must rotate exactly once with the touchpad active");
+    }
+    check(hold->isChecked() && rmb->isChecked(), "touch rotation preserves held RMB");
+    rmb->click();
+    hold->click();
+    const int oldYaw = yaw;
+    auto start = left->rect().center();
+    QTest::touchEvent(&shell, device).press(0, start, left);
+    QTest::touchEvent(&shell, device).move(0, start + QPoint(65, 0), left);
+    QTest::touchEvent(&shell, device).release(0, left->rect().center(), left);
+    QTest::qWait(20);
+    check(yaw == oldYaw, "dragging a floating arrow must not rotate");
 }

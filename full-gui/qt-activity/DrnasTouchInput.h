@@ -478,7 +478,7 @@ protected:
         // else is a relative touchpad; lifting a finger never warps the cursor.
         const auto isDirectOverlay = [this](QWidget* widget) {
             for (QWidget* p = widget; p; p = p->parentWidget()) {
-                if (p == panel || p == launcher) return true;
+                if (p == panel || p == launcher || p->property("drnasDirectRotation").toBool()) return true;
                 const QString name = p->objectName();
                 if (name == QStringLiteral("drnasFloatingCommandsLauncher") ||
                     name == QStringLiteral("drnasDebugLauncher") ||
