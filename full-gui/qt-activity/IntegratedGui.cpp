@@ -8,6 +8,7 @@
 #include "StartupDiagnostics.h"
 #include "DrnasDebugCenter.h"
 #include "DrnasTouchInput.h"
+#include "DrnasCameraControls.h"
 #include "DrnasDraggableLauncher.h"
 #include "DrnasDocumentOpen.h"
 #include "DrnasDocumentSave.h"
@@ -2045,8 +2046,15 @@ finally:
     menuButton->setToolTip(QStringLiteral("Original FreeCAD menus"));
     menuButton->setPopupMode(QToolButton::InstantPopup);
     auto* touchMenu = new QMenu(menuButton);
+    auto* smoothRotation = new QAction(QStringLiteral("Smooth rotation"), menuButton);
+    smoothRotation->setCheckable(true);
+    const QString smoothKey = QStringLiteral("drnasOverlay/smoothRotation");
+    smoothRotation->setChecked(QSettings().value(smoothKey, true).toBool());
+    QObject::connect(smoothRotation, &QAction::toggled, shell, [smoothKey](bool enabled) {
+        QSettings().setValue(smoothKey, enabled);
+    });
     QObject::connect(touchMenu, &QMenu::aboutToShow, shell,
-                     [upstream, touchMenu] {
+                     [upstream, touchMenu, smoothRotation] {
         DrnasDiagnostics::note(QStringLiteral("TOUCH original FreeCAD Menu"));
         touchMenu->clear();
         if (upstream && upstream->menuBar()) {
@@ -2061,6 +2069,8 @@ finally:
                 QStringLiteral("FreeCAD menus not ready"));
             unavailable->setEnabled(false);
         }
+        touchMenu->addSeparator();
+        touchMenu->addAction(smoothRotation);
     });
     menuButton->setMenu(touchMenu);
     toolbar->addWidget(menuButton);
@@ -2075,6 +2085,24 @@ finally:
     toolbar->addWidget(resultLabel);
     toolbar->setVisible(true);
     new DrnasFloatingCommands(shell, freecad, toolbar);
+    new DrnasCameraControls(shell, freecad, [report, smoothRotation](int axis, int direction) {
+        const QString code = QStringLiteral(
+            "import FreeCAD as App, FreeCADGui as Gui\n"
+            "_drnas_cam_doc = Gui.activeDocument()\n"
+            "_drnas_cam_view = _drnas_cam_doc.activeView() if _drnas_cam_doc else None\n"
+            "if hasattr(_drnas_cam_view, 'getCameraOrientation'):\n"
+            "    _drnas_cam_current = _drnas_cam_view.getCameraOrientation()\n"
+            "    _drnas_cam_delta = App.Rotation(App.Vector(%1), %2)\n"
+            "    _drnas_cam_view.setAnimationEnabled(%3)\n"
+            "    _drnas_cam_view.setCameraOrientation(%4)\n")
+            .arg(axis == 0 ? QStringLiteral("0, 0, 1") : QStringLiteral("1, 0, 0"))
+            .arg(direction * 15)
+            .arg(smoothRotation->isChecked() ? QStringLiteral("True") : QStringLiteral("False"))
+            .arg(axis == 0 ? QStringLiteral("_drnas_cam_delta.multiply(_drnas_cam_current)")
+                           : QStringLiteral("_drnas_cam_current.multiply(_drnas_cam_delta)"));
+        QString error;
+        if (!runOriginalFreeCADPython(code, error)) report(QStringLiteral("Rotacija: ") + error);
+    });
     new DrnasTouchInput(shell, freecad, [invoke](const QString& script) {
         invoke(script, QStringLiteral("Mouse / keyboard controls"));
     });

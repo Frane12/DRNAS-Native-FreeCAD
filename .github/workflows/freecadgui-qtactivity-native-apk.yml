@@ -43,7 +43,7 @@ concurrency:
 env:
   QT_VERSION: '6.8.3'
   NDK_VERSION: '27.2.12479018'
-  ANDROID_API: '26'
+  ANDROID_API: '28'
 
 jobs:
   package-real-gui:
@@ -230,6 +230,9 @@ jobs:
             src/Mod/Measure
             src/Mod/BIM
             src/Mod/Draft
+            src/Mod/Help
+            src/Mod/Show
+            src/Mod/Tux
             src/3rdParty/lazy_loader
 
       - name: Stage and verify default material libraries before APK packaging
@@ -455,11 +458,14 @@ jobs:
           UPSTREAM_GUI_RUN_ID: ${{ steps.upstream.outputs.run_id }}
         run: bash full-gui/integrated-apk/stage-runtime.sh
 
-      - name: Stage pinned BIM and Draft restore modules and original Qt resources
+      - name: Stage and read back pinned FreeCAD workbench modules and Qt resources
         run: |
           python3 full-gui/integrated-apk/stage-bim-resources.py \
             .deps/freecad-runtime-resources out/upstream-freecad-gui/resources \
             "$GITHUB_WORKSPACE/out/full-deps/qt/$QT_VERSION/gcc_64/libexec/rcc"
+          python3 -m venv "$RUNNER_TEMP/workbench-qt"
+          "$RUNNER_TEMP/workbench-qt/bin/python" -m pip install --only-binary=:all: "PySide6-Essentials==$QT_VERSION"
+          "$RUNNER_TEMP/workbench-qt/bin/python" full-gui/integrated-apk/verify-workbench-resources.py out/upstream-freecad-gui/resources
           python3 -m unittest discover -s tests -p 'test_android_*.py' -v
 
       - name: Configure Android QtActivity and real FreeCAD native GUI integration
